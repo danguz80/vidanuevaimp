@@ -22,6 +22,13 @@ export default function AdminPanel() {
         >
           Administrar Videos de Sermones
         </button>
+
+        <button
+          onClick={() => navigate("/admin/hero")}
+          className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded transition"
+        >
+          Administrar Hero
+        </button>
       </div>
     </div>
   );

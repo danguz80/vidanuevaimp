@@ -1,0 +1,22 @@
+# Node modules
+**/node_modules/
+
+# Build outputs
+client/dist/
+server/build/
+
+# Logs
+*.log
+
+# Environment files
+**/.env
+
+# Mac system files
+.DS_Store
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# OS generated
+Thumbs.db

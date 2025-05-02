@@ -6,26 +6,33 @@ const backendUrl = import.meta.env.VITE_BACKEND_URL;
 export default function AdminVideos() {
   const [videos, setVideos] = useState([]);
   const [editing, setEditing] = useState({});
+  const [nuevoVideo, setNuevoVideo] = useState({
+    videoId: "",
+    title: "",
+    thumbnail: "",
+    start: 0,
+  });
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchVideos = async () => {
-      try {
-        const res = await fetch(`${backendUrl}/api/sermones`);
-        const data = await res.json();
-        setVideos(data);
-      } catch (error) {
-        console.error("Error al cargar videos:", error);
-      }
-    };
-
     fetchVideos();
   }, []);
+
+  const fetchVideos = async () => {
+    try {
+      const res = await fetch(`${backendUrl}/api/sermones`);
+      const data = await res.json();
+      setVideos(data);
+    } catch (error) {
+      console.error("Error al cargar videos:", error);
+    }
+  };
 
   const handleInputChange = (videoId, field, value) => {
     setEditing((prev) => ({
       ...prev,
       [videoId]: {
+        ...videos.find((v) => v.videoId === videoId),
         ...prev[videoId],
         [field]: value,
       },
@@ -49,13 +56,7 @@ export default function AdminVideos() {
         }),
       });
 
-      setVideos((prev) =>
-        prev.map((video) =>
-          video.videoId === videoId
-            ? { ...video, ...changes }
-            : video
-        )
-      );
+      fetchVideos();
       setEditing((prev) => {
         const updated = { ...prev };
         delete updated[videoId];
@@ -75,10 +76,39 @@ export default function AdminVideos() {
         method: "DELETE",
       });
 
-      setVideos((prev) => prev.filter((video) => video.videoId !== videoId));
+      fetchVideos();
       alert("Video eliminado correctamente");
     } catch (error) {
       console.error("Error al eliminar video:", error);
+    }
+  };
+
+  const handleAddVideo = async () => {
+    if (!nuevoVideo.videoId.trim()) {
+      alert("Debes ingresar un videoId válido");
+      return;
+    }
+
+    try {
+      await fetch(`${backendUrl}/api/sermones`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoId: nuevoVideo.videoId,
+          title: nuevoVideo.title,
+          thumbnail: nuevoVideo.thumbnail,
+          start: Number(nuevoVideo.start),
+          fecha_publicacion: new Date().toISOString(),
+          sunday_date: new Date().toISOString().split("T")[0],
+        }),
+      });
+
+      setNuevoVideo({ videoId: "", title: "", thumbnail: "", start: 0 });
+      fetchVideos();
+      alert("Video agregado correctamente");
+    } catch (err) {
+      console.error("Error al agregar video:", err);
+      alert("Ocurrió un error al agregar el video");
     }
   };
 
@@ -97,7 +127,9 @@ export default function AdminVideos() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <h1 className="text-2xl font-bold text-center mb-6">Administrar Videos de Sermones</h1>
+      <h1 className="text-2xl font-bold text-center mb-6">
+        Administrar Videos de Sermones
+      </h1>
 
       <div className="flex justify-center mb-6">
         <button
@@ -106,6 +138,58 @@ export default function AdminVideos() {
         >
           Volver al Panel de Administración
         </button>
+      </div>
+
+      <div className="mb-10 max-w-xl mx-auto">
+        <h3 className="text-lg font-semibold mb-2 text-center">
+          Agregar nuevo video manualmente
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <input
+            type="text"
+            placeholder="Video ID (YouTube)"
+            className="border p-2 rounded"
+            value={nuevoVideo.videoId}
+            onChange={(e) =>
+              setNuevoVideo({ ...nuevoVideo, videoId: e.target.value })
+            }
+          />
+          <input
+            type="text"
+            placeholder="Título"
+            className="border p-2 rounded"
+            value={nuevoVideo.title}
+            onChange={(e) =>
+              setNuevoVideo({ ...nuevoVideo, title: e.target.value })
+            }
+          />
+          <input
+            type="text"
+            placeholder="Thumbnail (URL)"
+            className="border p-2 rounded"
+            value={nuevoVideo.thumbnail}
+            onChange={(e) =>
+              setNuevoVideo({ ...nuevoVideo, thumbnail: e.target.value })
+            }
+          />
+          <input
+            type="number"
+            placeholder="Inicio (segundos)"
+            className="border p-2 rounded"
+            value={nuevoVideo.start}
+            onChange={(e) =>
+              setNuevoVideo({ ...nuevoVideo, start: e.target.value })
+            }
+          />
+        </div>
+        <div className="mt-4 text-center">
+          <button
+            className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700"
+            onClick={handleAddVideo}
+          >
+            Agregar Video
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -125,7 +209,9 @@ export default function AdminVideos() {
               const edit = editing[video.videoId] || {};
               return (
                 <tr key={video.videoId} className="border-t text-center">
-                  <td className="px-4 py-2 whitespace-nowrap">{formatearFecha(video.sundayDate)}</td>
+                  <td className="px-4 py-2 whitespace-nowrap">
+                    {formatearFecha(video.sundayDate)}
+                  </td>
                   <td className="px-4 py-2">
                     <input
                       type="text"

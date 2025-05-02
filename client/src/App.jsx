@@ -4,6 +4,7 @@ import Header from "./components/Header";
 import Footer from "./components/Footer";
 
 import Home from "./pages/Home";
+import AdminHero from "./pages/AdminHero"; // ✅ nueva importación
 import QuienesSomos from "./pages/QuienesSomos";
 import Eventos from "./pages/Eventos";
 import Horarios from "./pages/Horarios";
@@ -15,7 +16,7 @@ import NotFound from "./pages/NotFound";
 
 import AdminPanel from "./pages/AdminPanel";
 import AdminMensajes from "./pages/AdminMensajes";
-import AdminVideos from "./pages/AdminVideos"; // ✅ Nuevo import
+import AdminVideos from "./pages/AdminVideos";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
         <main className="flex-grow">
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/admin/hero" element={<AdminHero />} />
             <Route path="/quienes-somos" element={<QuienesSomos />} />
             <Route path="/eventos" element={<Eventos />} />
             <Route path="/horarios" element={<Horarios />} />

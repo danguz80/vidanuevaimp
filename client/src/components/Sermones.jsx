@@ -19,17 +19,6 @@ export default function Sermones() {
     fetchVideos();
   }, []);
 
-  const formatearFecha = (iso) => {
-    const date = new Date(iso);
-    return date.toLocaleDateString("es-CL", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      timeZone: "America/Santiago", // importante que esté en horario de Chile
-    });
-  };
-
   return (
     <section className="py-16 px-4 bg-white text-center">
       <h2 className="text-3xl font-bold mb-4 text-gray-800">Últimos Sermones</h2>
@@ -39,19 +28,17 @@ export default function Sermones() {
 
       <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
         {videos.map((video) => {
-          const fecha = formatearFecha(video.publishedAt); // ✅ usar publishedAt
           const url = `https://www.youtube.com/embed/${video.videoId}?start=${video.start || 0}`;
 
           return (
             <div key={video.videoId} className="bg-gray-100 rounded shadow p-4">
-              <h3 className="text-lg font-semibold mb-2 capitalize">{fecha}</h3>
               <iframe
                 className="w-full aspect-video rounded"
                 src={url}
                 title={video.title}
                 allowFullScreen
               />
-              <p className="mt-2 text-gray-700">{video.title}</p>
+              <p className="mt-4 text-gray-700 font-semibold">{video.title}</p>
             </div>
           );
         })}

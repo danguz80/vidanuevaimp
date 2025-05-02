@@ -1,6 +1,5 @@
 import express from "express";
 import cors from "cors";
-import axios from "axios";
 import dotenv from "dotenv";
 import { subDays } from "date-fns";
 import pkg from "pg";
@@ -22,74 +21,61 @@ const pool = new Pool({
   port: parseInt(process.env.PGPORT) || 5433,
 });
 
-// --- API obtener últimos sermones ---
-app.get("/api/sermones", async (req, res) => {
+// --- Nuevo endpoint para agregar sermón manualmente ---
+app.post("/api/sermones", async (req, res) => {
+  const { videoId, title, thumbnail, start, publishedAt, sundayDate } = req.body;
+
+  if (!videoId) {
+    return res.status(400).json({ error: "videoId es requerido" });
+  }
+
   try {
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    const channelId = "UC_WG17ojWZJfyxGtMI45Cjw";
-
-    const response = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-      params: {
-        part: "snippet",
-        channelId,
-        maxResults: 50,
-        order: "date",
-        type: "video",
-        key: apiKey,
-      },
-    });
-
-    const sundayVideos = response.data.items
-      .filter((item) => {
-        const title = item.snippet.title.toLowerCase();
-        return title.includes("domingo") || title.includes("culto dominical");
-      })
-      .slice(0, 10)
-      .map((item) => {
-        const publishedAt = new Date(item.snippet.publishedAt);
-
-        // Ajuste horario Chile (UTC-4)
-        publishedAt.setHours(publishedAt.getHours() - 4);
-
-        const dayOfWeek = publishedAt.getDay(); // 0 = domingo
-        const sundayBefore = new Date(publishedAt);
-        sundayBefore.setDate(publishedAt.getDate() - dayOfWeek);
-
-        return {
-          title: item.snippet.title,
-          videoId: item.id.videoId,
-          publishedAt: publishedAt.toISOString(),
-          sundayDate: sundayBefore.toISOString().split("T")[0],
-          thumbnail: item.snippet.thumbnails?.high?.url || "",
-        };
-      });
-
     const client = await pool.connect();
     const result = await client.query(
-      "SELECT video_id, start_time, titulo, fecha_publicacion, sunday_date, thumbnail FROM sermones"
+      `INSERT INTO sermones (video_id, titulo, thumbnail, start_time, fecha_publicacion, sunday_date)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (video_id) DO UPDATE SET
+         titulo = EXCLUDED.titulo,
+         thumbnail = EXCLUDED.thumbnail,
+         start_time = EXCLUDED.start_time,
+         fecha_publicacion = EXCLUDED.fecha_publicacion,
+         sunday_date = EXCLUDED.sunday_date
+       RETURNING *`,
+      [videoId, title || "", thumbnail || "", start || 0, publishedAt || new Date(), sundayDate || new Date()]
     );
     client.release();
 
-    const startTimeMap = {};
-    result.rows.forEach(({ video_id, start_time, titulo, fecha_publicacion, sunday_date, thumbnail }) => {
-      startTimeMap[video_id] = { start_time, titulo, fecha_publicacion, sunday_date, thumbnail };
-    });
-
-    const finalVideos = sundayVideos
-      .sort((a, b) => new Date(b.sundayDate) - new Date(a.sundayDate))
-      .slice(0, 3)
-      .map((video) => ({
-        title: startTimeMap[video.videoId]?.titulo || video.title,
-        videoId: video.videoId,
-        publishedAt: startTimeMap[video.videoId]?.fecha_publicacion || video.publishedAt,
-        sundayDate: startTimeMap[video.videoId]?.sunday_date || video.sundayDate,
-        thumbnail: startTimeMap[video.videoId]?.thumbnail || video.thumbnail,
-        start: startTimeMap[video.videoId]?.start_time || 0,
-      }));
-
-    res.json(finalVideos);
+    res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error("Error al obtener los videos:", error.message);
+    console.error("Error al insertar/actualizar sermón:", error);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+
+// --- API obtener últimos sermones ---
+// Reemplazar el app.get("/api/sermones") para evitar usar la API de YouTube:
+
+app.get("/api/sermones", async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      "SELECT video_id, start_time, titulo, fecha_publicacion, sunday_date, thumbnail FROM sermones ORDER BY sunday_date DESC LIMIT 3"
+    );
+    client.release();
+
+    const videos = result.rows.map((row) => ({
+      videoId: row.video_id,
+      title: row.titulo,
+      publishedAt: row.fecha_publicacion,
+      sundayDate: row.sunday_date,
+      thumbnail: row.thumbnail,
+      start: row.start_time || 0,
+    }));
+
+    res.json(videos);
+  } catch (error) {
+    console.error("Error al obtener videos desde base de datos:", error);
     res.status(500).json({ error: "Error al obtener videos" });
   }
 });
@@ -217,4 +203,77 @@ app.delete("/api/mensajes/:id", async (req, res) => {
 // --- Iniciar servidor ---
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
+});
+
+
+// RUTA: server/index.js
+
+// --- API obtener slides activos del Hero ---
+app.get("/api/hero", async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      "SELECT * FROM hero_slides WHERE active = true ORDER BY created_at DESC"
+    );
+    client.release();
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener slides:", error.message);
+    res.status(500).json({ error: "Error al obtener slides" });
+  }
+});
+
+// --- API para crear un nuevo slide ---
+app.post("/api/hero", async (req, res) => {
+  const { image_url, title, subtitle, title_effect, subtitle_effect } = req.body;
+
+  try {
+    const client = await pool.connect();
+    await client.query(
+      `INSERT INTO hero_slides (image_url, title, subtitle, title_effect, subtitle_effect)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [image_url, title, subtitle, title_effect || "fade-right", subtitle_effect || "fade-left"]
+    );
+    client.release();
+    res.status(201).json({ message: "Slide creado correctamente" });
+  } catch (error) {
+    console.error("Error al agregar slide:", error.message);
+    res.status(500).json({ error: "Error al crear slide" });
+  }
+});
+
+// --- API para actualizar un slide (activar/desactivar, editar texto) ---
+app.put("/api/hero/:id", async (req, res) => {
+  const { id } = req.params;
+  const { title, subtitle, title_effect, subtitle_effect } = req.body;
+
+  try {
+    const client = await pool.connect();
+    await client.query(
+      `UPDATE hero_slides
+       SET title = $1, subtitle = $2, title_effect = $3, subtitle_effect = $4
+       WHERE id = $5`,
+      [title, subtitle, title_effect || "fade-right", subtitle_effect || "fade-left", id]
+    );
+    client.release();
+    res.json({ message: "Slide actualizado correctamente" });
+  } catch (error) {
+    console.error("Error al actualizar slide:", error.message);
+    res.status(500).json({ error: "Error al actualizar slide" });
+  }
+});
+
+// --- API para eliminar un slide ---
+app.delete("/api/hero/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const client = await pool.connect();
+    await client.query("DELETE FROM hero_slides WHERE id = $1", [id]);
+    client.release();
+    res.json({ message: "Slide eliminado correctamente" });
+  } catch (error) {
+    console.error("Error al eliminar slide:", error.message);
+    res.status(500).json({ error: "Error al eliminar slide" });
+  }
 });
