@@ -14,12 +14,17 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 const pool = new Pool({
-  user: process.env.PGUSER || "danielguzmansagredo",
-  host: "localhost",
-  database: process.env.PGDATABASE || "iglesia",
-  password: process.env.PGPASSWORD || "",
-  port: parseInt(process.env.PGPORT) || 5433,
+  user: process.env.PGUSER,
+  host: process.env.PGHOST,
+  database: process.env.PGDATABASE,
+  password: process.env.PGPASSWORD,
+  port: parseInt(process.env.PGPORT),
+  ssl: {
+    rejectUnauthorized: false, // necesario en Render
+  },
 });
+
+
 
 // --- Nuevo endpoint para agregar sermón manualmente ---
 app.post("/api/sermones", async (req, res) => {
