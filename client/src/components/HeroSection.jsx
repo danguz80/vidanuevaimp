@@ -46,15 +46,15 @@ export default function HeroSection() {
               <div className="relative text-white text-center p-6 max-w-3xl z-10">
                 <h2
                   className={`text-4xl md:text-5xl font-bold mb-4 drop-shadow-xl ${
-                    slide.title_effect || "animate-fade-right"
-                  }`}
+                    slide.title_effect || "fade-right"
+                  }`}                  
                 >
                   {slide.title}
                 </h2>
                 <p
                   className={`text-lg md:text-xl drop-shadow-lg ${
-                    slide.subtitle_effect || "animate-fade-left"
-                  }`}
+                    slide.subtitle_effect || "fade-left"
+                  }`}                  
                 >
                   {slide.subtitle}
                 </p>
