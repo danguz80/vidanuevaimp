@@ -9,6 +9,10 @@ export default function AdminHero() {
         title_effect: "fade-right",
         subtitle_effect: "fade-left",
         text_position: "center",
+        title_font_size: "text-2xl",
+        subtitle_font_size: "text-xl",
+        title_color: "#ffffff",
+        subtitle_color: "#ffffff"
     });
 
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
@@ -18,7 +22,7 @@ export default function AdminHero() {
             const res = await fetch(`${backendUrl}/api/hero`);
             const data = await res.json();
             setSlides(data);
-            console.log("Slides cargados:", data); // 👈 AGREGA ESTA LÍNEA
+            console.log("Slides cargados:", data);
         } catch (error) {
             console.error("Error al obtener slides:", error);
         }
@@ -44,6 +48,10 @@ export default function AdminHero() {
                 title_effect: "fade-right",
                 subtitle_effect: "fade-left",
                 text_position: "center",
+                title_font_size: "text-2xl",
+                subtitle_font_size: "text-xl",
+                title_color: "#ffffff",
+                subtitle_color: "#ffffff"
             });
 
             fetchSlides();
@@ -63,24 +71,6 @@ export default function AdminHero() {
             console.error("Error al eliminar slide:", error);
         }
     };
-
-    const handleToggle = async (id, currentActive) => {
-        try {
-            const res = await fetch(`${backendUrl}/api/hero/${id}`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ active: !currentActive }),
-            });
-    
-            const result = await res.json();
-            console.log("Respuesta del backend al cambiar estado:", result);
-    
-            fetchSlides();
-        } catch (error) {
-            console.error("Error al cambiar estado:", error);
-        }
-    };
-    
 
     const handleUpdate = async (slide) => {
         try {
@@ -134,9 +124,7 @@ export default function AdminHero() {
                         <select
                             className="w-full p-2 border rounded"
                             value={newSlide.title_effect}
-                            onChange={(e) =>
-                                setNewSlide({ ...newSlide, title_effect: e.target.value })
-                            }
+                            onChange={(e) => setNewSlide({ ...newSlide, title_effect: e.target.value })}
                         >
                             <option value="fade-right">Desde la derecha</option>
                             <option value="fade-left">Desde la izquierda</option>
@@ -150,9 +138,7 @@ export default function AdminHero() {
                         <select
                             className="w-full p-2 border rounded"
                             value={newSlide.subtitle_effect}
-                            onChange={(e) =>
-                                setNewSlide({ ...newSlide, subtitle_effect: e.target.value })
-                            }
+                            onChange={(e) => setNewSlide({ ...newSlide, subtitle_effect: e.target.value })}
                         >
                             <option value="fade-left">Desde la izquierda</option>
                             <option value="fade-right">Desde la derecha</option>
@@ -166,9 +152,7 @@ export default function AdminHero() {
                         <select
                             className="w-full p-2 border rounded"
                             value={newSlide.text_position}
-                            onChange={(e) =>
-                                setNewSlide({ ...newSlide, text_position: e.target.value })
-                            }
+                            onChange={(e) => setNewSlide({ ...newSlide, text_position: e.target.value })}
                         >
                             <option value="center">Centro</option>
                             <option value="top">Arriba</option>
@@ -176,6 +160,51 @@ export default function AdminHero() {
                             <option value="left">Izquierda</option>
                             <option value="right">Derecha</option>
                         </select>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label className="block text-sm font-semibold mb-1">Tamaño fuente título</label>
+                        <select
+                            className="w-full p-2 border rounded"
+                            value={newSlide.title_font_size}
+                            onChange={(e) => setNewSlide({ ...newSlide, title_font_size: e.target.value })}
+                        >
+                            <option value="text-xl">Pequeño</option>
+                            <option value="text-2xl">Mediano</option>
+                            <option value="text-4xl">Grande</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-semibold mb-1">Color del título</label>
+                        <input
+                            type="color"
+                            className="w-full h-10"
+                            value={newSlide.title_color}
+                            onChange={(e) => setNewSlide({ ...newSlide, title_color: e.target.value })}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-semibold mb-1">Tamaño fuente subtítulo</label>
+                        <select
+                            className="w-full p-2 border rounded"
+                            value={newSlide.subtitle_font_size}
+                            onChange={(e) => setNewSlide({ ...newSlide, subtitle_font_size: e.target.value })}
+                        >
+                            <option value="text-md">Pequeño</option>
+                            <option value="text-xl">Mediano</option>
+                            <option value="text-2xl">Grande</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-semibold mb-1">Color del subtítulo</label>
+                        <input
+                            type="color"
+                            className="w-full h-10"
+                            value={newSlide.subtitle_color}
+                            onChange={(e) => setNewSlide({ ...newSlide, subtitle_color: e.target.value })}
+                        />
                     </div>
                 </div>
 
