@@ -66,17 +66,21 @@ export default function AdminHero() {
 
     const handleToggle = async (id, currentActive) => {
         try {
-            await fetch(`${backendUrl}/api/hero/${id}`, {
+            const res = await fetch(`${backendUrl}/api/hero/${id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ active: !currentActive }),
             });
+    
+            const result = await res.json();
+            console.log("Respuesta del backend al cambiar estado:", result);
+    
             fetchSlides();
-            alert(currentActive ? "Slide desactivado" : "Slide activado");
         } catch (error) {
             console.error("Error al cambiar estado:", error);
         }
     };
+    
 
     const handleUpdate = async (slide) => {
         try {
