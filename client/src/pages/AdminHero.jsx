@@ -18,6 +18,7 @@ export default function AdminHero() {
             const res = await fetch(`${backendUrl}/api/hero`);
             const data = await res.json();
             setSlides(data);
+            console.log("Slides cargados:", data); // 👈 AGREGA ESTA LÍNEA
         } catch (error) {
             console.error("Error al obtener slides:", error);
         }
