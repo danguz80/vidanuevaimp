@@ -229,13 +229,6 @@ export default function AdminHero() {
                                 </button>
 
                                 <button
-                                    onClick={() => handleToggle(slide.id, slide.active)}
-                                    className={`${slide.active ? "bg-gray-500" : "bg-green-500"} text-white px-3 py-1 rounded hover:opacity-90`}
-                                >
-                                    {slide.active ? "Desactivar" : "Activar"}
-                                </button>
-
-                                <button
                                     onClick={() => handleDelete(slide.id)}
                                     className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700"
                                 >
