@@ -8,7 +8,7 @@ export default function AdminHero() {
         subtitle: "",
         title_effect: "fade-right",
         subtitle_effect: "fade-left",
-        text_position: "center", // valor por defecto
+        text_position: "center",
     });
 
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
@@ -61,9 +61,13 @@ export default function AdminHero() {
         }
     };
 
-    const handleToggle = async (id) => {
+    const handleToggle = async (id, currentActive) => {
         try {
-            await fetch(`${backendUrl}/api/hero/${id}/toggle`, { method: "PATCH" });
+            await fetch(`${backendUrl}/api/hero/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ active: !currentActive }),
+            });
             fetchSlides();
         } catch (error) {
             console.error("Error al cambiar estado:", error);
@@ -216,7 +220,7 @@ export default function AdminHero() {
                                 </button>
 
                                 <button
-                                    onClick={() => handleToggle(slide.id)}
+                                    onClick={() => handleToggle(slide.id, slide.active)}
                                     className={`${slide.active ? "bg-gray-500" : "bg-green-500"} text-white px-3 py-1 rounded hover:opacity-90`}
                                 >
                                     {slide.active ? "Desactivar" : "Activar"}
