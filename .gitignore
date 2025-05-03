@@ -19,3 +19,7 @@ server/build/
 
 # OS generated
 Thumbs.db
+
+# No incluir el backup
+client-backup/
+
