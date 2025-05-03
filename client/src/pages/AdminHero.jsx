@@ -6,6 +6,9 @@ export default function AdminHero() {
         image_url: "",
         title: "",
         subtitle: "",
+        title_effect: "fade-right",
+        subtitle_effect: "fade-left",
+        text_position: "center", // valor por defecto
     });
 
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
@@ -30,14 +33,18 @@ export default function AdminHero() {
             await fetch(`${backendUrl}/api/hero`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    ...newSlide,
-                    title_effect: newSlide.title_effect || "fade-right",
-                    subtitle_effect: newSlide.subtitle_effect || "fade-left",
-                }),
+                body: JSON.stringify(newSlide),
             });
 
-            setNewSlide({ image_url: "", title: "", subtitle: "" });
+            setNewSlide({
+                image_url: "",
+                title: "",
+                subtitle: "",
+                title_effect: "fade-right",
+                subtitle_effect: "fade-left",
+                text_position: "center",
+            });
+
             fetchSlides();
         } catch (error) {
             console.error("Error al agregar slide:", error);
@@ -45,9 +52,7 @@ export default function AdminHero() {
     };
 
     const handleDelete = async (id) => {
-        const confirmDelete = window.confirm("¿Estás seguro de eliminar este slide?");
-        if (!confirmDelete) return;
-
+        if (!window.confirm("¿Estás seguro de eliminar este slide?")) return;
         try {
             await fetch(`${backendUrl}/api/hero/${id}`, { method: "DELETE" });
             fetchSlides();
@@ -70,10 +75,7 @@ export default function AdminHero() {
             await fetch(`${backendUrl}/api/hero/${slide.id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    title: slide.title,
-                    subtitle: slide.subtitle,
-                }),
+                body: JSON.stringify(slide),
             });
             fetchSlides();
         } catch (error) {
@@ -113,12 +115,12 @@ export default function AdminHero() {
                     className="w-full mb-2 p-2 border rounded"
                 />
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                     <div>
                         <label className="block text-sm font-semibold mb-1">Efecto del Título</label>
                         <select
                             className="w-full p-2 border rounded"
-                            value={newSlide.title_effect || "fade-right"}
+                            value={newSlide.title_effect}
                             onChange={(e) =>
                                 setNewSlide({ ...newSlide, title_effect: e.target.value })
                             }
@@ -134,7 +136,7 @@ export default function AdminHero() {
                         <label className="block text-sm font-semibold mb-1">Efecto del Subtítulo</label>
                         <select
                             className="w-full p-2 border rounded"
-                            value={newSlide.subtitle_effect || "fade-left"}
+                            value={newSlide.subtitle_effect}
                             onChange={(e) =>
                                 setNewSlide({ ...newSlide, subtitle_effect: e.target.value })
                             }
@@ -143,6 +145,23 @@ export default function AdminHero() {
                             <option value="fade-right">Desde la derecha</option>
                             <option value="fade-up">Desde abajo</option>
                             <option value="fade-down">Desde arriba</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-semibold mb-1">Posición del Texto</label>
+                        <select
+                            className="w-full p-2 border rounded"
+                            value={newSlide.text_position}
+                            onChange={(e) =>
+                                setNewSlide({ ...newSlide, text_position: e.target.value })
+                            }
+                        >
+                            <option value="center">Centro</option>
+                            <option value="top">Arriba</option>
+                            <option value="bottom">Abajo</option>
+                            <option value="left">Izquierda</option>
+                            <option value="right">Derecha</option>
                         </select>
                     </div>
                 </div>
@@ -154,7 +173,6 @@ export default function AdminHero() {
                     Agregar Slide
                 </button>
             </div>
-
 
             {/* Lista de slides */}
             <ul className="space-y-4">
