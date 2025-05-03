@@ -46,6 +46,7 @@ export default function AdminHero() {
             });
 
             fetchSlides();
+            alert("Slide agregado exitosamente");
         } catch (error) {
             console.error("Error al agregar slide:", error);
         }
@@ -56,6 +57,7 @@ export default function AdminHero() {
         try {
             await fetch(`${backendUrl}/api/hero/${id}`, { method: "DELETE" });
             fetchSlides();
+            alert("Slide eliminado correctamente");
         } catch (error) {
             console.error("Error al eliminar slide:", error);
         }
@@ -69,6 +71,7 @@ export default function AdminHero() {
                 body: JSON.stringify({ active: !currentActive }),
             });
             fetchSlides();
+            alert(currentActive ? "Slide desactivado" : "Slide activado");
         } catch (error) {
             console.error("Error al cambiar estado:", error);
         }
@@ -82,6 +85,7 @@ export default function AdminHero() {
                 body: JSON.stringify(slide),
             });
             fetchSlides();
+            alert("Cambios guardados correctamente");
         } catch (error) {
             console.error("Error al guardar cambios:", error);
         }
