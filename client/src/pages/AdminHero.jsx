@@ -238,119 +238,96 @@ export default function AdminHero() {
             <ul className="space-y-4">
                 {slides.map((slide) => (
                     <li key={slide.id} className="border p-4 rounded">
-                        <div className="flex flex-col md:flex-row justify-between items-start gap-4">
-                            <div className="flex-1">
-                                <input
-                                    type="text"
-                                    value={slide.title}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                            <div>
+                                <label className="block text-sm font-semibold mb-1">Tamaño fuente título</label>
+                                <select
+                                    className="w-full p-1 border rounded"
+                                    value={slide.font_size_title}
                                     onChange={(e) =>
                                         setSlides((prev) =>
                                             prev.map((s) =>
-                                                s.id === slide.id ? { ...s, title: e.target.value } : s
+                                                s.id === slide.id ? { ...s, font_size_title: e.target.value } : s
                                             )
                                         )
                                     }
-                                    className="w-full mb-1 p-1 border rounded"
-                                />
-                                <input
-                                    type="text"
-                                    value={slide.subtitle}
-                                    onChange={(e) =>
-                                        setSlides((prev) =>
-                                            prev.map((s) =>
-                                                s.id === slide.id ? { ...s, subtitle: e.target.value } : s
-                                            )
-                                        )
-                                    }
-                                    className="w-full mb-2 p-1 border rounded"
-                                />
-                                <img src={slide.image_url} alt="" className="w-32 h-auto rounded shadow" />
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                                    <input
-                                        type="text"
-                                        placeholder="Tamaño fuente título"
-                                        value={slide.font_size_title || ""}
-                                        onChange={(e) =>
-                                            setSlides((prev) =>
-                                                prev.map((s) =>
-                                                    s.id === slide.id ? { ...s, font_size_title: e.target.value } : s
-                                                )
-                                            )
-                                        }
-                                        className="p-1 border rounded"
-                                    />
-                                    <input
-                                        type="text"
-                                        placeholder="Tamaño fuente subtítulo"
-                                        value={slide.font_size_subtitle || ""}
-                                        onChange={(e) =>
-                                            setSlides((prev) =>
-                                                prev.map((s) =>
-                                                    s.id === slide.id ? { ...s, font_size_subtitle: e.target.value } : s
-                                                )
-                                            )
-                                        }
-                                        className="p-1 border rounded"
-                                    />
-                                    <input
-                                        type="color"
-                                        title="Color título"
-                                        value={slide.color_title || "#000000"}
-                                        onChange={(e) =>
-                                            setSlides((prev) =>
-                                                prev.map((s) =>
-                                                    s.id === slide.id ? { ...s, color_title: e.target.value } : s
-                                                )
-                                            )
-                                        }
-                                        className="p-1 border rounded"
-                                    />
-                                    <input
-                                        type="color"
-                                        title="Color subtítulo"
-                                        value={slide.color_subtitle || "#000000"}
-                                        onChange={(e) =>
-                                            setSlides((prev) =>
-                                                prev.map((s) =>
-                                                    s.id === slide.id ? { ...s, color_subtitle: e.target.value } : s
-                                                )
-                                            )
-                                        }
-                                        className="p-1 border rounded"
-                                    />
-                                    <input
-                                        type="number"
-                                        placeholder="Duración (segundos)"
-                                        value={slide.slide_duration || ""}
-                                        onChange={(e) =>
-                                            setSlides((prev) =>
-                                                prev.map((s) =>
-                                                    s.id === slide.id ? { ...s, slide_duration: e.target.value } : s
-                                                )
-                                            )
-                                        }
-                                        className="p-1 border rounded"
-                                    />
-                                </div>
+                                >
+                                    <option value="text-md">Pequeño</option>
+                                    <option value="text-xl">Mediano</option>
+                                    <option value="text-2xl">Grande</option>
+                                    <option value="text-4xl">Extra grande</option>
+                                </select>
                             </div>
 
-                            <div className="flex flex-col gap-2">
-                                <button
-                                    onClick={() => handleUpdate(slide)}
-                                    className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600"
-                                >
-                                    Guardar cambios
-                                </button>
+                            <div>
+                                <label className="block text-sm font-semibold mb-1">Color del título</label>
+                                <input
+                                    type="color"
+                                    className="w-full h-10"
+                                    value={slide.color_title}
+                                    onChange={(e) =>
+                                        setSlides((prev) =>
+                                            prev.map((s) =>
+                                                s.id === slide.id ? { ...s, color_title: e.target.value } : s
+                                            )
+                                        )
+                                    }
+                                />
+                            </div>
 
-                                <button
-                                    onClick={() => handleDelete(slide.id)}
-                                    className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700"
+                            <div>
+                                <label className="block text-sm font-semibold mb-1">Tamaño fuente subtítulo</label>
+                                <select
+                                    className="w-full p-1 border rounded"
+                                    value={slide.font_size_subtitle}
+                                    onChange={(e) =>
+                                        setSlides((prev) =>
+                                            prev.map((s) =>
+                                                s.id === slide.id ? { ...s, font_size_subtitle: e.target.value } : s
+                                            )
+                                        )
+                                    }
                                 >
-                                    Eliminar
-                                </button>
+                                    <option value="text-md">Pequeño</option>
+                                    <option value="text-xl">Mediano</option>
+                                    <option value="text-2xl">Grande</option>
+                                    <option value="text-4xl">Extra grande</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-semibold mb-1">Color del subtítulo</label>
+                                <input
+                                    type="color"
+                                    className="w-full h-10"
+                                    value={slide.color_subtitle}
+                                    onChange={(e) =>
+                                        setSlides((prev) =>
+                                            prev.map((s) =>
+                                                s.id === slide.id ? { ...s, color_subtitle: e.target.value } : s
+                                            )
+                                        )
+                                    }
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-semibold mb-1">Tiempo entre slides (milisegundos)</label>
+                                <input
+                                    type="number"
+                                    className="w-full p-1 border rounded"
+                                    value={slide.slide_duration}
+                                    onChange={(e) =>
+                                        setSlides((prev) =>
+                                            prev.map((s) =>
+                                                s.id === slide.id ? { ...s, slide_duration: parseInt(e.target.value) } : s
+                                            )
+                                        )
+                                    }
+                                />
                             </div>
                         </div>
+
                     </li>
                 ))}
             </ul>
