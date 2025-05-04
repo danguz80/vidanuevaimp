@@ -11,8 +11,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3001;
-
 const pool = new Pool({
   user: process.env.PGUSER,
   host: process.env.PGHOST,
@@ -205,12 +203,6 @@ app.delete("/api/mensajes/:id", async (req, res) => {
   }
 });
 
-// --- Iniciar servidor ---
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en http://localhost:${PORT}`);
-});
-
-
 // RUTA: server/index.js
 
 // --- API obtener slides activos del Hero ---
@@ -339,3 +331,10 @@ app.delete("/api/hero/:id", async (req, res) => {
     res.status(500).json({ error: "Error al eliminar slide" });
   }
 });
+
+// --- Iniciar servidor ---
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`Servidor corriendo en http://localhost:${PORT}`);
+});
+
