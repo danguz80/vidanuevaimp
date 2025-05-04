@@ -1,31 +1,23 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import useEmblaCarousel from "embla-carousel-react";
 import Autoplay from "embla-carousel-autoplay";
 
 export default function HeroSection() {
   const [slides, setSlides] = useState([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [emblaKey, setEmblaKey] = useState(0);
   const backendUrl = import.meta.env.VITE_BACKEND_URL;
-  const autoplayRef = useRef(null);
+
+  const currentDuration = slides[selectedIndex]?.slide_duration || 5;
 
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true }, [
-    Autoplay({ delay: 5000 }), // Valor inicial genérico, luego se actualiza.
+    Autoplay({ delay: currentDuration * 1000 }),
   ]);
 
   const onSelect = useCallback(() => {
-    if (!emblaApi || !slides.length) return;
-
-    const currentSlide = slides[emblaApi.selectedScrollSnap()];
-    const duration = (currentSlide.slide_duration || 5) * 1000;
-
-    if (autoplayRef.current) {
-      autoplayRef.current.stop();
-      autoplayRef.current.options.delay = duration;
-      autoplayRef.current.play();
-    }
-
+    if (!emblaApi) return;
     setSelectedIndex(emblaApi.selectedScrollSnap());
-  }, [emblaApi, slides]);
+  }, [emblaApi]);
 
   useEffect(() => {
     const fetchSlides = async () => {
@@ -38,15 +30,15 @@ export default function HeroSection() {
 
   useEffect(() => {
     if (!emblaApi) return;
-
-    autoplayRef.current = emblaApi.plugins().autoplay;
     emblaApi.on("select", onSelect);
+  }, [emblaApi, onSelect]);
 
-    if (slides.length) onSelect(); // Inicializa la duración del primer slide correctamente.
-  }, [emblaApi, onSelect, slides]);
+  useEffect(() => {
+    setEmblaKey((prev) => prev + 1);
+  }, [selectedIndex, currentDuration]);
 
   return (
-    <section className="overflow-hidden relative">
+    <section className="overflow-hidden relative" key={emblaKey}>
       <div className="embla" ref={emblaRef}>
         <div className="embla__container flex">
           {slides.map((slide, index) => {
@@ -74,14 +66,18 @@ export default function HeroSection() {
                   className={`relative text-white text-center p-6 max-w-3xl z-10 ${slide.text_position || ""}`}
                 >
                   <h2
-                    className={`font-bold mb-4 drop-shadow-xl ${slide.font_size_title || "text-4xl"} ${isActive ? slide.title_effect : ""}`}
+                    className={`font-bold mb-4 drop-shadow-xl ${slide.font_size_title || "text-4xl"} ${
+                      isActive ? slide.title_effect : ""
+                    }`}
                     style={{ color: slide.color_title || "#ffffff" }}
                   >
                     {slide.title}
                   </h2>
 
                   <p
-                    className={`drop-shadow-lg ${slide.font_size_subtitle || "text-xl"} ${isActive ? slide.subtitle_effect : ""}`}
+                    className={`drop-shadow-lg ${slide.font_size_subtitle || "text-xl"} ${
+                      isActive ? slide.subtitle_effect : ""
+                    }`}
                     style={{ color: slide.color_subtitle || "#ffffff" }}
                   >
                     {slide.subtitle}
