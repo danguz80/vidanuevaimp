@@ -231,14 +231,40 @@ app.get("/api/hero", async (req, res) => {
 
 // --- API para crear un nuevo slide ---
 app.post("/api/hero", async (req, res) => {
-  const { image_url, title, subtitle, title_effect, subtitle_effect } = req.body;
+  const {
+    image_url,
+    title,
+    subtitle,
+    title_effect,
+    subtitle_effect,
+    font_size_title,
+    font_size_subtitle,
+    color_title,
+    color_subtitle,
+    slide_duration
+  } = req.body;
 
   try {
     const client = await pool.connect();
     await client.query(
-      `INSERT INTO hero_slides (image_url, title, subtitle, title_effect, subtitle_effect)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [image_url, title, subtitle, title_effect || "fade-right", subtitle_effect || "fade-left"]
+      `INSERT INTO hero_slides (
+        image_url, title, subtitle,
+        title_effect, subtitle_effect,
+        font_size_title, font_size_subtitle,
+        color_title, color_subtitle, slide_duration
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        image_url,
+        title,
+        subtitle,
+        title_effect || "fade-right",
+        subtitle_effect || "fade-left",
+        font_size_title || "text-3xl",
+        font_size_subtitle || "text-xl",
+        color_title || "#ffffff",
+        color_subtitle || "#ffffff",
+        slide_duration || 5000
+      ]
     );
     client.release();
     res.status(201).json({ message: "Slide creado correctamente" });
@@ -248,18 +274,48 @@ app.post("/api/hero", async (req, res) => {
   }
 });
 
-// --- API para actualizar un slide (activar/desactivar, editar texto) ---
+
+// --- API para actualizar un slide ---
 app.put("/api/hero/:id", async (req, res) => {
   const { id } = req.params;
-  const { title, subtitle, title_effect, subtitle_effect } = req.body;
+  const {
+    title,
+    subtitle,
+    title_effect,
+    subtitle_effect,
+    font_size_title,
+    font_size_subtitle,
+    color_title,
+    color_subtitle,
+    slide_duration
+  } = req.body;
 
   try {
     const client = await pool.connect();
     await client.query(
       `UPDATE hero_slides
-       SET title = $1, subtitle = $2, title_effect = $3, subtitle_effect = $4
-       WHERE id = $5`,
-      [title, subtitle, title_effect || "fade-right", subtitle_effect || "fade-left", id]
+       SET title = $1,
+           subtitle = $2,
+           title_effect = $3,
+           subtitle_effect = $4,
+           font_size_title = $5,
+           font_size_subtitle = $6,
+           color_title = $7,
+           color_subtitle = $8,
+           slide_duration = $9
+       WHERE id = $10`,
+      [
+        title,
+        subtitle,
+        title_effect || "fade-right",
+        subtitle_effect || "fade-left",
+        font_size_title || "text-3xl",
+        font_size_subtitle || "text-xl",
+        color_title || "#ffffff",
+        color_subtitle || "#ffffff",
+        slide_duration || 5000,
+        id
+      ]
     );
     client.release();
     res.json({ message: "Slide actualizado correctamente" });
@@ -268,6 +324,7 @@ app.put("/api/hero/:id", async (req, res) => {
     res.status(500).json({ error: "Error al actualizar slide" });
   }
 });
+
 
 // --- API para eliminar un slide ---
 app.delete("/api/hero/:id", async (req, res) => {

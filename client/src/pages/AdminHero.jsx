@@ -12,7 +12,8 @@ export default function AdminHero() {
         title_font_size: "text-2xl",
         subtitle_font_size: "text-xl",
         title_color: "#ffffff",
-        subtitle_color: "#ffffff"
+        subtitle_color: "#ffffff",
+        slide_duration: 5,
     });
 
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
@@ -51,7 +52,8 @@ export default function AdminHero() {
                 title_font_size: "text-2xl",
                 subtitle_font_size: "text-xl",
                 title_color: "#ffffff",
-                subtitle_color: "#ffffff"
+                subtitle_color: "#ffffff",
+                slide_duration: 5,
             });
 
             fetchSlides();
@@ -77,7 +79,17 @@ export default function AdminHero() {
             await fetch(`${backendUrl}/api/hero/${slide.id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(slide),
+                body: JSON.stringify({
+                    title: slide.title,
+                    subtitle: slide.subtitle,
+                    title_effect: slide.title_effect,
+                    subtitle_effect: slide.subtitle_effect,
+                    font_size_title: slide.font_size_title,
+                    font_size_subtitle: slide.font_size_subtitle,
+                    color_title: slide.color_title,
+                    color_subtitle: slide.color_subtitle,
+                    slide_duration: slide.slide_duration,
+                }),
             });
             fetchSlides();
             alert("Cambios guardados correctamente");
@@ -166,15 +178,13 @@ export default function AdminHero() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
                         <label className="block text-sm font-semibold mb-1">Tamaño fuente título</label>
-                        <select
+                        <input
+                            type="text"
                             className="w-full p-2 border rounded"
+                            placeholder="ej: 2rem"
                             value={newSlide.title_font_size}
                             onChange={(e) => setNewSlide({ ...newSlide, title_font_size: e.target.value })}
-                        >
-                            <option value="text-xl">Pequeño</option>
-                            <option value="text-2xl">Mediano</option>
-                            <option value="text-4xl">Grande</option>
-                        </select>
+                        />
                     </div>
                     <div>
                         <label className="block text-sm font-semibold mb-1">Color del título</label>
@@ -187,15 +197,13 @@ export default function AdminHero() {
                     </div>
                     <div>
                         <label className="block text-sm font-semibold mb-1">Tamaño fuente subtítulo</label>
-                        <select
+                        <input
+                            type="text"
                             className="w-full p-2 border rounded"
+                            placeholder="ej: 1.2rem"
                             value={newSlide.subtitle_font_size}
                             onChange={(e) => setNewSlide({ ...newSlide, subtitle_font_size: e.target.value })}
-                        >
-                            <option value="text-md">Pequeño</option>
-                            <option value="text-xl">Mediano</option>
-                            <option value="text-2xl">Grande</option>
-                        </select>
+                        />
                     </div>
                     <div>
                         <label className="block text-sm font-semibold mb-1">Color del subtítulo</label>
@@ -204,6 +212,16 @@ export default function AdminHero() {
                             className="w-full h-10"
                             value={newSlide.subtitle_color}
                             onChange={(e) => setNewSlide({ ...newSlide, subtitle_color: e.target.value })}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-semibold mb-1">Tiempo entre slides (segundos)</label>
+                        <input
+                            type="number"
+                            className="w-full p-2 border rounded"
+                            min="1"
+                            value={newSlide.slide_duration}
+                            onChange={(e) => setNewSlide({ ...newSlide, slide_duration: e.target.value })}
                         />
                     </div>
                 </div>
@@ -247,6 +265,74 @@ export default function AdminHero() {
                                     className="w-full mb-2 p-1 border rounded"
                                 />
                                 <img src={slide.image_url} alt="" className="w-32 h-auto rounded shadow" />
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Tamaño fuente título"
+                                        value={slide.font_size_title || ""}
+                                        onChange={(e) =>
+                                            setSlides((prev) =>
+                                                prev.map((s) =>
+                                                    s.id === slide.id ? { ...s, font_size_title: e.target.value } : s
+                                                )
+                                            )
+                                        }
+                                        className="p-1 border rounded"
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="Tamaño fuente subtítulo"
+                                        value={slide.font_size_subtitle || ""}
+                                        onChange={(e) =>
+                                            setSlides((prev) =>
+                                                prev.map((s) =>
+                                                    s.id === slide.id ? { ...s, font_size_subtitle: e.target.value } : s
+                                                )
+                                            )
+                                        }
+                                        className="p-1 border rounded"
+                                    />
+                                    <input
+                                        type="color"
+                                        title="Color título"
+                                        value={slide.color_title || "#000000"}
+                                        onChange={(e) =>
+                                            setSlides((prev) =>
+                                                prev.map((s) =>
+                                                    s.id === slide.id ? { ...s, color_title: e.target.value } : s
+                                                )
+                                            )
+                                        }
+                                        className="p-1 border rounded"
+                                    />
+                                    <input
+                                        type="color"
+                                        title="Color subtítulo"
+                                        value={slide.color_subtitle || "#000000"}
+                                        onChange={(e) =>
+                                            setSlides((prev) =>
+                                                prev.map((s) =>
+                                                    s.id === slide.id ? { ...s, color_subtitle: e.target.value } : s
+                                                )
+                                            )
+                                        }
+                                        className="p-1 border rounded"
+                                    />
+                                    <input
+                                        type="number"
+                                        placeholder="Duración (segundos)"
+                                        value={slide.slide_duration || ""}
+                                        onChange={(e) =>
+                                            setSlides((prev) =>
+                                                prev.map((s) =>
+                                                    s.id === slide.id ? { ...s, slide_duration: e.target.value } : s
+                                                )
+                                            )
+                                        }
+                                        className="p-1 border rounded"
+                                    />
+                                </div>
                             </div>
 
                             <div className="flex flex-col gap-2">
