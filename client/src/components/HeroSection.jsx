@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import useEmblaCarousel from "embla-carousel-react";
 import Autoplay from "embla-carousel-autoplay";
 
@@ -6,24 +6,15 @@ export default function HeroSection() {
   const [slides, setSlides] = useState([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const backendUrl = import.meta.env.VITE_BACKEND_URL;
-  const autoplayRef = useRef(null);
 
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true }, [
-    Autoplay({ delay: 5000 }), // valor inicial genérico
+    Autoplay({ delay: 5000 }), // <-- tiempo fijo (5000ms = 5s)
   ]);
 
   const onSelect = useCallback(() => {
-    if (!emblaApi || !slides.length) return;
-
+    if (!emblaApi) return;
     setSelectedIndex(emblaApi.selectedScrollSnap());
-
-    const currentSlide = slides[emblaApi.selectedScrollSnap()];
-    const duration = (Number(currentSlide.slide_duration) || 5) * 1000; // segundos a milisegundos
-
-    if (autoplayRef.current) {
-      autoplayRef.current.reset(duration);
-    }
-  }, [emblaApi, slides]);
+  }, [emblaApi]);
 
   useEffect(() => {
     const fetchSlides = async () => {
@@ -36,12 +27,8 @@ export default function HeroSection() {
 
   useEffect(() => {
     if (!emblaApi) return;
-    autoplayRef.current = emblaApi.plugins().autoplay;
     emblaApi.on("select", onSelect);
-    
-    // inicializa correctamente el autoplay para el primer slide
-    if (slides.length) onSelect();
-  }, [emblaApi, onSelect, slides]);
+  }, [emblaApi, onSelect]);
 
   return (
     <section className="overflow-hidden relative">
