@@ -7,9 +7,7 @@ export default function HeroSection() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
-  const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true }, [
-    Autoplay({ delay: 5000 }),
-  ]);
+  const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true });
 
   const onSelect = useCallback(() => {
     if (!emblaApi) return;
