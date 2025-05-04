@@ -57,19 +57,21 @@ export default function HeroSection() {
                 {/* Texto animado solo en el slide activo */}
                 <div className="relative text-white text-center p-6 max-w-3xl z-10">
                   <h2
-                    className={`text-4xl md:text-5xl font-bold mb-4 drop-shadow-xl ${
-                      isActive ? slide.title_effect : ""
-                    }`}
+                    className={`font-bold mb-4 drop-shadow-xl ${slide.font_size_title || "text-4xl"
+                      } ${isActive ? slide.title_effect : ""}`}
+                    style={{ color: slide.color_title || "#ffffff" }}
                   >
                     {slide.title}
                   </h2>
+
                   <p
-                    className={`text-lg md:text-xl drop-shadow-lg ${
-                      isActive ? slide.subtitle_effect : ""
-                    }`}
+                    className={`drop-shadow-lg ${slide.font_size_subtitle || "text-xl"
+                      } ${isActive ? slide.subtitle_effect : ""}`}
+                    style={{ color: slide.color_subtitle || "#ffffff" }}
                   >
                     {slide.subtitle}
                   </p>
+
                 </div>
               </div>
             );
