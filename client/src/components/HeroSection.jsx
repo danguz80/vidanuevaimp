@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import useEmblaCarousel from "embla-carousel-react";
 import Autoplay from "embla-carousel-autoplay";
 
@@ -6,15 +6,26 @@ export default function HeroSection() {
   const [slides, setSlides] = useState([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const backendUrl = import.meta.env.VITE_BACKEND_URL;
+  const autoplayRef = useRef(null);
 
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true }, [
-    Autoplay({ delay: 10000 }),
+    Autoplay({ delay: 5000 }), // Valor inicial genérico, luego se actualiza.
   ]);
 
   const onSelect = useCallback(() => {
-    if (!emblaApi) return;
+    if (!emblaApi || !slides.length) return;
+
+    const currentSlide = slides[emblaApi.selectedScrollSnap()];
+    const duration = (currentSlide.slide_duration || 5) * 1000;
+
+    if (autoplayRef.current) {
+      autoplayRef.current.stop();
+      autoplayRef.current.options.delay = duration;
+      autoplayRef.current.play();
+    }
+
     setSelectedIndex(emblaApi.selectedScrollSnap());
-  }, [emblaApi]);
+  }, [emblaApi, slides]);
 
   useEffect(() => {
     const fetchSlides = async () => {
@@ -27,8 +38,12 @@ export default function HeroSection() {
 
   useEffect(() => {
     if (!emblaApi) return;
+
+    autoplayRef.current = emblaApi.plugins().autoplay;
     emblaApi.on("select", onSelect);
-  }, [emblaApi, onSelect]);
+
+    if (slides.length) onSelect(); // Inicializa la duración del primer slide correctamente.
+  }, [emblaApi, onSelect, slides]);
 
   return (
     <section className="overflow-hidden relative">
@@ -57,7 +72,6 @@ export default function HeroSection() {
                 {/* Texto animado solo en el slide activo */}
                 <div
                   className={`relative text-white text-center p-6 max-w-3xl z-10 ${slide.text_position || ""}`}
-                  style={{ transitionDuration: `${slide.slide_duration || 5000}ms` }}
                 >
                   <h2
                     className={`font-bold mb-4 drop-shadow-xl ${slide.font_size_title || "text-4xl"} ${isActive ? slide.title_effect : ""}`}
