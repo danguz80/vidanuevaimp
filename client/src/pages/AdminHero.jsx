@@ -183,9 +183,9 @@ export default function AdminHero() {
                             onChange={(e) => setNewSlide({ ...newSlide, title_font_size: e.target.value })}
                         >
                             <option value="text-lg">Pequeña</option>
-                            <option value="text-xl">Mediana</option>
-                            <option value="text-2xl">Grande</option>
-                            <option value="text-4xl">Extra grande</option>
+                            <option value="text-2xl">Mediana</option>
+                            <option value="text-4xl">Grande</option>
+                            <option value="text-6xl">Extra grande</option>
                         </select>
                     </div>
                     <div>
