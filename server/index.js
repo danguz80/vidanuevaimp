@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { subDays } from "date-fns";
 import pkg from "pg";
+import axios from "axios";
 
 const { Pool } = pkg;
 dotenv.config();
@@ -21,8 +22,6 @@ const pool = new Pool({
     rejectUnauthorized: false, // necesario en Render
   },
 });
-
-
 
 // --- Nuevo endpoint para agregar sermón manualmente ---
 app.post("/api/sermones", async (req, res) => {
@@ -329,6 +328,34 @@ app.delete("/api/hero/:id", async (req, res) => {
   } catch (error) {
     console.error("Error al eliminar slide:", error.message);
     res.status(500).json({ error: "Error al eliminar slide" });
+  }
+});
+
+// --- API para obtener fotos públicas desde Flickr ---
+app.get("/api/flickr/fotos", async (req, res) => {
+  try {
+    const response = await axios.get("https://www.flickr.com/services/rest/", {
+      params: {
+        method: "flickr.people.getPublicPhotos",
+        api_key: process.env.FLICKR_API_KEY,
+        user_id: "202745080@N05",
+        format: "json",
+        nojsoncallback: 1,
+        per_page: 20,
+        extras: "url_b",
+      },
+    });
+
+    const fotos = response.data.photos.photo.map((photo) => ({
+      id: photo.id,
+      title: photo.title,
+      url: photo.url_b || `https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_b.jpg`,
+    }));
+
+    res.json(fotos);
+  } catch (error) {
+    console.error("Error al obtener fotos de Flickr:", error.message);
+    res.status(500).json({ error: "No se pudo obtener fotos de Flickr" });
   }
 });
 
