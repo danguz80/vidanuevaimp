@@ -332,7 +332,17 @@ app.delete("/api/hero/:id", async (req, res) => {
 });
 
 // --- API para obtener fotos públicas desde Flickr ---
+let cachedFotos = null;
+let cacheTimestamp = 0;
+
 app.get("/api/flickr/fotos", async (req, res) => {
+  const now = Date.now();
+
+  // Si hay caché y no han pasado más de 10 minutos
+  if (cachedFotos && now - cacheTimestamp < 10 * 60 * 1000) {
+    return res.json(cachedFotos);
+  }
+
   try {
     const response = await axios.get("https://www.flickr.com/services/rest/", {
       params: {
@@ -352,12 +362,17 @@ app.get("/api/flickr/fotos", async (req, res) => {
       url: photo.url_b || `https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_b.jpg`,
     }));
 
+    // Guardar en caché
+    cachedFotos = fotos;
+    cacheTimestamp = now;
+
     res.json(fotos);
   } catch (error) {
     console.error("Error al obtener fotos de Flickr:", error.message);
     res.status(500).json({ error: "No se pudo obtener fotos de Flickr" });
   }
 });
+
 
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
