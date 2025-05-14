@@ -18,6 +18,8 @@ import AdminPanel from "./pages/AdminPanel";
 import AdminMensajes from "./pages/AdminMensajes";
 import AdminVideos from "./pages/AdminVideos";
 
+import SoundCloudPage from "./pages/SoundCloudPage";
+
 export default function App() {
   return (
     <Router>
@@ -37,6 +39,7 @@ export default function App() {
             <Route path="/admin" element={<AdminPanel />} />
             <Route path="/admin/mensajes" element={<AdminMensajes />} />
             <Route path="/admin/videos" element={<AdminVideos />} /> {/* ✅ Nueva ruta para videos */}
+            <Route path="/soundcloud" element={<SoundCloudPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>
