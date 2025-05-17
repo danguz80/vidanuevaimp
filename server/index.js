@@ -415,6 +415,86 @@ app.get("/api/galeria", async (req, res) => {
   }
 });
 
+//Obtener index
+app.get("/api/galeria/index", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      "SELECT data FROM galeria_index ORDER BY created_at DESC LIMIT 1"
+    );
+    client.release();
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Índice no encontrado" });
+    }
+
+    res.json(result.rows[0].data);
+  } catch (error) {
+    console.error("❌ Error al obtener índice de galería:", error.message);
+    client.release();
+    res.status(500).json({ error: "Error al obtener índice" });
+  }
+});
+
+
+app.post("/api/galeria/index", async (req, res) => {
+  const cloudinary = require("cloudinary").v2;
+  const client = await pool.connect();
+  try {
+    const paginas = [];
+    const aniosSet = new Set();
+
+    let next_cursor = null;
+    let pagina = 0;
+    const limite = 100;
+
+    do {
+      const result = await cloudinary.api.resources({
+        type: "upload",
+        prefix: "galeria_iglesia/",
+        max_results: limite,
+        context: true,
+        next_cursor,
+      });
+
+      const aniosPagina = new Set();
+      const cursor = pagina === 0 ? null : next_cursor;
+
+      for (const r of result.resources) {
+        const anio = r.context?.custom?.fecha_toma?.substring(0, 4);
+        if (anio) {
+          aniosPagina.add(anio);
+          aniosSet.add(anio);
+        }
+      }
+
+      paginas.push({
+        cursor,
+        anios: [...aniosPagina],
+      });
+
+      next_cursor = result.next_cursor;
+      pagina++;
+    } while (next_cursor);
+
+    const index = {
+      anios: [...aniosSet].sort((a, b) => b - a),
+      paginas,
+    };
+
+    // guardar en la base de datos
+    await client.query("INSERT INTO galeria_index (data) VALUES ($1)", [index]);
+    client.release();
+
+    res.json({ message: "Índice creado correctamente", index });
+  } catch (error) {
+    console.error("❌ Error al generar índice:", error);
+    client.release();
+    res.status(500).json({ error: "Error al generar índice de galería" });
+  }
+});
+
+
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
