@@ -391,18 +391,41 @@ app.get("/api/flickr/fotos", async (req, res) => {
   }
 });
 
-// Usar búsqueda avanzada con expression
 app.get("/api/galeria", async (req, res) => {
-  const limit = 50;
-  const cursor = req.query.cursor || undefined;
-
+  const client = await pool.connect();
   try {
+    const { pagina, anio } = req.query;
+    const pageNumber = parseInt(pagina, 10) || 1;
+
+    const indexResult = await client.query(
+      "SELECT data FROM galeria_index ORDER BY created_at DESC LIMIT 1"
+    );
+
+    if (indexResult.rows.length === 0) {
+      return res.status(404).json({ error: "Índice no encontrado" });
+    }
+
+    const { paginas } = indexResult.rows[0].data;
+    let targetPage;
+
+    if (anio) {
+      // Buscar la primera página que contenga el año solicitado
+      targetPage = paginas.find((p) => p.anios.includes(anio));
+    } else {
+      // Buscar por número de página
+      targetPage = paginas[pageNumber - 1];
+    }
+
+    if (!targetPage) {
+      return res.status(404).json({ error: "Página no encontrada" });
+    }
+
     const result = await cloudinary.search
       .expression("folder:galeria_iglesia")
       .with_field("context")
       .sort_by("public_id", "asc")
-      .max_results(limit)
-      .next_cursor(cursor)
+      .max_results(50)
+      .next_cursor(targetPage.cursor || undefined)
       .execute();
 
     const fotos = result.resources.map((r) => ({
@@ -411,25 +434,21 @@ app.get("/api/galeria", async (req, res) => {
       fecha_toma: r.context?.custom?.fecha_toma || "sin_fecha",
     }));
 
-    res.json({
-      fotos,
-      nextCursor: result.next_cursor || null,
-    });
+    res.json({ fotos });
   } catch (error) {
-    console.error("❌ Error en /api/galeria:", error);
-    res.status(500).json({ error: "Error al obtener galería de fotos" });
+    console.error("❌ Error en GET /api/galeria:", error.message);
+    res.status(500).json({ error: "Error al obtener galería" });
+  } finally {
+    client.release();
   }
 });
 
-
-//Obtener index
 app.get("/api/galeria/index", async (req, res) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
       "SELECT data FROM galeria_index ORDER BY created_at DESC LIMIT 1"
     );
-    client.release();
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Índice no encontrado" });
@@ -438,11 +457,11 @@ app.get("/api/galeria/index", async (req, res) => {
     res.json(result.rows[0].data);
   } catch (error) {
     console.error("❌ Error al obtener índice de galería:", error.message);
-    client.release();
     res.status(500).json({ error: "Error al obtener índice" });
+  } finally {
+    client.release();
   }
 });
-
 
 app.post("/api/galeria/index", async (req, res) => {
   const client = await pool.connect();
@@ -452,7 +471,7 @@ app.post("/api/galeria/index", async (req, res) => {
 
     let next_cursor = undefined;
     let pagina = 0;
-    const limite = 100;
+    const limite = 50;
 
     do {
       const result = await cloudinary.search
@@ -484,21 +503,21 @@ app.post("/api/galeria/index", async (req, res) => {
     } while (next_cursor);
 
     const index = {
+      totalPaginas: paginas.length,
       anios: [...aniosSet].sort((a, b) => b - a),
       paginas,
     };
 
     await client.query("INSERT INTO galeria_index (data) VALUES ($1)", [index]);
-    client.release();
 
     res.json({ message: "Índice creado correctamente", index });
   } catch (error) {
-    console.error("❌ Error al generar índice:", error);
-    client.release();
+    console.error("❌ Error al generar índice:", error.message);
     res.status(500).json({ error: "Error al generar índice de galería" });
+  } finally {
+    client.release();
   }
 });
-
 
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
