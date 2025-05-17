@@ -20,6 +20,8 @@ import AdminVideos from "./pages/AdminVideos";
 
 import SoundCloudPage from "./pages/SoundCloudPage";
 
+import GaleriaFotos from "./pages/GaleriaFotos";
+
 export default function App() {
   return (
     <Router>
@@ -40,6 +42,7 @@ export default function App() {
             <Route path="/admin/mensajes" element={<AdminMensajes />} />
             <Route path="/admin/videos" element={<AdminVideos />} /> {/* ✅ Nueva ruta para videos */}
             <Route path="/soundcloud" element={<SoundCloudPage />} />
+            <Route path="/galeria" element={<GaleriaFotos />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>

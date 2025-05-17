@@ -373,6 +373,38 @@ app.get("/api/flickr/fotos", async (req, res) => {
   }
 });
 
+//Obtener galeria de Cloudinary
+app.get("/api/galeria", async (req, res) => {
+  try {
+    let nextCursor = null;
+    const fotos = [];
+
+    do {
+      const result = await cloudinary.api.resources({
+        type: "upload",
+        prefix: "galeria_iglesia/",
+        max_results: 100,
+        context: true,
+        next_cursor: nextCursor,
+      });
+
+      for (const recurso of result.resources) {
+        fotos.push({
+          url: recurso.secure_url,
+          titulo: recurso.public_id.split("/").pop(),
+          fecha_toma: recurso.context?.custom?.fecha_toma || "sin_fecha",
+        });
+      }
+
+      nextCursor = result.next_cursor;
+    } while (nextCursor);
+
+    res.json(fotos);
+  } catch (error) {
+    console.error("❌ Error al obtener galería:", error.message);
+    res.status(500).json({ error: "Error al obtener la galería de fotos" });
+  }
+});
 
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
