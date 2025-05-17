@@ -387,34 +387,31 @@ app.get("/api/flickr/fotos", async (req, res) => {
 
 //Obtener galeria de Cloudinary
 app.get("/api/galeria", async (req, res) => {
+  const limit = 50;
+  const cursor = req.query.cursor || undefined;
+
   try {
-    let nextCursor = null;
-    const fotos = [];
+    const result = await cloudinary.api.resources({
+      type: "upload",
+      prefix: "galeria_iglesia/",
+      max_results: limit,
+      context: true,
+      next_cursor: cursor,
+    });
 
-    do {
-      const result = await cloudinary.api.resources({
-        type: "upload",
-        prefix: "galeria_iglesia/",
-        max_results: 100,
-        context: true,
-        next_cursor: nextCursor,
-      });
+    const fotos = result.resources.map((r) => ({
+      url: r.secure_url,
+      titulo: r.public_id.split("/").pop(),
+      fecha_toma: r.context?.custom?.fecha_toma || "sin_fecha",
+    }));
 
-      for (const recurso of result.resources) {
-        fotos.push({
-          url: recurso.secure_url,
-          titulo: recurso.public_id.split("/").pop(),
-          fecha_toma: recurso.context?.custom?.fecha_toma || "sin_fecha",
-        });
-      }
-
-      nextCursor = result.next_cursor;
-    } while (nextCursor);
-
-    res.json(fotos);
+    res.json({
+      fotos,
+      nextCursor: result.next_cursor || null,
+    });
   } catch (error) {
-    console.error("❌ Error al obtener galería:", error.message);
-    res.status(500).json({ error: "Error al obtener la galería de fotos" });
+    console.error("❌ Error en /api/galeria:", error.message);
+    res.status(500).json({ error: "Error al obtener galería de fotos" });
   }
 });
 
