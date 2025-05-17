@@ -399,6 +399,7 @@ app.get("/api/galeria", async (req, res) => {
   try {
     const result = await cloudinary.search
       .expression("folder:galeria_iglesia")
+      .with_field("context")
       .sort_by("public_id", "asc")
       .max_results(limit)
       .next_cursor(cursor)
@@ -415,10 +416,11 @@ app.get("/api/galeria", async (req, res) => {
       nextCursor: result.next_cursor || null,
     });
   } catch (error) {
-    console.error("❌ Error en /api/galeria:", error.message);
+    console.error("❌ Error en /api/galeria:", error);
     res.status(500).json({ error: "Error al obtener galería de fotos" });
   }
 });
+
 
 //Obtener index
 app.get("/api/galeria/index", async (req, res) => {
@@ -448,13 +450,14 @@ app.post("/api/galeria/index", async (req, res) => {
     const paginas = [];
     const aniosSet = new Set();
 
-    let next_cursor = null;
+    let next_cursor = undefined;
     let pagina = 0;
     const limite = 100;
 
     do {
       const result = await cloudinary.search
         .expression("folder:galeria_iglesia")
+        .with_field("context")
         .sort_by("public_id", "asc")
         .max_results(limite)
         .next_cursor(next_cursor)
@@ -495,6 +498,7 @@ app.post("/api/galeria/index", async (req, res) => {
     res.status(500).json({ error: "Error al generar índice de galería" });
   }
 });
+
 
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
