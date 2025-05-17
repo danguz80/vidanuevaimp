@@ -392,16 +392,17 @@ app.get("/api/flickr/fotos", async (req, res) => {
 });
 
 //Obtener galeria de Cloudinary
+// Obtener galería de Cloudinary con search.expression
 app.get("/api/galeria", async (req, res) => {
   const limit = 50;
-  const nextCursor = req.query.cursor || undefined;
+  const cursor = req.query.cursor || undefined;
 
   try {
     const result = await cloudinary.search
-      .expression("folder:galeria_iglesia/*")
-      .sort_by("public_id", "asc")
+      .expression("folder:galeria_iglesia")
       .max_results(limit)
-      .next_cursor(nextCursor)
+      .next_cursor(cursor)
+      .with_field("context")
       .execute();
 
     const fotos = result.resources.map((r) => ({
@@ -419,6 +420,7 @@ app.get("/api/galeria", async (req, res) => {
     res.status(500).json({ error: "Error al obtener galería de fotos" });
   }
 });
+
 
 
 //Obtener index
