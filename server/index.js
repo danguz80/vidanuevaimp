@@ -462,6 +462,7 @@ app.get("/api/galeria/index", async (req, res) => {
     client.release();
   }
 });
+console.log("✅ POST /api/galeria/index registrado");
 
 app.post("/api/galeria/index", async (req, res) => {
   const client = await pool.connect();
