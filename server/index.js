@@ -5,8 +5,19 @@ import { subDays } from "date-fns";
 import pkg from "pg";
 import axios from "axios";
 
-const { Pool } = pkg;
+import { v2 as cloudinary } from "cloudinary";
+
+// ✅ Cargar .env lo antes posible
 dotenv.config();
+
+// ✅ Configurar cloudinary después de cargar variables
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+const { Pool } = pkg;
 
 const app = express();
 app.use(cors());
@@ -22,6 +33,7 @@ const pool = new Pool({
     rejectUnauthorized: false, // necesario en Render
   },
 });
+
 
 // --- Nuevo endpoint para agregar sermón manualmente ---
 app.post("/api/sermones", async (req, res) => {
