@@ -8,13 +8,14 @@ export default function Header() {
     <header className="bg-white shadow-md relative z-50">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
         {/* Logo */}
-        <div className="flex items-center gap-4">
+        <Link to="/" className="flex items-center gap-4">
           <img
             src="/logo-horizontal.png"
             alt="Logo Iglesia"
             className="h-16 w-auto object-contain"
           />
-        </div>
+        </Link>
+
 
         {/* Botón hamburguesa */}
         <button
