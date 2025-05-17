@@ -11,11 +11,10 @@ const agruparPorAnio = (fotos) => {
 };
 
 const GaleriaFotos = () => {
-  const [paginas, setPaginas] = useState([]); // fotos por página
+  const [paginas, setPaginas] = useState([]);
   const [paginaActual, setPaginaActual] = useState(0);
   const [selectedImage, setSelectedImage] = useState(null);
   const [loading, setLoading] = useState(false);
-
   const [indice, setIndice] = useState({ anios: [], paginas: [] });
 
   const cargarPagina = async (paginaIndex) => {
@@ -42,7 +41,7 @@ const GaleriaFotos = () => {
       try {
         const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/api/galeria/index`);
         setIndice(res.data);
-        cargarPagina(0); // cargar página 1 al inicio
+        cargarPagina(0);
       } catch (err) {
         console.error("❌ Error al obtener índice:", err.message);
       }
@@ -81,20 +80,21 @@ const GaleriaFotos = () => {
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium">Ir a año:</label>
           <select
-            className="border px-2 py-1 rounded w-36"
             onChange={(e) => {
-              const anio = e.target.value;
-              if (!anio) return;
-
-              const index = indice.paginas.findIndex((p) => p.anios.includes(anio));
-              if (index >= 0) {
-                cargarPagina(index);
-              } else {
-                alert(`No se encontró el año ${anio} en el índice`);
+              const selectedYear = e.target.value;
+              const pageIndex = indice.paginas.findIndex((p) =>
+                p.anios.includes(selectedYear)
+              );
+              if (pageIndex >= 0) {
+                cargarPagina(pageIndex);
               }
             }}
+            className="border px-2 py-1 rounded w-32"
+            defaultValue=""
           >
-            <option value="">Selecciona un año</option>
+            <option value="" disabled>
+              Selecciona año
+            </option>
             {indice.anios.map((anio) => (
               <option key={anio} value={anio}>
                 {anio}
@@ -110,15 +110,23 @@ const GaleriaFotos = () => {
           <h2 className="text-2xl font-semibold mb-4">{anio}</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
             {lista.map((foto, i) => (
-              <div key={i} className="cursor-pointer" onClick={() => setSelectedImage(foto.url)}>
-                <img src={foto.url} alt={foto.titulo} className="w-full h-auto rounded shadow" />
+              <div
+                key={i}
+                className="cursor-pointer"
+                onClick={() => setSelectedImage(foto.url)}
+              >
+                <img
+                  src={foto.url}
+                  alt={foto.titulo}
+                  className="w-full h-auto rounded shadow"
+                />
               </div>
             ))}
           </div>
         </div>
       ))}
 
-      {/* Paginación numérica */}
+      {/* Paginación */}
       <div className="flex justify-center mt-8 gap-2">
         <button
           onClick={() => cargarPagina(paginaActual - 1)}
