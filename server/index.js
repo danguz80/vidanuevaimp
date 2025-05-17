@@ -391,8 +391,7 @@ app.get("/api/flickr/fotos", async (req, res) => {
   }
 });
 
-//Obtener galeria de Cloudinary
-// Obtener galería de Cloudinary con search.expression
+// Usar búsqueda avanzada con expression
 app.get("/api/galeria", async (req, res) => {
   const limit = 50;
   const cursor = req.query.cursor || undefined;
@@ -400,9 +399,9 @@ app.get("/api/galeria", async (req, res) => {
   try {
     const result = await cloudinary.search
       .expression("folder:galeria_iglesia")
+      .sort_by("public_id", "asc")
       .max_results(limit)
       .next_cursor(cursor)
-      .with_field("context")
       .execute();
 
     const fotos = result.resources.map((r) => ({
@@ -420,8 +419,6 @@ app.get("/api/galeria", async (req, res) => {
     res.status(500).json({ error: "Error al obtener galería de fotos" });
   }
 });
-
-
 
 //Obtener index
 app.get("/api/galeria/index", async (req, res) => {
@@ -458,9 +455,9 @@ app.post("/api/galeria/index", async (req, res) => {
     do {
       const result = await cloudinary.search
         .expression("folder:galeria_iglesia")
+        .sort_by("public_id", "asc")
         .max_results(limite)
         .next_cursor(next_cursor)
-        .with_field("context")
         .execute();
 
       const aniosPagina = new Set();
@@ -498,9 +495,6 @@ app.post("/api/galeria/index", async (req, res) => {
     res.status(500).json({ error: "Error al generar índice de galería" });
   }
 });
-
-
-
 
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
