@@ -457,10 +457,10 @@ app.post("/api/galeria/index", async (req, res) => {
 
     do {
       const result = await cloudinary.search
-        .expression("folder:galeria_iglesia/*")
-        .sort_by("public_id", "asc")
+        .expression("folder:galeria_iglesia")
         .max_results(limite)
         .next_cursor(next_cursor)
+        .with_field("context")
         .execute();
 
       const aniosPagina = new Set();
@@ -498,6 +498,7 @@ app.post("/api/galeria/index", async (req, res) => {
     res.status(500).json({ error: "Error al generar índice de galería" });
   }
 });
+
 
 
 
