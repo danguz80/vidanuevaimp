@@ -444,7 +444,6 @@ app.get("/api/galeria/index", async (req, res) => {
 
 
 app.post("/api/galeria/index", async (req, res) => {
-  const cloudinary = require("cloudinary").v2;
   const client = await pool.connect();
   try {
     const paginas = [];
