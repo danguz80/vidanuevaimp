@@ -20,7 +20,13 @@ cloudinary.config({
 const { Pool } = pkg;
 
 const app = express();
-app.use(cors());
+app.use(
+  cors({
+    origin: ["https://vidanuevaimp.com"], // ✅ tu dominio real
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 const pool = new Pool({
