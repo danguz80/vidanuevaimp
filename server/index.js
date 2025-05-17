@@ -394,16 +394,15 @@ app.get("/api/flickr/fotos", async (req, res) => {
 //Obtener galeria de Cloudinary
 app.get("/api/galeria", async (req, res) => {
   const limit = 50;
-  const cursor = req.query.cursor || undefined;
+  const nextCursor = req.query.cursor || undefined;
 
   try {
-    const result = await cloudinary.api.resources({
-      type: "upload",
-      prefix: "galeria_iglesia/",
-      max_results: limit,
-      context: true,
-      next_cursor: cursor,
-    });
+    const result = await cloudinary.search
+      .expression("folder:galeria_iglesia/*")
+      .sort_by("public_id", "asc")
+      .max_results(limit)
+      .next_cursor(nextCursor)
+      .execute();
 
     const fotos = result.resources.map((r) => ({
       url: r.secure_url,
@@ -420,6 +419,7 @@ app.get("/api/galeria", async (req, res) => {
     res.status(500).json({ error: "Error al obtener galería de fotos" });
   }
 });
+
 
 //Obtener index
 app.get("/api/galeria/index", async (req, res) => {
@@ -454,13 +454,12 @@ app.post("/api/galeria/index", async (req, res) => {
     const limite = 100;
 
     do {
-      const result = await cloudinary.api.resources({
-        type: "upload",
-        prefix: "galeria_iglesia/",
-        max_results: limite,
-        context: true,
-        next_cursor,
-      });
+      const result = await cloudinary.search
+        .expression("folder:galeria_iglesia/*")
+        .sort_by("public_id", "asc")
+        .max_results(limite)
+        .next_cursor(next_cursor)
+        .execute();
 
       const aniosPagina = new Set();
       const cursor = pagina === 0 ? null : next_cursor;
@@ -487,7 +486,6 @@ app.post("/api/galeria/index", async (req, res) => {
       paginas,
     };
 
-    // guardar en la base de datos
     await client.query("INSERT INTO galeria_index (data) VALUES ($1)", [index]);
     client.release();
 
@@ -498,6 +496,7 @@ app.post("/api/galeria/index", async (req, res) => {
     res.status(500).json({ error: "Error al generar índice de galería" });
   }
 });
+
 
 
 // --- Iniciar servidor ---
