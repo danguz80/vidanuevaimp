@@ -423,10 +423,12 @@ app.get("/api/galeria", async (req, res) => {
     const result = await cloudinary.search
       .expression("folder:galeria_iglesia")
       .with_field("context")
+      .with_field("metadata")  // 👈 ESTO ES CLAVE
       .sort_by("public_id", "asc")
       .max_results(50)
       .next_cursor(targetPage.cursor || undefined)
       .execute();
+
 
     const fotos = result.resources.map((r) => ({
       url: r.secure_url,
