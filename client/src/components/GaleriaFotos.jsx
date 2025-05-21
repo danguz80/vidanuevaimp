@@ -12,7 +12,7 @@ export default function GaleriaFotos() {
     const fetchIndex = async () => {
       const { data } = await axios.get('/api/galeria/index');
       setTotalPaginas(data.totalPaginas);
-      setAños(data.todosLosAnios);
+      setAños(data.anios); // ✅ corregido
     };
     fetchIndex();
   }, []);
@@ -20,15 +20,15 @@ export default function GaleriaFotos() {
   useEffect(() => {
     const fetchFotos = async () => {
       const params = { pagina };
-      if (añoSeleccionado) params.año = añoSeleccionado;
+      if (añoSeleccionado) params.anio = añoSeleccionado; // ✅ debe ser `anio` (sin tilde)
       const { data } = await axios.get('/api/galeria', { params });
-      setFotos(data);
+      setFotos(data.fotos); // ✅ corregido
     };
     fetchFotos();
   }, [pagina, añoSeleccionado]);
 
   const agruparPorAnio = fotos.reduce((acc, foto) => {
-    const anio = foto.context?.custom?.fecha_toma?.substring(0, 4) || 'Sin fecha';
+    const anio = foto.fecha_toma?.substring(0, 4) || 'Sin fecha'; // ✅ corregido
     if (!acc[anio]) acc[anio] = [];
     acc[anio].push(foto);
     return acc;
@@ -80,11 +80,11 @@ export default function GaleriaFotos() {
         <div key={anio} className="mb-6">
           <h2 className="text-xl font-bold mb-2">{anio}</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            {imagenes.map((foto) => (
+            {imagenes.map((foto, i) => (
               <img
-                key={foto.public_id}
-                src={foto.secure_url}
-                alt="Foto"
+                key={i}
+                src={foto.url}
+                alt={foto.titulo}
                 className="w-full h-auto rounded shadow hover:scale-105 transition-transform"
               />
             ))}
