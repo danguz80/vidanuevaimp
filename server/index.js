@@ -429,13 +429,17 @@ app.get("/api/galeria", async (req, res) => {
       .next_cursor(targetPage.cursor || undefined)
       .execute();
 
-      const fotos = result.resources.map((r) => ({
+    const fotos = result.resources.map((r) => {
+      return {
         url: r.secure_url,
         titulo: r.public_id.split("/").pop(),
         fecha_toma: r.context?.custom?.fecha_toma || "sin_fecha",
-        context: r.context || {}, // ✅ importante
-      }));
-          
+        context: r.context || { custom: {} }, // 👈 asegúrate que siempre haya `custom`
+      };
+    });
+
+
+    console.log("✅ Fotos cargadas:", fotos.map(f => f.fecha_toma));
 
     res.json({ fotos });
   } catch (error) {
