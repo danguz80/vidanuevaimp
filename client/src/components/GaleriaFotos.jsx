@@ -49,7 +49,7 @@ export default function GaleriaFotos() {
     }, [pagina, añoSeleccionado]);
 
     const agrupadas = fotos.reduce((acc, foto) => {
-        const anio = foto.fecha_toma?.toString().substring(0, 4) || 'Sin fecha';
+        const anio = foto.context?.custom?.fecha_toma?.substring(0, 4) || 'Sin fecha';
         if (!acc[anio]) acc[anio] = [];
         acc[anio].push(foto);
         return acc;
