@@ -47,7 +47,6 @@ export default function GaleriaFotos() {
         };
         fetchFotos();
     }, [pagina, añoSeleccionado]);
-    console.log("🧪 Año extraído:", foto.context?.custom?.fecha_toma?.substring(0, 4));
 
     const agrupadas = fotos.reduce((acc, foto) => {
         const anio = foto.fecha_toma?.toString().substring(0, 4) || 'Sin fecha';
