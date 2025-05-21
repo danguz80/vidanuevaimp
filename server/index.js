@@ -530,6 +530,21 @@ app.post("/api/galeria/index", async (req, res) => {
   }
 });
 
+app.get("/api/test-cloudinary", async (req, res) => {
+  try {
+    const result = await cloudinary.search
+      .expression("folder:galeria_iglesia")
+      .sort_by("public_id", "asc")
+      .max_results(1)
+      .execute();
+
+    res.json(result.resources);
+  } catch (error) {
+    console.error("❌ Error en test Cloudinary:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
