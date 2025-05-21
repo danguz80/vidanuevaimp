@@ -23,11 +23,12 @@ export default function GaleriaFotos() {
       if (añoSeleccionado) params.anio = añoSeleccionado; // ✅ debe ser `anio` (sin tilde)
       const { data } = await axios.get('/api/galeria', { params });
       setFotos(data.fotos); // ✅ corregido
+      console.log("📸 data.fotos:", data.fotos);
     };
     fetchFotos();
   }, [pagina, añoSeleccionado]);
 
-  const agruparPorAnio = fotos.reduce((acc, foto) => {
+  const agruparPorAnio = (Array.isArray(fotos) ? fotos : []).reduce((acc, foto) => {
     const anio = foto.fecha_toma?.substring(0, 4) || 'Sin fecha'; // ✅ corregido
     if (!acc[anio]) acc[anio] = [];
     acc[anio].push(foto);
