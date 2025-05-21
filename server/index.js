@@ -487,7 +487,17 @@ app.post("/api/galeria/index", async (req, res) => {
       const cursor = pagina === 0 ? null : next_cursor;
 
       for (const r of result.resources) {
-        const anio = r.context?.custom?.fecha_toma?.substring(0, 4);
+        let anio = r.context?.custom?.fecha_toma?.substring(0, 4);
+
+        if (!anio) {
+          // Intentar extraer el año desde el nombre del archivo
+          const nombre = r.public_id.split("/").pop(); // ej. 2011-05-20_IMG_0318
+          const match = nombre.match(/^(\d{4})-/);
+          if (match) {
+            anio = match[1];
+          }
+        }
+
         if (anio) {
           aniosPagina.add(anio);
           aniosSet.add(anio);
@@ -519,6 +529,7 @@ app.post("/api/galeria/index", async (req, res) => {
     client.release();
   }
 });
+
 
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
