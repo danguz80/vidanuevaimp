@@ -431,7 +431,7 @@ app.get("/api/galeria", async (req, res) => {
     const fotos = result.resources.map((r) => ({
       url: r.secure_url,
       titulo: r.public_id.split("/").pop(),
-      fecha_toma: r.context?.custom?.fecha_toma || "sin_fecha",
+      fecha_toma: r.metadata?.fecha_toma || "sin_fecha"
     }));
 
     res.json({ fotos });
