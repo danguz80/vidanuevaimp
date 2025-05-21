@@ -429,12 +429,11 @@ app.get("/api/galeria", async (req, res) => {
       .next_cursor(targetPage.cursor || undefined)
       .execute();
 
-
-    const fotos = result.resources.map((r) => ({
-      url: r.secure_url,
-      titulo: r.public_id.split("/").pop(),
-      fecha_toma: r.metadata?.fecha_toma || "sin_fecha"
-    }));
+      const fotos = result.resources.map((r) => ({
+        url: r.secure_url,
+        titulo: r.public_id.split("/").pop(),
+        context: r.context || {}, // ✅ Aquí incluimos el contexto completo
+      }));      
 
     res.json({ fotos });
   } catch (error) {
