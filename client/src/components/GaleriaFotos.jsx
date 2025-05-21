@@ -12,7 +12,7 @@ export default function GaleriaFotos() {
   useEffect(() => {
     const fetchIndex = async () => {
       try {
-        const { data } = await axios.get('/api/galeria/index');
+        const { data } = await axios.get("https://iglesia-backend.onrender.com/api/galeria/index");
         setTotalPaginas(data.totalPaginas || 1);
         setAños(data.anios || []);
       } catch (err) {
@@ -22,15 +22,15 @@ export default function GaleriaFotos() {
     };
     fetchIndex();
   }, []);
-
+  
   useEffect(() => {
     const fetchFotos = async () => {
       try {
         const params = { pagina };
         if (añoSeleccionado) params.anio = añoSeleccionado;
-
-        const { data } = await axios.get('/api/galeria', { params });
-
+  
+        const { data } = await axios.get("https://iglesia-backend.onrender.com/api/galeria", { params });
+  
         if (Array.isArray(data.fotos)) {
           setFotos(data.fotos);
           setError('');
@@ -46,7 +46,7 @@ export default function GaleriaFotos() {
       }
     };
     fetchFotos();
-  }, [pagina, añoSeleccionado]);
+  }, [pagina, añoSeleccionado]);  
 
   const agrupadas = fotos.reduce((acc, foto) => {
     const anio = foto.fecha_toma?.substring(0, 4) || 'Sin fecha';
