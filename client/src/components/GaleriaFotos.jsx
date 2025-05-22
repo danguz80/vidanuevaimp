@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 
 export default function GaleriaFotos() {
@@ -8,6 +8,8 @@ export default function GaleriaFotos() {
     const [años, setAños] = useState([]);
     const [añoSeleccionado, setAñoSeleccionado] = useState('');
     const [error, setError] = useState('');
+    const [imagenSeleccionada, setImagenSeleccionada] = useState(null);
+    const [mostrarModal, setMostrarModal] = useState(false);
 
     useEffect(() => {
         const fetchIndex = async () => {
@@ -35,7 +37,6 @@ export default function GaleriaFotos() {
                     setFotos(data.fotos);
                     setError('');
                 } else {
-                    console.warn("⚠️ La respuesta no contiene un array de fotos:", data);
                     setFotos([]);
                     setError("No se encontraron fotos para esta página.");
                 }
@@ -49,14 +50,41 @@ export default function GaleriaFotos() {
     }, [pagina, añoSeleccionado]);
 
     const agrupadas = fotos.reduce((acc, foto) => {
-        const anio = foto.fecha_toma?.substring(0, 4) || 'Sin fecha';
+        const anio =
+            foto.fecha_toma?.substring(0, 4) ||
+            foto.context?.fecha_toma?.substring(0, 4) ||
+            'Sin fecha';
         if (!acc[anio]) acc[anio] = [];
         acc[anio].push(foto);
         return acc;
     }, {});
 
+    const formatearAnio = (a) => (a === 'sin_fecha' || a === 'Sin fecha' ? 'Sin fecha' : a);
+
+    // Navegación con flechas en el modal
+    const handleKeyDown = useCallback(
+        (e) => {
+            if (!mostrarModal || !imagenSeleccionada) return;
+
+            const index = fotos.findIndex((f) => f.url === imagenSeleccionada.url);
+            if (e.key === 'Escape') {
+                setMostrarModal(false);
+            } else if (e.key === 'ArrowRight' && index < fotos.length - 1) {
+                setImagenSeleccionada(fotos[index + 1]);
+            } else if (e.key === 'ArrowLeft' && index > 0) {
+                setImagenSeleccionada(fotos[index - 1]);
+            }
+        },
+        [mostrarModal, imagenSeleccionada, fotos]
+    );
+
+    useEffect(() => {
+        document.addEventListener("keydown", handleKeyDown);
+        return () => document.removeEventListener("keydown", handleKeyDown);
+    }, [handleKeyDown]);
+
     return (
-        <div className="p-4">
+        <div className="p-4 relative">
             <div className="mb-4 flex items-center gap-4">
                 <label>Año:</label>
                 <select
@@ -104,21 +132,41 @@ export default function GaleriaFotos() {
                 </div>
             )}
 
-            {Object.entries(agrupadas).sort((a, b) => Number(a[0]) - Number(b[0])).map(([anio, imagenes]) => (
-                <div key={anio} className="mb-6">
-                    <h2 className="text-xl font-bold mb-2">{anio}</h2>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                        {imagenes.map((foto, i) => (
-                            <img
-                                key={i}
-                                src={foto.url}
-                                alt={foto.titulo}
-                                className="w-full h-auto rounded shadow hover:scale-105 transition-transform"
-                            />
-                        ))}
+            {Object.entries(agrupadas)
+                .sort((a, b) => Number(a[0]) - Number(b[0]))
+                .map(([anio, imagenes]) => (
+                    <div key={anio} className="mb-6">
+                        <h2 className="text-xl font-bold mb-2">{formatearAnio(anio)}</h2>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            {imagenes.map((foto, i) => (
+                                <img
+                                    key={i}
+                                    src={foto.url}
+                                    alt={foto.titulo}
+                                    className="w-full h-auto rounded shadow hover:scale-105 transition-transform cursor-pointer"
+                                    onClick={() => {
+                                        setImagenSeleccionada(foto);
+                                        setMostrarModal(true);
+                                    }}
+                                />
+                            ))}
+                        </div>
                     </div>
+                ))}
+
+            {mostrarModal && imagenSeleccionada && (
+                <div
+                    className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50"
+                    onClick={() => setMostrarModal(false)}
+                >
+                    <img
+                        src={imagenSeleccionada.url}
+                        alt={imagenSeleccionada.titulo}
+                        className="max-w-full max-h-full rounded shadow-lg"
+                        onClick={(e) => e.stopPropagation()}
+                    />
                 </div>
-            ))}
+            )}
         </div>
     );
 }
