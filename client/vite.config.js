@@ -12,5 +12,8 @@ export default defineConfig({
         warn(warning)
       }
     }
+  },
+  esbuild: {
+    logOverride: { 'this-is-undefined-in-esm': 'silent' }
   }
 })
