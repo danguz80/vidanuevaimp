@@ -4,6 +4,7 @@ import { Heart, Gift, Church, Users, Book, Lightbulb } from "lucide-react";
 export default function DonacionPage() {
   const [amount, setAmount] = useState(null);
   const [customAmount, setCustomAmount] = useState("");
+  const [debouncedCustomAmount, setDebouncedCustomAmount] = useState("");
   const [email, setEmail] = useState("");
   const [showPayPalButtons, setShowPayPalButtons] = useState(false);
   const [exchangeRate, setExchangeRate] = useState(null);
@@ -40,6 +41,15 @@ export default function DonacionPage() {
     return (clpAmount / exchangeRate).toFixed(2);
   };
 
+  // Debounce para customAmount (espera 800ms después de que el usuario deja de escribir)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedCustomAmount(customAmount);
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [customAmount]);
+
   useEffect(() => {
     // Configuración para USD
     const script = document.createElement("script");
@@ -60,7 +70,7 @@ export default function DonacionPage() {
   }, []);
 
   useEffect(() => {
-    const finalAmountCLP = customAmount || amount;
+    const finalAmountCLP = debouncedCustomAmount || amount;
     
     if (showPayPalButtons && window.paypal && finalAmountCLP && finalAmountCLP > 0 && exchangeRate) {
       // Limpiar botones anteriores
@@ -97,7 +107,7 @@ export default function DonacionPage() {
             
             // Enviar información al backend para generar y enviar comprobante
             try {
-              const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/donaciones`, {
+              const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://iglesia-backend.onrender.com'}/api/donaciones`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -153,7 +163,7 @@ Que Dios te bendiga abundantemente.`);
         }
       }).render(paypalRef.current);
     }
-  }, [showPayPalButtons, amount, customAmount, exchangeRate]);
+  }, [showPayPalButtons, amount, debouncedCustomAmount, exchangeRate, email]);
 
   const handlePayPalMe = () => {
     // Opción alternativa con PayPal.me (requiere cuenta)
