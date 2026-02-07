@@ -4,11 +4,41 @@ import { Heart, Gift, Church, Users, Book, Lightbulb } from "lucide-react";
 export default function DonacionPage() {
   const [amount, setAmount] = useState(null);
   const [customAmount, setCustomAmount] = useState("");
+  const [email, setEmail] = useState("");
   const [showPayPalButtons, setShowPayPalButtons] = useState(false);
+  const [exchangeRate, setExchangeRate] = useState(null);
   const paypalRef = useRef();
   
-  // Montos predefinidos en USD
-  const predefinedAmounts = [5, 10, 20, 50, 100, 200];
+  // Montos predefinidos en CLP (mostrados al usuario)
+  const predefinedAmountsCLP = [5000, 10000, 20000];
+
+  // Obtener tipo de cambio CLP a USD
+  useEffect(() => {
+    const fetchExchangeRate = async () => {
+      try {
+        // API gratuita para obtener tipo de cambio
+        const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+        const data = await response.json();
+        // Guardar la tasa CLP por 1 USD (ej: 900 CLP = 1 USD)
+        setExchangeRate(data.rates.CLP);
+      } catch (error) {
+        console.error('Error al obtener tipo de cambio:', error);
+        // Valor por defecto en caso de error (aproximado)
+        setExchangeRate(900);
+      }
+    };
+    
+    fetchExchangeRate();
+    // Actualizar cada 24 horas
+    const interval = setInterval(fetchExchangeRate, 24 * 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Función para convertir CLP a USD
+  const convertCLPtoUSD = (clpAmount) => {
+    if (!exchangeRate) return 0;
+    return (clpAmount / exchangeRate).toFixed(2);
+  };
 
   useEffect(() => {
     // Configuración para USD
@@ -30,13 +60,16 @@ export default function DonacionPage() {
   }, []);
 
   useEffect(() => {
-    const finalAmount = customAmount || amount;
+    const finalAmountCLP = customAmount || amount;
     
-    if (showPayPalButtons && window.paypal && finalAmount && finalAmount > 0) {
+    if (showPayPalButtons && window.paypal && finalAmountCLP && finalAmountCLP > 0 && exchangeRate) {
       // Limpiar botones anteriores
       if (paypalRef.current) {
         paypalRef.current.innerHTML = '';
       }
+
+      // Convertir CLP a USD
+      const finalAmountUSD = convertCLPtoUSD(finalAmountCLP);
 
       window.paypal.Buttons({
         style: {
@@ -50,16 +83,69 @@ export default function DonacionPage() {
             purchase_units: [{
               amount: {
                 currency_code: 'USD',
-                value: finalAmount.toString()
+                value: finalAmountUSD
               },
-              description: 'Donación - Iglesia Misión Pentecostés Templo Vida Nueva'
+              description: `Donación de $${finalAmountCLP.toLocaleString('es-CL')} CLP - Iglesia Misión Pentecostés Templo Vida Nueva`,
+              custom_id: email || 'sin-email'
             }]
           });
         },
         onApprove: async (data, actions) => {
-          const order = await actions.order.capture();
-          alert('¡Gracias por tu donación! Que Dios te bendiga abundantemente.');
-          console.log('Donación completada:', order);
+          try {
+            const order = await actions.order.capture();
+            console.log('Donación completada:', order);
+            
+            // Enviar información al backend para generar y enviar comprobante
+            try {
+              const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/donaciones`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  orderId: order.id,
+                  email: email || null,
+                  payerName: order.payer?.name?.given_name && order.payer?.name?.surname 
+                    ? `${order.payer.name.given_name} ${order.payer.name.surname}`
+                    : order.payer?.email_address || 'Anónimo',
+                  amountCLP: finalAmountCLP,
+                  amountUSD: finalAmountUSD
+                })
+              });
+
+              if (response.ok) {
+                const result = await response.json();
+                if (email && result.emailSent) {
+                  alert(`¡Gracias por tu donación de $${finalAmountCLP.toLocaleString('es-CL')} CLP! 
+                  
+Hemos enviado un comprobante a tu email: ${email}
+                  
+Que Dios te bendiga abundantemente.`);
+                } else {
+                  alert(`¡Gracias por tu donación de $${finalAmountCLP.toLocaleString('es-CL')} CLP! Que Dios te bendiga abundantemente.`);
+                }
+              } else {
+                alert(`¡Gracias por tu donación de $${finalAmountCLP.toLocaleString('es-CL')} CLP! 
+                
+Tu donación fue procesada exitosamente.
+Que Dios te bendiga abundantemente.`);
+              }
+            } catch (apiError) {
+              console.error('Error al comunicarse con el servidor:', apiError);
+              alert(`¡Gracias por tu donación de $${finalAmountCLP.toLocaleString('es-CL')} CLP! 
+              
+Tu donación fue procesada exitosamente.
+Que Dios te bendiga abundantemente.`);
+            }
+            
+            // Limpiar formulario
+            setAmount(null);
+            setCustomAmount('');
+            setEmail('');
+          } catch (error) {
+            console.error('Error al capturar el pago:', error);
+            alert('Hubo un error al procesar la donación. Por favor contacta con nosotros.');
+          }
         },
         onError: (err) => {
           console.error('Error en PayPal:', err);
@@ -67,7 +153,7 @@ export default function DonacionPage() {
         }
       }).render(paypalRef.current);
     }
-  }, [showPayPalButtons, amount, customAmount]);
+  }, [showPayPalButtons, amount, customAmount, exchangeRate]);
 
   const handlePayPalMe = () => {
     // Opción alternativa con PayPal.me (requiere cuenta)
@@ -138,10 +224,10 @@ export default function DonacionPage() {
 
             <div className="mb-6">
               <label className="block text-sm font-semibold text-gray-700 mb-3">
-                Selecciona un monto (USD):
+                Selecciona un monto (CLP):
               </label>
               <div className="grid grid-cols-3 gap-3 mb-4">
-                {predefinedAmounts.map((amt) => (
+                {predefinedAmountsCLP.map((amt) => (
                   <button
                     key={amt}
                     onClick={() => {
@@ -154,14 +240,14 @@ export default function DonacionPage() {
                         : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                     }`}
                   >
-                    ${amt}
+                    ${amt.toLocaleString('es-CL')}
                   </button>
                 ))}
               </div>
 
               <div className="relative">
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  O ingresa otro monto:
+                  O ingresa otro monto en CLP:
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-3 text-gray-500 font-semibold">$</span>
@@ -174,27 +260,55 @@ export default function DonacionPage() {
                     }}
                     placeholder="0"
                     className="w-full pl-8 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    min="1"
-                    step="1"
+                    min="1000"
+                    step="1000"
                   />
                 </div>
+                {(amount || customAmount) && exchangeRate && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    Equivalente: ~USD ${convertCLPtoUSD(customAmount || amount)}
+                  </p>
+                )}
+              </div>
+
+              <div className="mt-4">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Email para comprobante (opcional):
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="tu@email.com"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Te enviaremos un comprobante de tu donación
+                </p>
               </div>
             </div>
 
             {/* Botones de PayPal */}
-            {(amount || customAmount) && (
+            {(amount || customAmount) && exchangeRate && (
               <div className="mb-4">
                 <div ref={paypalRef} className="min-h-[150px]"></div>
               </div>
             )}
 
-            {!amount && !customAmount && (
+            {!exchangeRate && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-center text-yellow-700 mb-4">
+                Cargando tipo de cambio...
+              </div>
+            )}
+
+            {!amount && !customAmount && exchangeRate && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center text-blue-700 mb-4">
-                Selecciona o ingresa un monto para ver las opciones de pago
+                Selecciona o ingresa un monto en CLP para continuar
               </div>
             )}
 
             <div className="text-center text-sm text-gray-500 mb-4">
+              ✓ Montos mostrados en CLP, procesados en USD<br />
               ✓ No necesitas cuenta de PayPal para donar<br />
               ✓ Tu donación es segura y encriptada
             </div>

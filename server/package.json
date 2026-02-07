@@ -19,6 +19,8 @@
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "luxon": "^3.6.1",
+    "nodemailer": "^8.0.1",
+    "pdfkit": "^0.17.2",
     "pg": "^8.14.1"
   },
   "devDependencies": {
