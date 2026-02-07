@@ -7,13 +7,13 @@ export default function DonacionPage() {
   const [showPayPalButtons, setShowPayPalButtons] = useState(false);
   const paypalRef = useRef();
   
-  // Montos predefinidos en pesos chilenos
-  const predefinedAmounts = [5000, 10000, 20000, 50000, 100000, 200000];
+  // Montos predefinidos en USD
+  const predefinedAmounts = [5, 10, 20, 50, 100, 200];
 
   useEffect(() => {
-    // Cargar el SDK de PayPal con CLP (pesos chilenos)
+    // Configuración para USD
     const script = document.createElement("script");
-    script.src = "https://www.paypal.com/sdk/js?client-id=ARh2dyL9_bTmMf9WoDZG4bkOr_zEBhyJFcuk5h1ollXIESmwTWKb3mhFoxHTkblwMMTTOuh8zWrWfSMP&currency=CLP&locale=es_CL";
+    script.src = "https://www.paypal.com/sdk/js?client-id=ARh2dyL9_bTmMf9WoDZG4bkOr_zEBhyJFcuk5h1ollXIESmwTWKb3mhFoxHTkblwMMTTOuh8zWrWfSMP&currency=USD&locale=es_CL";
     script.async = true;
     
     script.onload = () => {
@@ -49,7 +49,7 @@ export default function DonacionPage() {
           return actions.order.create({
             purchase_units: [{
               amount: {
-                currency_code: 'CLP',
+                currency_code: 'USD',
                 value: finalAmount.toString()
               },
               description: 'Donación - Iglesia Misión Pentecostés Templo Vida Nueva'
@@ -138,7 +138,7 @@ export default function DonacionPage() {
 
             <div className="mb-6">
               <label className="block text-sm font-semibold text-gray-700 mb-3">
-                Selecciona un monto (CLP):
+                Selecciona un monto (USD):
               </label>
               <div className="grid grid-cols-3 gap-3 mb-4">
                 {predefinedAmounts.map((amt) => (
@@ -154,7 +154,7 @@ export default function DonacionPage() {
                         : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                     }`}
                   >
-                    ${amt.toLocaleString('es-CL')}
+                    ${amt}
                   </button>
                 ))}
               </div>
@@ -174,8 +174,8 @@ export default function DonacionPage() {
                     }}
                     placeholder="0"
                     className="w-full pl-8 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    min="1000"
-                    step="1000"
+                    min="1"
+                    step="1"
                   />
                 </div>
               </div>
