@@ -22,7 +22,11 @@ const { Pool } = pkg;
 const app = express();
 app.use(
   cors({
-    origin: ["https://vidanuevaimp.com"], // ✅ tu dominio real
+    origin: [
+      "https://vidanuevaimp.com", 
+      "http://localhost:5173",
+      /^https:\/\/.*\.app\.github\.dev$/  // Permite todos los dominios de Codespaces
+    ],
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   })
