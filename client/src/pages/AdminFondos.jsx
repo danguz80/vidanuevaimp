@@ -8,7 +8,7 @@ const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onr
 const COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"];
 
 export default function AdminFondos() {
-  const { token } = useAuth();
+  const { getToken } = useAuth();
   const navigate = useNavigate();
   const [fondos, setFondos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,12 +19,13 @@ export default function AdminFondos() {
   const [donacionesFondo, setDonacionesFondo] = useState({});
 
   const cargarFondos = () => {
+    const token = getToken();
     fetch(`${API_URL}/api/fondos`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.json())
       .then(data => {
-        setFondos(data);
+        setFondos(Array.isArray(data) ? data : []);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -55,7 +56,7 @@ export default function AdminFondos() {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${getToken()}`,
         },
         body: JSON.stringify({ meta: parseFloat(nuevaMeta) }),
       });
@@ -79,7 +80,7 @@ export default function AdminFondos() {
     if (!donacionesFondo[fondoId]) {
       try {
         const res = await fetch(`${API_URL}/api/fondos/${fondoId}/donaciones`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${getToken()}` },
         });
         const data = await res.json();
         setDonacionesFondo(prev => ({ ...prev, [fondoId]: data }));
