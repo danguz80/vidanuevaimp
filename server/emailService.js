@@ -138,6 +138,15 @@ export const sendDonationReceipt = async (donationData) => {
 export const saveDonation = async (pool, donationData) => {
   const client = await pool.connect();
   try {
+    // Evitar duplicados: si el order_id ya existe, devolver el registro existente
+    const existing = await client.query(
+      'SELECT * FROM donaciones WHERE order_id = $1',
+      [donationData.orderId]
+    );
+    if (existing.rows.length > 0) {
+      return existing.rows[0];
+    }
+
     const result = await client.query(
       `INSERT INTO donaciones (order_id, email, payer_name, amount_clp, amount_usd, fondo_id, fecha)
        VALUES ($1, $2, $3, $4, $5, $6, NOW())

@@ -8,10 +8,12 @@ export default function DonacionPage() {
   const [customAmount, setCustomAmount] = useState("");
   const [debouncedCustomAmount, setDebouncedCustomAmount] = useState("");
   const [email, setEmail] = useState("");
+  const emailRef = useRef("");
   const [showPayPalButtons, setShowPayPalButtons] = useState(false);
   const [exchangeRate, setExchangeRate] = useState(null);
   const [fondos, setFondos] = useState([]);
   const [fondoSeleccionado, setFondoSeleccionado] = useState(null);
+  const fondoSeleccionadoRef = useRef(null);
   const paypalRef = useRef();
   
   const predefinedAmountsCLP = [5000, 10000, 20000];
@@ -65,6 +67,10 @@ export default function DonacionPage() {
     if (!exchangeRate) return 0;
     return (clpAmount / exchangeRate).toFixed(2);
   };
+
+  // Mantener refs sincronizados para usarlos en el closure de onApprove sin re-renderizar botones
+  useEffect(() => { emailRef.current = email; }, [email]);
+  useEffect(() => { fondoSeleccionadoRef.current = fondoSeleccionado; }, [fondoSeleccionado]);
 
   // Debounce para customAmount (espera 800ms después de que el usuario deja de escribir)
   useEffect(() => {
@@ -129,6 +135,9 @@ export default function DonacionPage() {
           try {
             const order = await actions.order.capture();
             console.log('Donación completada:', order);
+            // Leer email y fondo desde refs para obtener los valores actuales
+            const currentEmail = emailRef.current;
+            const currentFondo = fondoSeleccionadoRef.current;
             
             // Enviar información al backend para generar y enviar comprobante
             try {
@@ -139,22 +148,22 @@ export default function DonacionPage() {
                 },
                 body: JSON.stringify({
                   orderId: order.id,
-                  email: email || null,
+                  email: currentEmail || null,
                   payerName: order.payer?.name?.given_name && order.payer?.name?.surname 
                     ? `${order.payer.name.given_name} ${order.payer.name.surname}`
                     : order.payer?.email_address || 'Anónimo',
                   amountCLP: finalAmountCLP,
                   amountUSD: finalAmountUSD,
-                  fondoId: fondoSeleccionado?.id || 1
+                  fondoId: currentFondo?.id || 1
                 })
               });
 
               if (response.ok) {
                 const result = await response.json();
-                if (email && result.emailSent) {
+                if (currentEmail && result.emailSent) {
                   alert(`¡Gracias por tu donación de $${finalAmountCLP.toLocaleString('es-CL')} CLP! 
                   
-Hemos enviado un comprobante a tu email: ${email}
+Hemos enviado un comprobante a tu email: ${currentEmail}
                   
 Que Dios te bendiga abundantemente.`);
                 } else {
@@ -189,7 +198,7 @@ Que Dios te bendiga abundantemente.`);
         }
       }).render(paypalRef.current);
     }
-  }, [showPayPalButtons, amount, debouncedCustomAmount, exchangeRate, email]);
+  }, [showPayPalButtons, amount, debouncedCustomAmount, exchangeRate]);
 
   const handlePayPalMe = () => {
     // Opción alternativa con PayPal.me (requiere cuenta)
