@@ -20,8 +20,31 @@ const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, porcent
   );
 };
 
-function FondoCard({ fondo, color, index }) {
+function FondoCard({ fondo, color }) {
   const pct = parseFloat(fondo.porcentaje) || 0;
+  const tieneMeta = fondo.porcentaje != null;
+
+  if (!tieneMeta) {
+    // Fondo sin meta: mostrar tarjeta informativa sin gráfico de porcentaje
+    return (
+      <div className="bg-white rounded-xl shadow-md p-6 flex flex-col items-center justify-center min-h-[260px]">
+        <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ backgroundColor: color }}>
+          <Target size={20} color="white" />
+        </div>
+        <h3 className="text-lg font-bold text-gray-800 mb-1 text-center">{fondo.nombre}</h3>
+        {fondo.descripcion && (
+          <p className="text-sm text-gray-500 mb-4 text-center">{fondo.descripcion}</p>
+        )}
+        <div
+          className="mt-4 px-4 py-2 rounded-full text-sm font-semibold text-white"
+          style={{ backgroundColor: color }}
+        >
+          Fondo activo
+        </div>
+      </div>
+    );
+  }
+
   const data = [
     { name: fondo.nombre, porcentaje: pct },
     { name: "Restante", porcentaje: Math.max(0, 100 - pct) },
@@ -136,35 +159,42 @@ export default function ProgresoFondos() {
               ))}
             </div>
 
-            {/* Gráfico general comparativo */}
-            <div className="mt-16 bg-white rounded-xl shadow-md p-8">
-              <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-                Distribución General de Avance
-              </h2>
-              <ResponsiveContainer width="100%" height={350}>
-                <PieChart>
-                  <Pie
-                    data={fondos.map(f => ({
-                      name: f.nombre,
-                      value: parseFloat(f.porcentaje) || 0,
-                      porcentaje: parseFloat(f.porcentaje) || 0,
-                    }))}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={130}
-                    dataKey="value"
-                    labelLine={false}
-                    label={renderCustomLabel}
-                  >
-                    {fondos.map((_, index) => (
-                      <Cell key={index} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => [`${value}%`, "Progreso"]} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            {/* Gráfico general comparativo: solo fondos con meta */}
+            {fondos.some(f => f.porcentaje != null) && (
+              <div className="mt-16 bg-white rounded-xl shadow-md p-8">
+                <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
+                  Distribución General de Avance
+                </h2>
+                <ResponsiveContainer width="100%" height={350}>
+                  <PieChart>
+                    <Pie
+                      data={fondos
+                        .filter(f => f.porcentaje != null)
+                        .map((f, i) => ({
+                          name: f.nombre,
+                          value: parseFloat(f.porcentaje) || 0,
+                          porcentaje: parseFloat(f.porcentaje) || 0,
+                          originalIndex: fondos.indexOf(f),
+                        }))}
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={130}
+                      dataKey="value"
+                      labelLine={false}
+                      label={renderCustomLabel}
+                    >
+                      {fondos
+                        .filter(f => f.porcentaje != null)
+                        .map((f) => (
+                          <Cell key={f.id} fill={COLORS[fondos.indexOf(f) % COLORS.length]} />
+                        ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => [`${value}%`, "Progreso"]} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
 
             <div className="text-center mt-12">
               <a

@@ -37,7 +37,7 @@ export default function AdminFondos() {
 
   const iniciarEdicion = (fondo) => {
     setEditando(fondo.id);
-    setNuevaMeta(fondo.meta.toString());
+    setNuevaMeta(fondo.meta != null ? fondo.meta.toString() : "");
   };
 
   const cancelarEdicion = () => {
@@ -205,7 +205,9 @@ export default function AdminFondos() {
                           ) : (
                             <div className="flex items-center gap-2">
                               <p className="font-bold text-gray-800">
-                                ${parseFloat(fondo.meta).toLocaleString("es-CL")} CLP
+                                {fondo.meta != null
+                                  ? `$${parseFloat(fondo.meta).toLocaleString("es-CL")} CLP`
+                                  : <span className="text-gray-400 italic text-sm">Sin meta</span>}
                               </p>
                               <button
                                 onClick={() => iniciarEdicion(fondo)}
@@ -217,10 +219,12 @@ export default function AdminFondos() {
                           )}
                         </div>
 
-                        <div className="text-center">
-                          <p className="text-xs text-gray-500">Progreso</p>
-                          <p className="font-bold" style={{ color }}>{pct}%</p>
-                        </div>
+                        {fondo.meta != null && (
+                          <div className="text-center">
+                            <p className="text-xs text-gray-500">Progreso</p>
+                            <p className="font-bold" style={{ color }}>{pct}%</p>
+                          </div>
+                        )}
 
                         <div className="text-center">
                           <p className="text-xs text-gray-500">Donaciones</p>
@@ -237,13 +241,15 @@ export default function AdminFondos() {
                       </button>
                     </div>
 
-                    {/* Barra de progreso */}
-                    <div className="mt-4 bg-gray-100 rounded-full h-3">
-                      <div
-                        className="h-3 rounded-full transition-all duration-500"
-                        style={{ width: `${pct}%`, backgroundColor: color }}
-                      />
-                    </div>
+                    {/* Barra de progreso: solo si tiene meta */}
+                    {fondo.meta != null && (
+                      <div className="mt-4 bg-gray-100 rounded-full h-3">
+                        <div
+                          className="h-3 rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%`, backgroundColor: color }}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* Detalle donaciones */}
