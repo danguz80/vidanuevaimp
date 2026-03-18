@@ -22,10 +22,11 @@ const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, porcent
 
 function FondoCard({ fondo, color }) {
   const pct = parseFloat(fondo.porcentaje) || 0;
+  const pctContable = parseFloat(fondo.porcentaje_contable) || 0;
+  const pctPendiente = Math.max(0, pctContable - pct);
   const tieneMeta = fondo.porcentaje != null;
 
   if (!tieneMeta) {
-    // Fondo sin meta: mostrar tarjeta informativa sin gráfico de porcentaje
     return (
       <div className="bg-white rounded-xl shadow-md p-6 flex flex-col items-center justify-center min-h-[260px]">
         <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ backgroundColor: color }}>
@@ -45,9 +46,11 @@ function FondoCard({ fondo, color }) {
     );
   }
 
+  // Donut con 3 segmentos: disponible | pendiente efectivo | restante
   const data = [
-    { name: fondo.nombre, porcentaje: pct },
-    { name: "Restante", porcentaje: Math.max(0, 100 - pct) },
+    { name: "Disponible", porcentaje: pct },
+    { name: "Pendiente efectivo", porcentaje: pctPendiente },
+    { name: "Restante", porcentaje: Math.max(0, 100 - pctContable) },
   ];
 
   return (
@@ -77,25 +80,50 @@ function FondoCard({ fondo, color }) {
             }
           >
             <Cell fill={color} />
+            <Cell fill="#F59E0B" />
             <Cell fill="#E5E7EB" />
           </Pie>
           <Tooltip
-            formatter={(value, name) => name !== "Restante" ? [`${value}%`, "Alcanzado"] : [`${value}%`, "Restante"]}
+            formatter={(value, name) =>
+              name === "Disponible" ? [`${value}%`, "Saldo disponible"] :
+              name === "Pendiente efectivo" ? [`${value}%`, "Efectivo pendiente"] :
+              [`${value}%`, "Restante"]
+            }
           />
         </PieChart>
       </ResponsiveContainer>
 
       <div className="mt-2 text-center">
         <span className="text-2xl font-bold" style={{ color }}>{pct}%</span>
+        {pctPendiente > 0 && (
+          <span className="text-base font-semibold text-amber-500 ml-2">(+{pctPendiente.toFixed(1)}% pendiente)</span>
+        )}
         <p className="text-sm text-gray-500">de la meta alcanzado</p>
       </div>
 
-      <div className="w-full mt-3 bg-gray-200 rounded-full h-2">
+      {/* Barra doble: disponible + pendiente */}
+      <div className="w-full mt-3 bg-gray-200 rounded-full h-3 overflow-hidden relative">
         <div
-          className="h-2 rounded-full transition-all duration-500"
+          className="h-3 rounded-full absolute left-0 top-0 transition-all duration-500"
+          style={{ width: `${pctContable}%`, backgroundColor: "#F59E0B" }}
+        />
+        <div
+          className="h-3 rounded-full absolute left-0 top-0 transition-all duration-500"
           style={{ width: `${pct}%`, backgroundColor: color }}
         />
       </div>
+      {pctPendiente > 0 && (
+        <div className="flex gap-4 mt-2 text-xs text-gray-500">
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+            Disponible {pct}%
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400" />
+            Pendiente {pctContable}% contable
+          </span>
+        </div>
+      )}
     </div>
   );
 }

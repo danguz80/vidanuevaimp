@@ -754,7 +754,16 @@ app.get("/api/fondos/progreso", async (req, res) => {
               100
             ), 1
           )
-        END AS porcentaje
+        END AS porcentaje,
+        CASE
+          WHEN f.meta IS NULL THEN NULL
+          ELSE ROUND(
+            LEAST(
+              COALESCE(SUM(CASE WHEN d.estado IN ('confirmado','pendiente') THEN d.amount_clp ELSE 0 END), 0) / f.meta * 100,
+              100
+            ), 1
+          )
+        END AS porcentaje_contable
       FROM fondos f
       LEFT JOIN donaciones d ON d.fondo_id = f.id
       WHERE f.activo = TRUE
