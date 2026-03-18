@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useAuth } from "../context/AuthContext";
 
 export default function AdminHero() {
     const [slides, setSlides] = useState([]);
@@ -17,6 +18,7 @@ export default function AdminHero() {
     });
 
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
+    const { getToken } = useAuth();
 
     const fetchSlides = async () => {
         try {
@@ -35,9 +37,13 @@ export default function AdminHero() {
         }
 
         try {
+            const token = getToken();
             await fetch(`${backendUrl}/api/hero`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
                 body: JSON.stringify(newSlide),
             });
 
@@ -65,7 +71,13 @@ export default function AdminHero() {
     const handleDelete = async (id) => {
         if (!window.confirm("¿Estás seguro de eliminar este slide?")) return;
         try {
-            await fetch(`${backendUrl}/api/hero/${id}`, { method: "DELETE" });
+            const token = getToken();
+            await fetch(`${backendUrl}/api/hero/${id}`, { 
+                method: "DELETE",
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                }
+            });
             fetchSlides();
             alert("Slide eliminado correctamente");
         } catch (error) {
@@ -75,9 +87,13 @@ export default function AdminHero() {
 
     const handleUpdate = async (slide) => {
         try {
+            const token = getToken();
             await fetch(`${backendUrl}/api/hero/${slide.id}`, {
                 method: "PUT",
-                headers: { "Content-Type": "application/json" },
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
                 body: JSON.stringify({
                     title: slide.title,
                     subtitle: slide.subtitle,

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
@@ -13,6 +14,7 @@ export default function AdminVideos() {
     start: 0,
   });
   const navigate = useNavigate();
+  const { getToken } = useAuth();
 
   useEffect(() => {
     fetchVideos();
@@ -44,9 +46,13 @@ export default function AdminVideos() {
     if (!changes) return;
 
     try {
+      const token = getToken();
       await fetch(`${backendUrl}/api/sermones/${videoId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           start: Number(changes.start),
           title: changes.title,
@@ -72,8 +78,12 @@ export default function AdminVideos() {
     if (!confirm("¿Seguro que deseas eliminar este video?")) return;
 
     try {
+      const token = getToken();
       await fetch(`${backendUrl}/api/sermones/${videoId}`, {
         method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
       });
 
       fetchVideos();
@@ -90,9 +100,13 @@ export default function AdminVideos() {
     }
 
     try {
+      const token = getToken();
       await fetch(`${backendUrl}/api/sermones`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           videoId: nuevoVideo.videoId,
           title: nuevoVideo.title,

@@ -1,9 +1,12 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "./context/AuthContext";
 import Header from "./components/Header";
 import Footer from "./components/Footer";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 import Home from "./pages/Home";
+import Login from "./pages/Login";
 import AdminHero from "./pages/AdminHero"; // ✅ nueva importación
 import QuienesSomos from "./pages/QuienesSomos";
 import Eventos from "./pages/Eventos";
@@ -25,29 +28,35 @@ import GaleriaFotos from "./pages/GaleriaFotos";
 export default function App() {
   return (
     <Router>
-      <div className="min-h-screen flex flex-col">
-        <Header />
-        <main className="flex-grow">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/admin/hero" element={<AdminHero />} />
-            <Route path="/quienes-somos" element={<QuienesSomos />} />
-            <Route path="/eventos" element={<Eventos />} />
-            <Route path="/horarios" element={<Horarios />} />
-            <Route path="/sermones" element={<Sermones />} />
-            <Route path="/ministerios" element={<Ministerios />} />
-            <Route path="/contacto" element={<Contacto />} />
-            <Route path="/donacion" element={<Donacion />} />
-            <Route path="/admin" element={<AdminPanel />} />
-            <Route path="/admin/mensajes" element={<AdminMensajes />} />
-            <Route path="/admin/videos" element={<AdminVideos />} /> {/* ✅ Nueva ruta para videos */}
-            <Route path="/soundcloud" element={<SoundCloudPage />} />
-            <Route path="/galeria" element={<GaleriaFotos />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </main>
-        <Footer />
-      </div>
+      <AuthProvider>
+        <div className="min-h-screen flex flex-col">
+          <Header />
+          <main className="flex-grow">
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/quienes-somos" element={<QuienesSomos />} />
+              <Route path="/eventos" element={<Eventos />} />
+              <Route path="/horarios" element={<Horarios />} />
+              <Route path="/sermones" element={<Sermones />} />
+              <Route path="/ministerios" element={<Ministerios />} />
+              <Route path="/contacto" element={<Contacto />} />
+              <Route path="/donacion" element={<Donacion />} />
+              <Route path="/soundcloud" element={<SoundCloudPage />} />
+              <Route path="/galeria" element={<GaleriaFotos />} />
+              
+              {/* Rutas protegidas */}
+              <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
+              <Route path="/admin/hero" element={<ProtectedRoute><AdminHero /></ProtectedRoute>} />
+              <Route path="/admin/mensajes" element={<ProtectedRoute><AdminMensajes /></ProtectedRoute>} />
+              <Route path="/admin/videos" element={<ProtectedRoute><AdminVideos /></ProtectedRoute>} />
+              
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </main>
+          <Footer />
+        </div>
+      </AuthProvider>
     </Router>
   );
 }

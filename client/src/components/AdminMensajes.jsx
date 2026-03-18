@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
 export default function AdminMensajes() {
   const [mensajes, setMensajes] = useState([]);
   const navigate = useNavigate();
+  const { getToken } = useAuth();
 
   useEffect(() => {
     const fetchMensajes = async () => {
@@ -23,9 +25,13 @@ export default function AdminMensajes() {
 
   const handleRespondidoToggle = async (id, nuevoEstado) => {
     try {
+      const token = getToken();
       await fetch(`${backendUrl}/api/mensajes/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({ respondido: nuevoEstado }),
       });
       setMensajes((prev) =>
@@ -41,7 +47,13 @@ export default function AdminMensajes() {
   const handleEliminar = async (id) => {
     if (!confirm("¿Estás seguro de que quieres eliminar este mensaje?")) return;
     try {
-      await fetch(`${backendUrl}/api/mensajes/${id}`, { method: "DELETE" });
+      const token = getToken();
+      await fetch(`${backendUrl}/api/mensajes/${id}`, { 
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
       setMensajes((prev) => prev.filter((msg) => msg.id !== id));
     } catch (error) {
       console.error("Error al eliminar mensaje:", error);

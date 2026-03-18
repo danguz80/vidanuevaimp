@@ -4,7 +4,7 @@ import QuienesSomos from "../components/QuienesSomos";
 import Eventos from "../components/Eventos";
 import Horarios from "../components/Horarios";
 import Sermones from "../components/Sermones";
-import Donacion from "../components/Donacion";
+import DonacionSection from "../components/DonacionSection";
 import Contacto from "../components/Contacto";
 
 export default function Home() {
@@ -15,7 +15,7 @@ export default function Home() {
       <Eventos />
       <Horarios />
       <Sermones />
-      <Donacion />
+      <DonacionSection />
       <Contacto />
     </>
   );

@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import { subDays } from "date-fns";
 import pkg from "pg";
 import axios from "axios";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 import { v2 as cloudinary } from "cloudinary";
 
@@ -22,7 +24,7 @@ const { Pool } = pkg;
 const app = express();
 app.use(
   cors({
-    origin: ["https://vidanuevaimp.com"], // ✅ tu dominio real
+    origin: ["https://vidanuevaimp.com", "http://localhost:5174", "http://localhost:5173"], // ✅ tu dominio real + localhost para desarrollo
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   })
@@ -40,9 +42,78 @@ const pool = new Pool({
   },
 });
 
+// ========================
+// 🔐 AUTENTICACIÓN
+// ========================
+
+// Middleware para verificar token JWT
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: "Token no proporcionado" });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: "Token inválido o expirado" });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Endpoint de login
+app.post("/api/auth/login", async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: "Usuario y contraseña requeridos" });
+  }
+
+  try {
+    const client = await pool.connect();
+    const result = await client.query("SELECT * FROM usuarios WHERE username = $1", [username]);
+    client.release();
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
+
+    const user = result.rows[0];
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+
+    if (!validPassword) {
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
+
+    // Generar token JWT
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    res.json({ token, username: user.username });
+  } catch (error) {
+    console.error("Error en login:", error.message);
+    res.status(500).json({ error: "Error al iniciar sesión" });
+  }
+});
+
+// Endpoint para verificar token
+app.get("/api/auth/verify", authenticateToken, (req, res) => {
+  res.json({ valid: true, user: req.user });
+});
+
+// ========================
+// 📝 ENDPOINTS EXISTENTES
+// ========================
+
 
 // --- Nuevo endpoint para agregar sermón manualmente ---
-app.post("/api/sermones", async (req, res) => {
+app.post("/api/sermones", authenticateToken, async (req, res) => {
   const { videoId, title, thumbnail, start, publishedAt, sundayDate } = req.body;
 
   if (!videoId) {
@@ -101,7 +172,7 @@ app.get("/api/sermones", async (req, res) => {
 });
 
 // --- API actualizar sermón ---
-app.put("/api/sermones/:videoId", async (req, res) => {
+app.put("/api/sermones/:videoId", authenticateToken, async (req, res) => {
   const { videoId } = req.params;
   const { start, title, fecha_publicacion, sunday_date, thumbnail } = req.body;
 
@@ -124,7 +195,7 @@ app.put("/api/sermones/:videoId", async (req, res) => {
 });
 
 // --- API eliminar sermón ---
-app.delete("/api/sermones/:videoId", async (req, res) => {
+app.delete("/api/sermones/:videoId", authenticateToken, async (req, res) => {
   const { videoId } = req.params;
 
   try {
@@ -190,7 +261,7 @@ app.get("/api/mensajes", async (req, res) => {
   }
 });
 
-app.put("/api/mensajes/:id", async (req, res) => {
+app.put("/api/mensajes/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -205,7 +276,7 @@ app.put("/api/mensajes/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/mensajes/:id", async (req, res) => {
+app.delete("/api/mensajes/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -239,7 +310,7 @@ app.get("/api/hero", async (req, res) => {
 });
 
 // --- API para crear un nuevo slide ---
-app.post("/api/hero", async (req, res) => {
+app.post("/api/hero", authenticateToken, async (req, res) => {
   const {
     image_url,
     title,
@@ -285,7 +356,7 @@ app.post("/api/hero", async (req, res) => {
 
 
 // --- API para actualizar un slide ---
-app.put("/api/hero/:id", async (req, res) => {
+app.put("/api/hero/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
   const {
     title,
@@ -336,7 +407,7 @@ app.put("/api/hero/:id", async (req, res) => {
 
 
 // --- API para eliminar un slide ---
-app.delete("/api/hero/:id", async (req, res) => {
+app.delete("/api/hero/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
     const client = await pool.connect();
