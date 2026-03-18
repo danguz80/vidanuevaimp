@@ -8,12 +8,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
-import transbankSdk from "transbank-sdk";
-
-const { WebpayPlus, Options, Environment, IntegrationCommerceCodes, IntegrationApiKeys } = transbankSdk;
 
 import { v2 as cloudinary } from "cloudinary";
-import { sendDonationReceipt, saveDonation } from "./emailService.js";
+import { sendDonationReceipt, saveDonation, sendCashDonationReceipt } from "./emailService.js";
 
 // ✅ Cargar .env lo antes posible
 dotenv.config();
@@ -40,7 +37,7 @@ app.use(
   })
 );
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Necesario para recibir el POST de retorno de Webpay
+app.use(express.urlencoded({ extended: true }));
 
 const pool = new Pool({
   user: process.env.PGUSER,
@@ -52,99 +49,6 @@ const pool = new Pool({
     rejectUnauthorized: false, // necesario en Render
   },
 });
-
-// ========================
-// � WEBPAY
-// ========================
-
-const webpayTx = new WebpayPlus.Transaction(
-  process.env.TBK_COMMERCE_CODE && process.env.TBK_API_KEY
-    ? new Options(process.env.TBK_COMMERCE_CODE, process.env.TBK_API_KEY, Environment.Production)
-    : new Options(IntegrationCommerceCodes.WEBPAY_PLUS, IntegrationApiKeys.WEBPAY, Environment.Integration)
-);
-
-// Iniciar transacción Webpay
-app.post("/api/webpay/init", async (req, res) => {
-  const { amount, fondoId, email } = req.body;
-  const clp = parseInt(amount);
-
-  if (!clp || clp < 1) {
-    return res.status(400).json({ error: "Monto inválido" });
-  }
-
-  const buyOrder = `DON-${Date.now()}`;
-  const sessionId = `sess-${Date.now()}`;
-  const backendUrl = process.env.BACKEND_URL || "https://iglesia-backend.onrender.com";
-  const returnUrl = `${backendUrl}/api/webpay/return`;
-
-  try {
-    const response = await webpayTx.create(buyOrder, sessionId, clp, returnUrl);
-
-    await pool.query(
-      `INSERT INTO webpay_pending (buy_order, session_id, amount, fondo_id, email)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (buy_order) DO NOTHING`,
-      [buyOrder, sessionId, clp, fondoId || 1, email || null]
-    );
-
-    res.json({ url: response.url, token: response.token });
-  } catch (error) {
-    console.error("Error Webpay init:", error);
-    res.status(500).json({ error: "Error al iniciar pago Webpay" });
-  }
-});
-
-// Retorno desde Webpay (Transbank hace POST a esta URL)
-app.post("/api/webpay/return", async (req, res) => {
-  const token = req.body.token_ws;
-  const tbkToken = req.body.TBK_TOKEN; // cancelación
-  const frontendUrl = process.env.FRONTEND_URL || "https://vidanuevaimp.com";
-
-  // Cancelado por el usuario
-  if (!token && tbkToken) {
-    await pool.query("DELETE FROM webpay_pending WHERE session_id IS NOT NULL AND created_at < NOW() - INTERVAL '30 minutes'").catch(() => {});
-    return res.redirect(`${frontendUrl}/donacion?webpay=cancelado`);
-  }
-
-  if (!token) {
-    return res.redirect(`${frontendUrl}/donacion?webpay=error`);
-  }
-
-  try {
-    const response = await webpayTx.commit(token);
-
-    if (response.response_code === 0) {
-      const pending = await pool.query(
-        "SELECT * FROM webpay_pending WHERE buy_order = $1",
-        [response.buy_order]
-      );
-
-      if (pending.rows.length > 0) {
-        const p = pending.rows[0];
-        const payerName = response.card_detail?.card_number
-          ? `Tarjeta ****${response.card_detail.card_number}`
-          : "Webpay";
-
-        await pool.query(
-          `INSERT INTO donaciones (order_id, email, payer_name, amount_clp, amount_usd, fondo_id, fecha)
-           VALUES ($1, $2, $3, $4, 0, $5, NOW())
-           ON CONFLICT (order_id) DO NOTHING`,
-          [response.buy_order, p.email, payerName, p.amount, p.fondo_id]
-        );
-        await pool.query("DELETE FROM webpay_pending WHERE buy_order = $1", [response.buy_order]);
-      }
-
-      return res.redirect(`${frontendUrl}/donacion?webpay=exito&monto=${response.amount}`);
-    } else {
-      return res.redirect(`${frontendUrl}/donacion?webpay=rechazado`);
-    }
-  } catch (error) {
-    console.error("Error Webpay return:", error);
-    return res.redirect(`${frontendUrl}/donacion?webpay=error`);
-  }
-});
-
-// ========================
 
 // Middleware para verificar token JWT
 const authenticateToken = (req, res, next) => {
@@ -830,6 +734,13 @@ app.get("/api/test-cloudinary", async (req, res) => {
 // GET público: fondos con % de cumplimiento (sin montos)
 app.get("/api/fondos/progreso", async (req, res) => {
   try {
+    // Auto-anular efectivo pendiente con más de 7 días
+    await pool.query(
+      `UPDATE donaciones SET estado = 'anulado'
+       WHERE metodo_pago = 'efectivo' AND estado = 'pendiente'
+         AND fecha < NOW() - INTERVAL '7 days'`
+    ).catch(() => {});
+
     const result = await pool.query(`
       SELECT
         f.id,
@@ -839,7 +750,7 @@ app.get("/api/fondos/progreso", async (req, res) => {
           WHEN f.meta IS NULL THEN NULL
           ELSE ROUND(
             LEAST(
-              COALESCE(SUM(d.amount_clp), 0) / f.meta * 100,
+              COALESCE(SUM(CASE WHEN d.estado = 'confirmado' THEN d.amount_clp ELSE 0 END), 0) / f.meta * 100,
               100
             ), 1
           )
@@ -860,19 +771,28 @@ app.get("/api/fondos/progreso", async (req, res) => {
 // GET admin: fondos con montos reales (protegido)
 app.get("/api/fondos", authenticateToken, async (req, res) => {
   try {
+    // Auto-anular efectivo pendiente con más de 7 días
+    await pool.query(
+      `UPDATE donaciones SET estado = 'anulado'
+       WHERE metodo_pago = 'efectivo' AND estado = 'pendiente'
+         AND fecha < NOW() - INTERVAL '7 days'`
+    ).catch(() => {});
+
     const result = await pool.query(`
       SELECT
         f.id,
         f.nombre,
         f.descripcion,
         f.meta,
-        COALESCE(SUM(d.amount_clp), 0) AS total_recaudado,
-        COUNT(d.id) AS cantidad_donaciones,
+        COALESCE(SUM(CASE WHEN d.estado = 'confirmado' THEN d.amount_clp ELSE 0 END), 0) AS total_disponible,
+        COALESCE(SUM(CASE WHEN d.estado = 'pendiente' THEN d.amount_clp ELSE 0 END), 0) AS total_pendiente,
+        COALESCE(SUM(CASE WHEN d.estado IN ('confirmado','pendiente') THEN d.amount_clp ELSE 0 END), 0) AS total_contable,
+        COUNT(CASE WHEN d.estado != 'anulado' THEN 1 END) AS cantidad_donaciones,
         CASE
           WHEN f.meta IS NULL THEN NULL
           ELSE ROUND(
             LEAST(
-              COALESCE(SUM(d.amount_clp), 0) / f.meta * 100,
+              COALESCE(SUM(CASE WHEN d.estado = 'confirmado' THEN d.amount_clp ELSE 0 END), 0) / f.meta * 100,
               100
             ), 1
           )
@@ -919,7 +839,7 @@ app.get("/api/fondos/:id/donaciones", authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      `SELECT id, order_id, payer_name, email, amount_clp, amount_usd, fecha
+      `SELECT id, order_id, payer_name, nombre_donante, email, amount_clp, amount_usd, fecha, metodo_pago, estado
        FROM donaciones WHERE fondo_id = $1 ORDER BY fecha DESC`,
       [id]
     );
@@ -930,7 +850,7 @@ app.get("/api/fondos/:id/donaciones", authenticateToken, async (req, res) => {
   }
 });
 
-// --- Endpoint para procesar donaciones y enviar comprobante ---
+// --- Endpoint para procesar donaciones PayPal y enviar comprobante ---
 app.post("/api/donaciones", async (req, res) => {
   const { orderId, email, payerName, amountCLP, amountUSD, fondoId } = req.body;
 
@@ -982,6 +902,95 @@ app.post("/api/donaciones", async (req, res) => {
   } catch (error) {
     console.error("Error al procesar donación:", error);
     res.status(500).json({ error: "Error al procesar donación" });
+  }
+});
+
+// --- Endpoint para donaciones en EFECTIVO ---
+app.post("/api/donaciones/efectivo", async (req, res) => {
+  const { nombreDonante, email, amountCLP, fondoId } = req.body;
+
+  if (!nombreDonante || !amountCLP) {
+    return res.status(400).json({ error: "Nombre y monto son requeridos" });
+  }
+
+  const monto = parseFloat(amountCLP);
+  if (isNaN(monto) || monto < 1000) {
+    return res.status(400).json({ error: "Monto mínimo: $1.000 CLP" });
+  }
+
+  const orderId = `EFE-${Date.now()}`;
+
+  try {
+    const insertResult = await pool.query(
+      `INSERT INTO donaciones
+         (order_id, email, payer_name, nombre_donante, amount_clp, amount_usd, fondo_id, fecha, metodo_pago, estado)
+       VALUES ($1, $2, $3, $4, $5, 0, $6, NOW(), 'efectivo', 'pendiente')
+       RETURNING *`,
+      [orderId, email || null, nombreDonante, nombreDonante, monto, fondoId || 1]
+    );
+    const donation = insertResult.rows[0];
+
+    // Obtener nombre del fondo
+    let fondoNombre = "Ofrendas";
+    try {
+      const fr = await pool.query("SELECT nombre FROM fondos WHERE id = $1", [fondoId || 1]);
+      if (fr.rows.length > 0) fondoNombre = fr.rows[0].nombre;
+    } catch (_) {}
+
+    // Enviar comprobante PDF por correo
+    try {
+      await sendCashDonationReceipt({
+        orderId,
+        payerName: nombreDonante,
+        amountCLP: monto,
+        fondoNombre,
+        fecha: new Date(),
+        email: email || null,
+      });
+    } catch (emailError) {
+      console.error("Error al enviar comprobante efectivo:", emailError);
+    }
+
+    res.status(201).json({ success: true, donation, orderId });
+  } catch (error) {
+    console.error("Error al registrar donación efectivo:", error);
+    res.status(500).json({ error: "Error al registrar la donación" });
+  }
+});
+
+// --- Confirmar donación en efectivo (admin) ---
+app.put("/api/donaciones/:id/confirmar", authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `UPDATE donaciones SET estado = 'confirmado' WHERE id = $1 AND metodo_pago = 'efectivo' RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Donación no encontrada o no es de tipo efectivo" });
+    }
+    res.json({ success: true, donation: result.rows[0] });
+  } catch (error) {
+    console.error("Error al confirmar donación:", error);
+    res.status(500).json({ error: "Error al confirmar donación" });
+  }
+});
+
+// --- Anular donación en efectivo (admin) ---
+app.put("/api/donaciones/:id/anular", authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `UPDATE donaciones SET estado = 'anulado' WHERE id = $1 AND metodo_pago = 'efectivo' RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Donación no encontrada o no es de tipo efectivo" });
+    }
+    res.json({ success: true, donation: result.rows[0] });
+  } catch (error) {
+    console.error("Error al anular donación:", error);
+    res.status(500).json({ error: "Error al anular donación" });
   }
 });
 

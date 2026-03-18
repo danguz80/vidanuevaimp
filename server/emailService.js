@@ -148,8 +148,8 @@ export const saveDonation = async (pool, donationData) => {
     }
 
     const result = await client.query(
-      `INSERT INTO donaciones (order_id, email, payer_name, amount_clp, amount_usd, fondo_id, fecha)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      `INSERT INTO donaciones (order_id, email, payer_name, amount_clp, amount_usd, fondo_id, fecha, metodo_pago, estado)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'paypal', 'confirmado')
        RETURNING *`,
       [
         donationData.orderId,
@@ -164,4 +164,128 @@ export const saveDonation = async (pool, donationData) => {
   } finally {
     client.release();
   }
+};
+
+// ─────────────────────────────────────────────────────────────
+// Generar PDF comprobante de donación en EFECTIVO
+// ─────────────────────────────────────────────────────────────
+const generateCashReceiptPDF = ({ orderId, payerName, amountCLP, fondoNombre, fecha }) => {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 60 });
+    const chunks = [];
+
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const fechaStr = format(fecha || new Date(), "dd 'de' MMMM 'de' yyyy", { locale: es });
+    const horaStr = format(fecha || new Date(), 'HH:mm', { locale: es });
+
+    // — Encabezado —
+    doc.fontSize(18).font('Helvetica-Bold')
+       .text('Iglesia Misión Pentecostés', { align: 'center' });
+    doc.fontSize(16).font('Helvetica-Bold')
+       .text('Templo Vida Nueva', { align: 'center' });
+    doc.moveDown(0.5);
+    doc.moveTo(60, doc.y).lineTo(535, doc.y).stroke();
+    doc.moveDown(0.5);
+
+    doc.fontSize(14).font('Helvetica-Bold')
+       .text('Comprobante de Promesa de Donación en Efectivo', { align: 'center' });
+    doc.moveDown(1.5);
+
+    // — Datos —
+    const startY = doc.y;
+    const leftCol = 60;
+    const rightCol = 200;
+
+    const addRow = (label, value) => {
+      doc.font('Helvetica-Bold').fontSize(11).text(label, leftCol, doc.y, { continued: true, width: 130 });
+      doc.font('Helvetica').fontSize(11).text(value);
+      doc.moveDown(0.6);
+    };
+
+    addRow('Nº Comprobante:', orderId);
+    addRow('Fecha:', `${fechaStr} – ${horaStr}`);
+    addRow('Donante:', payerName);
+    addRow('Fondo:', fondoNombre);
+    addRow('Monto comprometido:', `$${Number(amountCLP).toLocaleString('es-CL')} CLP`);
+    addRow('Estado:', 'Pendiente de entrega en efectivo');
+
+    doc.moveDown(1);
+    doc.moveTo(60, doc.y).lineTo(535, doc.y).stroke();
+    doc.moveDown(1);
+
+    // — Aviso 7 días —
+    doc.font('Helvetica-Bold').fontSize(11)
+       .text('⚠ Importante:', { continued: true })
+       .font('Helvetica').fontSize(11)
+       .text(' El donante tiene 7 días corridos a partir de la fecha de emisión de este comprobante para entregar el efectivo al tesorero de la iglesia. Si no se realiza la entrega en ese plazo, la donación quedará automáticamente anulada.');
+    doc.moveDown(2);
+
+    // — Firmas —
+    const sigY = doc.y;
+    const col1X = 70;
+    const col2X = 330;
+    const lineW = 180;
+
+    // Firma donante
+    doc.font('Helvetica').fontSize(10).text(payerName, col1X, sigY + 5, { width: lineW, align: 'center' });
+    doc.moveTo(col1X, sigY + 25).lineTo(col1X + lineW, sigY + 25).stroke();
+    doc.font('Helvetica').fontSize(9).text('Firma del Donante', col1X, sigY + 30, { width: lineW, align: 'center' });
+
+    // Firma tesorería
+    doc.moveTo(col2X, sigY + 25).lineTo(col2X + lineW, sigY + 25).stroke();
+    doc.font('Helvetica').fontSize(9)
+       .text('Firma Tesorería', col2X, sigY + 30, { width: lineW, align: 'center' });
+    doc.text('Iglesia Misión Pentecostés Templo Vida Nueva', col2X, sigY + 42, { width: lineW, align: 'center' });
+
+    doc.moveDown(5);
+    doc.moveTo(60, doc.y).lineTo(535, doc.y).stroke();
+    doc.moveDown(0.5);
+    doc.font('Helvetica').fontSize(8).fillColor('#6b7280')
+       .text('Este documento es un comprobante de promesa de donación. Para consultas: vidanuevaimp@gmail.com', { align: 'center' });
+
+    doc.end();
+  });
+};
+
+// Enviar comprobante de donación en EFECTIVO a administración y al donante
+export const sendCashDonationReceipt = async ({ orderId, payerName, amountCLP, fondoNombre, fecha, email }) => {
+  const transporter = createTransporter();
+  const pdfBuffer = await generateCashReceiptPDF({ orderId, payerName, amountCLP, fondoNombre, fecha });
+
+  const fechaStr = format(fecha || new Date(), "dd 'de' MMMM 'de' yyyy", { locale: es });
+  const recipients = ['pricivas@gmail.com', 'vidanuevaimp@gmail.com'];
+  if (email) recipients.push(email);
+
+  await transporter.sendMail({
+    from: `"Iglesia Vida Nueva" <${process.env.EMAIL_USER}>`,
+    to: recipients.join(', '),
+    subject: `Comprobante Donación en Efectivo – ${payerName} – ${fechaStr}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#1d4ed8;">Nueva promesa de donación en efectivo</h2>
+        <p><strong>Donante:</strong> ${payerName}</p>
+        <p><strong>Monto:</strong> $${Number(amountCLP).toLocaleString('es-CL')} CLP</p>
+        <p><strong>Fondo:</strong> ${fondoNombre}</p>
+        <p><strong>Fecha:</strong> ${fechaStr}</p>
+        <p><strong>Nº comprobante:</strong> ${orderId}</p>
+        <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:14px;margin:20px 0;">
+          <strong>⚠ El donante tiene 7 días para entregar el efectivo a tesorería.</strong><br>
+          Si no se realiza la entrega, la donación quedará anulada automáticamente.
+        </div>
+        <p>Se adjunta el comprobante oficial en PDF.</p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+        <p style="font-size:12px;color:#6b7280;">Iglesia Misión Pentecostés Templo Vida Nueva</p>
+      </div>
+    `,
+    attachments: [
+      {
+        filename: `Comprobante_Efectivo_${orderId}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf'
+      }
+    ]
+  });
 };

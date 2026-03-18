@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Heart, Gift, Church, Users, Book, Lightbulb } from "lucide-react";
+import { Heart, Gift, Church, Users, Book, Lightbulb, Banknote } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 
 export default function DonacionPage() {
-  const [searchParams] = useSearchParams();
   const [amount, setAmount] = useState(null);
   const [customAmount, setCustomAmount] = useState("");
   const [debouncedCustomAmount, setDebouncedCustomAmount] = useState("");
@@ -17,60 +15,49 @@ export default function DonacionPage() {
   const [fondoSeleccionado, setFondoSeleccionado] = useState(null);
   const fondoSeleccionadoRef = useRef(null);
   const paypalRef = useRef();
-  const [webpayLoading, setWebpayLoading] = useState(false);
-  const [webpayMsg, setWebpayMsg] = useState(null);
 
-  // Leer resultado del retorno de Webpay
-  useEffect(() => {
-    const estado = searchParams.get("webpay");
-    const monto = searchParams.get("monto");
-    if (estado === "exito") setWebpayMsg({ tipo: "ok", texto: `¡Pago exitoso por $${parseInt(monto).toLocaleString("es-CL")} CLP! Gracias por tu donación.` });
-    else if (estado === "cancelado") setWebpayMsg({ tipo: "warn", texto: "Pago cancelado. Puedes intentarlo nuevamente cuando quieras." });
-    else if (estado === "rechazado") setWebpayMsg({ tipo: "error", texto: "El pago fue rechazado por el banco." });
-    else if (estado === "error") setWebpayMsg({ tipo: "error", texto: "Ocurrió un error al procesar el pago." });
-  }, [searchParams]);
+  // Estado formulario efectivo
+  const [cashNombre, setCashNombre] = useState("");
+  const [cashEmail, setCashEmail] = useState("");
+  const [cashLoading, setCashLoading] = useState(false);
+  const [cashResult, setCashResult] = useState(null); // { ok, orderId, mensaje }
 
-  const handleWebpay = async () => {
+  const predefinedAmountsCLP = [5000, 10000, 20000];
+
+  const handleCashDonation = async (e) => {
+    e.preventDefault();
     const finalAmount = customAmount || amount;
-    if (!finalAmount || parseInt(finalAmount) < 1) {
-      alert("Selecciona o ingresa un monto antes de continuar.");
-      return;
-    }
-    setWebpayLoading(true);
+    if (!cashNombre.trim()) return alert("Ingresa tu nombre completo.");
+    if (!finalAmount || parseInt(finalAmount) < 1000) return alert("Selecciona o ingresa un monto (mínimo $1.000 CLP).");
+    setCashLoading(true);
+    setCashResult(null);
     try {
-      const res = await fetch(`${API_URL}/api/webpay/init`, {
+      const res = await fetch(`${API_URL}/api/donaciones/efectivo`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amount: parseInt(finalAmount),
+          nombreDonante: cashNombre.trim(),
+          email: cashEmail.trim() || null,
+          amountCLP: parseInt(finalAmount),
           fondoId: fondoSeleccionadoRef.current?.id || 1,
-          email: emailRef.current || null,
         }),
       });
       const data = await res.json();
-      if (data.url && data.token) {
-        // Redirigir al formulario de Webpay (POST)
-        const form = document.createElement("form");
-        form.method = "POST";
-        form.action = data.url;
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = "token_ws";
-        input.value = data.token;
-        form.appendChild(input);
-        document.body.appendChild(form);
-        form.submit();
+      if (res.ok && data.success) {
+        setCashResult({ ok: true, orderId: data.orderId });
+        setCashNombre("");
+        setCashEmail("");
+        setAmount(null);
+        setCustomAmount("");
       } else {
-        alert("Error al iniciar el pago. Inténtalo nuevamente.");
-        setWebpayLoading(false);
+        setCashResult({ ok: false, mensaje: data.error || "Error al registrar la donación." });
       }
     } catch {
-      alert("Error de conexión. Inténtalo nuevamente.");
-      setWebpayLoading(false);
+      setCashResult({ ok: false, mensaje: "Error de conexión. Inténtalo nuevamente." });
+    } finally {
+      setCashLoading(false);
     }
   };
-  
-  const predefinedAmountsCLP = [5000, 10000, 20000];
 
   // Cargar fondos disponibles
   useEffect(() => {
@@ -272,18 +259,6 @@ Que Dios te bendiga abundantemente.`);
           </p>
         </div>
       </section>
-      {/* Banner resultado Webpay */}
-      {webpayMsg && (
-        <div className={`max-w-2xl mx-auto mt-6 px-4`}>
-          <div className={`rounded-lg p-4 text-center font-semibold ${
-            webpayMsg.tipo === "ok" ? "bg-green-100 text-green-800 border border-green-300" :
-            webpayMsg.tipo === "warn" ? "bg-yellow-100 text-yellow-800 border border-yellow-300" :
-            "bg-red-100 text-red-800 border border-red-300"
-          }`}>
-            {webpayMsg.texto}
-          </div>
-        </div>
-      )}
       <div className="max-w-6xl mx-auto px-4 py-12">
         <div className="grid md:grid-cols-2 gap-8 mb-12">
           {/* Información sobre donaciones */}
@@ -444,36 +419,79 @@ Que Dios te bendiga abundantemente.`);
               ✓ Tu donación es segura y encriptada
             </div>
 
-            {/* Botón Webpay */}
-            {(amount || customAmount) && (
-              <div className="pt-4 border-t border-gray-200">
-                <p className="text-sm text-center text-gray-600 mb-3">
-                  ¿Prefieres pagar con débito o crédito?
-                </p>
-                <button
-                  onClick={handleWebpay}
-                  disabled={webpayLoading}
-                  className="w-full flex items-center justify-center gap-3 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-bold py-3 px-6 rounded-lg transition"
-                >
-                  {webpayLoading ? (
-                    <span>Redirigiendo...</span>
-                  ) : (
-                    <>
-                      <img
-                        src="https://www.webpay.cl/assets/images/logo_webpay3.png"
-                        alt="Webpay"
-                        className="h-6"
-                        onError={e => e.target.style.display='none'}
-                      />
-                      Pagar con Webpay (Débito / Crédito)
-                    </>
+            {/* ─── Donación en Efectivo ─── */}
+            <div className="pt-4 border-t border-gray-200">
+              <h3 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
+                <Banknote className="text-green-600" size={20} />
+                ¿Prefieres donar en efectivo?
+              </h3>
+
+              {cashResult?.ok ? (
+                <div className="bg-green-50 border border-green-300 rounded-lg p-4">
+                  <p className="font-semibold text-green-800 mb-1">¡Promesa registrada exitosamente!</p>
+                  <p className="text-green-700 text-sm mb-2">
+                    Nº de comprobante: <strong>{cashResult.orderId}</strong>
+                  </p>
+                  <p className="text-green-700 text-sm">
+                    Tienes <strong>7 días corridos</strong> para entregar el efectivo al tesorero de la iglesia.
+                    Si la entrega no se realiza en ese plazo, la donación quedará anulada automáticamente.
+                    Se ha enviado un comprobante por correo a la administración.
+                  </p>
+                  <button
+                    onClick={() => setCashResult(null)}
+                    className="mt-3 text-sm text-green-700 underline"
+                  >
+                    Registrar otra donación
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleCashDonation} className="space-y-3">
+                  {cashResult?.ok === false && (
+                    <div className="bg-red-50 border border-red-300 rounded-lg p-3 text-sm text-red-700">
+                      {cashResult.mensaje}
+                    </div>
                   )}
-                </button>
-                <p className="text-xs text-center text-gray-500 mt-2">
-                  Serás redirigido al sitio seguro de Transbank
-                </p>
-              </div>
-            )}
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Nombre completo <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={cashNombre}
+                      onChange={e => setCashNombre(e.target.value)}
+                      placeholder="Tu nombre y apellido"
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Email (opcional — para recibir comprobante)
+                    </label>
+                    <input
+                      type="email"
+                      value={cashEmail}
+                      onChange={e => setCashEmail(e.target.value)}
+                      placeholder="tu@email.com"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm"
+                    />
+                  </div>
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
+                    ⚠ Al registrar una donación en efectivo, te comprometer a entregar el monto al tesorero de la iglesia dentro de <strong>7 días corridos</strong>. De lo contrario, la donación será anulada automáticamente.
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={cashLoading || (!amount && !customAmount)}
+                    className="w-full bg-green-600 hover:bg-green-700 disabled:bg-green-300 text-white font-bold py-3 px-6 rounded-lg transition text-sm"
+                  >
+                    {cashLoading ? "Registrando..." : "Comprometer Donación en Efectivo"}
+                  </button>
+                  {!amount && !customAmount && (
+                    <p className="text-xs text-center text-gray-500">Selecciona un monto arriba para continuar</p>
+                  )}
+                </form>
+              )}
+            </div>
           </div>
         </div>
 

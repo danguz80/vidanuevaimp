@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { Edit2, Save, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Edit2, Save, X, ChevronDown, ChevronUp, CheckCircle, XCircle } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 const COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"];
@@ -71,26 +71,60 @@ export default function AdminFondos() {
     }
   };
 
+  const cargarDonaciones = async (fondoId) => {
+    try {
+      const res = await fetch(`${API_URL}/api/fondos/${fondoId}/donaciones`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      setDonacionesFondo(prev => ({ ...prev, [fondoId]: Array.isArray(data) ? data : [] }));
+    } catch {
+      setDonacionesFondo(prev => ({ ...prev, [fondoId]: [] }));
+    }
+  };
+
   const toggleDetalle = async (fondoId) => {
     if (expandido === fondoId) {
       setExpandido(null);
       return;
     }
     setExpandido(fondoId);
-    if (!donacionesFondo[fondoId]) {
-      try {
-        const res = await fetch(`${API_URL}/api/fondos/${fondoId}/donaciones`, {
-          headers: { Authorization: `Bearer ${getToken()}` },
-        });
-        const data = await res.json();
-        setDonacionesFondo(prev => ({ ...prev, [fondoId]: data }));
-      } catch {
-        setDonacionesFondo(prev => ({ ...prev, [fondoId]: [] }));
-      }
+    await cargarDonaciones(fondoId);
+  };
+
+  const confirmarEfectivo = async (donacionId, fondoId) => {
+    if (!confirm("¿Confirmar que se recibió el efectivo?")) return;
+    try {
+      const res = await fetch(`${API_URL}/api/donaciones/${donacionId}/confirmar`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) throw new Error();
+      await cargarDonaciones(fondoId);
+      cargarFondos();
+    } catch {
+      alert("Error al confirmar la donación.");
     }
   };
 
-  const totalGeneral = fondos.reduce((s, f) => s + parseFloat(f.total_recaudado || 0), 0);
+  const anularEfectivo = async (donacionId, fondoId) => {
+    if (!confirm("¿Anular esta donación en efectivo?")) return;
+    try {
+      const res = await fetch(`${API_URL}/api/donaciones/${donacionId}/anular`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) throw new Error();
+      await cargarDonaciones(fondoId);
+      cargarFondos();
+    } catch {
+      alert("Error al anular la donación.");
+    }
+  };
+
+  const totalDisponible = fondos.reduce((s, f) => s + parseFloat(f.total_disponible || 0), 0);
+  const totalPendiente = fondos.reduce((s, f) => s + parseFloat(f.total_pendiente || 0), 0);
+  const totalContable = fondos.reduce((s, f) => s + parseFloat(f.total_contable || 0), 0);
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -114,33 +148,38 @@ export default function AdminFondos() {
           {/* Resumen general */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
             <div className="bg-blue-50 rounded-xl p-5 text-center">
-              <p className="text-sm text-blue-600 font-semibold">Total Recaudado</p>
+              <p className="text-sm text-blue-600 font-semibold">Saldo Disponible</p>
+              <p className="text-xs text-blue-500 mb-1">(Dinero efectivamente recibido)</p>
               <p className="text-2xl font-bold text-blue-800 mt-1">
-                ${totalGeneral.toLocaleString("es-CL")} CLP
+                ${totalDisponible.toLocaleString("es-CL")} CLP
+              </p>
+            </div>
+            <div className="bg-amber-50 rounded-xl p-5 text-center">
+              <p className="text-sm text-amber-600 font-semibold">Efectivo Pendiente</p>
+              <p className="text-xs text-amber-500 mb-1">(Prometido, no entregado aún)</p>
+              <p className="text-2xl font-bold text-amber-800 mt-1">
+                ${totalPendiente.toLocaleString("es-CL")} CLP
               </p>
             </div>
             <div className="bg-green-50 rounded-xl p-5 text-center">
-              <p className="text-sm text-green-600 font-semibold">Total Donaciones</p>
+              <p className="text-sm text-green-600 font-semibold">Saldo Contable</p>
+              <p className="text-xs text-green-500 mb-1">(Disponible + Pendiente)</p>
               <p className="text-2xl font-bold text-green-800 mt-1">
-                {fondos.reduce((s, f) => s + parseInt(f.cantidad_donaciones || 0), 0)}
+                ${totalContable.toLocaleString("es-CL")} CLP
               </p>
-            </div>
-            <div className="bg-purple-50 rounded-xl p-5 text-center">
-              <p className="text-sm text-purple-600 font-semibold">Fondos Activos</p>
-              <p className="text-2xl font-bold text-purple-800 mt-1">{fondos.length}</p>
             </div>
           </div>
 
           {/* Gráfico de distribución */}
-          {fondos.some(f => parseFloat(f.total_recaudado) > 0) && (
+          {fondos.some(f => parseFloat(f.total_disponible) > 0) && (
             <div className="bg-white rounded-xl shadow p-6 mb-8">
-              <h2 className="text-xl font-bold text-gray-700 mb-4">Distribución de Donaciones</h2>
+              <h2 className="text-xl font-bold text-gray-700 mb-4">Distribución — Saldo Disponible</h2>
               <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
                   <Pie
-                    data={fondos.filter(f => parseFloat(f.total_recaudado) > 0).map(f => ({
+                    data={fondos.filter(f => parseFloat(f.total_disponible) > 0).map(f => ({
                       name: f.nombre,
-                      value: parseFloat(f.total_recaudado),
+                      value: parseFloat(f.total_disponible),
                     }))}
                     cx="50%"
                     cy="50%"
@@ -151,7 +190,7 @@ export default function AdminFondos() {
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v) => [`$${v.toLocaleString("es-CL")} CLP`, "Recaudado"]} />
+                  <Tooltip formatter={(v) => [`$${v.toLocaleString("es-CL")} CLP`, "Disponible"]} />
                   <Legend />
                 </PieChart>
               </ResponsiveContainer>
@@ -172,11 +211,30 @@ export default function AdminFondos() {
                         <h3 className="text-lg font-bold text-gray-800">{fondo.nombre}</h3>
                       </div>
 
-                      <div className="flex flex-wrap gap-6 items-center">
+                      <div className="flex flex-wrap gap-4 items-center">
+                        {/* Saldo disponible */}
                         <div className="text-center">
-                          <p className="text-xs text-gray-500">Recaudado</p>
-                          <p className="font-bold text-gray-800">
-                            ${parseFloat(fondo.total_recaudado).toLocaleString("es-CL")} CLP
+                          <p className="text-xs text-blue-500 font-semibold">Disponible</p>
+                          <p className="font-bold text-blue-800">
+                            ${parseFloat(fondo.total_disponible || 0).toLocaleString("es-CL")}
+                          </p>
+                        </div>
+
+                        {/* Pendiente */}
+                        {parseFloat(fondo.total_pendiente || 0) > 0 && (
+                          <div className="text-center">
+                            <p className="text-xs text-amber-500 font-semibold">Pendiente</p>
+                            <p className="font-bold text-amber-700">
+                              ${parseFloat(fondo.total_pendiente).toLocaleString("es-CL")}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Contable */}
+                        <div className="text-center">
+                          <p className="text-xs text-green-500 font-semibold">Contable</p>
+                          <p className="font-bold text-green-800">
+                            ${parseFloat(fondo.total_contable || 0).toLocaleString("es-CL")}
                           </p>
                         </div>
 
@@ -243,11 +301,24 @@ export default function AdminFondos() {
 
                     {/* Barra de progreso: solo si tiene meta */}
                     {fondo.meta != null && (
-                      <div className="mt-4 bg-gray-100 rounded-full h-3">
-                        <div
-                          className="h-3 rounded-full transition-all duration-500"
-                          style={{ width: `${pct}%`, backgroundColor: color }}
-                        />
+                      <div className="mt-4">
+                        <div className="bg-gray-100 rounded-full h-3">
+                          <div
+                            className="h-3 rounded-full transition-all duration-500"
+                            style={{ width: `${pct}%`, backgroundColor: color }}
+                          />
+                        </div>
+                        {parseFloat(fondo.total_pendiente || 0) > 0 && fondo.meta != null && (
+                          <div className="bg-gray-100 rounded-full h-1.5 mt-1">
+                            <div
+                              className="h-1.5 rounded-full bg-amber-400 opacity-70"
+                              style={{ width: `${Math.min(parseFloat(fondo.total_contable || 0) / parseFloat(fondo.meta) * 100, 100)}%` }}
+                            />
+                          </div>
+                        )}
+                        <p className="text-xs text-gray-400 mt-1">
+                          Azul: disponible · Amarillo: contable (incluye pendiente)
+                        </p>
                       </div>
                     )}
                   </div>
@@ -267,19 +338,54 @@ export default function AdminFondos() {
                               <tr className="text-left text-gray-500 border-b">
                                 <th className="pb-2 pr-4">Donante</th>
                                 <th className="pb-2 pr-4">Monto CLP</th>
-                                <th className="pb-2 pr-4">Monto USD</th>
+                                <th className="pb-2 pr-4">Método</th>
+                                <th className="pb-2 pr-4">Estado</th>
                                 <th className="pb-2 pr-4">Email</th>
-                                <th className="pb-2">Fecha</th>
+                                <th className="pb-2 pr-4">Fecha</th>
+                                <th className="pb-2">Acciones</th>
                               </tr>
                             </thead>
                             <tbody>
                               {donacionesFondo[fondo.id].map(d => (
-                                <tr key={d.id} className="border-b border-gray-100 hover:bg-white">
-                                  <td className="py-2 pr-4">{d.payer_name || "Anónimo"}</td>
-                                  <td className="py-2 pr-4">${parseFloat(d.amount_clp).toLocaleString("es-CL")}</td>
-                                  <td className="py-2 pr-4">USD {parseFloat(d.amount_usd).toFixed(2)}</td>
+                                <tr key={d.id} className={`border-b border-gray-100 hover:bg-white ${d.estado === 'pendiente' ? 'bg-amber-50' : ''}`}>
+                                  <td className="py-2 pr-4">{d.nombre_donante || d.payer_name || "Anónimo"}</td>
+                                  <td className="py-2 pr-4 font-semibold">${parseFloat(d.amount_clp).toLocaleString("es-CL")}</td>
+                                  <td className="py-2 pr-4">
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${d.metodo_pago === 'efectivo' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                                      {d.metodo_pago === 'efectivo' ? '💵 Efectivo' : '💳 PayPal'}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 pr-4">
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                      d.estado === 'confirmado' ? 'bg-green-100 text-green-700' :
+                                      d.estado === 'pendiente' ? 'bg-amber-100 text-amber-700' :
+                                      'bg-red-100 text-red-600'
+                                    }`}>
+                                      {d.estado === 'confirmado' ? '✓ Confirmado' : d.estado === 'pendiente' ? '⏳ Pendiente' : '✗ Anulado'}
+                                    </span>
+                                  </td>
                                   <td className="py-2 pr-4">{d.email || "-"}</td>
-                                  <td className="py-2">{new Date(d.fecha).toLocaleDateString("es-CL")}</td>
+                                  <td className="py-2 pr-4">{new Date(d.fecha).toLocaleDateString("es-CL")}</td>
+                                  <td className="py-2">
+                                    {d.metodo_pago === 'efectivo' && d.estado === 'pendiente' && (
+                                      <div className="flex gap-2">
+                                        <button
+                                          onClick={() => confirmarEfectivo(d.id, fondo.id)}
+                                          title="Confirmar recepción"
+                                          className="text-green-600 hover:text-green-800"
+                                        >
+                                          <CheckCircle size={18} />
+                                        </button>
+                                        <button
+                                          onClick={() => anularEfectivo(d.id, fondo.id)}
+                                          title="Anular donación"
+                                          className="text-red-500 hover:text-red-700"
+                                        >
+                                          <XCircle size={18} />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
@@ -297,3 +403,4 @@ export default function AdminFondos() {
     </div>
   );
 }
+
