@@ -6,6 +6,8 @@ import pkg from "pg";
 import axios from "axios";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import nodemailer from "nodemailer";
 
 import { v2 as cloudinary } from "cloudinary";
 import { sendDonationReceipt, saveDonation } from "./emailService.js";
@@ -126,7 +128,6 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 
     const user = result.rows[0];
     // Token aleatorio seguro
-    const crypto = await import("crypto");
     const token = crypto.randomBytes(32).toString("hex");
     const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
 
@@ -138,8 +139,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const resetUrl = `${process.env.FRONTEND_URL || "https://vidanuevaimp.com"}/reset-password?token=${token}`;
 
     // Enviar email
-    const nodemailer = await import("nodemailer");
-    const transporter = nodemailer.default.createTransport({
+    const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASSWORD },
     });
