@@ -149,12 +149,13 @@ export default function ProgresoFondos() {
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {fondos.map((fondo, index) => (
+              {fondos
+                .filter(fondo => fondo.porcentaje != null)
+                .map((fondo) => (
                 <FondoCard
                   key={fondo.id}
                   fondo={fondo}
-                  color={COLORS[index % COLORS.length]}
-                  index={index}
+                  color={COLORS[fondos.indexOf(fondo) % COLORS.length]}
                 />
               ))}
             </div>
