@@ -8,6 +8,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import transbankSdk from "transbank-sdk";
+
+const { WebpayPlus, Options, Environment, IntegrationCommerceCodes, IntegrationApiKeys } = transbankSdk;
 
 import { v2 as cloudinary } from "cloudinary";
 import { sendDonationReceipt, saveDonation } from "./emailService.js";
@@ -37,6 +40,7 @@ app.use(
   })
 );
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Necesario para recibir el POST de retorno de Webpay
 
 const pool = new Pool({
   user: process.env.PGUSER,
@@ -50,7 +54,96 @@ const pool = new Pool({
 });
 
 // ========================
-// 🔐 AUTENTICACIÓN
+// � WEBPAY
+// ========================
+
+const webpayTx = new WebpayPlus.Transaction(
+  process.env.TBK_COMMERCE_CODE && process.env.TBK_API_KEY
+    ? new Options(process.env.TBK_COMMERCE_CODE, process.env.TBK_API_KEY, Environment.Production)
+    : new Options(IntegrationCommerceCodes.WEBPAY_PLUS, IntegrationApiKeys.WEBPAY, Environment.Integration)
+);
+
+// Iniciar transacción Webpay
+app.post("/api/webpay/init", async (req, res) => {
+  const { amount, fondoId, email } = req.body;
+  const clp = parseInt(amount);
+
+  if (!clp || clp < 1) {
+    return res.status(400).json({ error: "Monto inválido" });
+  }
+
+  const buyOrder = `DON-${Date.now()}`;
+  const sessionId = `sess-${Date.now()}`;
+  const backendUrl = process.env.BACKEND_URL || "https://iglesia-backend.onrender.com";
+  const returnUrl = `${backendUrl}/api/webpay/return`;
+
+  try {
+    const response = await webpayTx.create(buyOrder, sessionId, clp, returnUrl);
+
+    await pool.query(
+      `INSERT INTO webpay_pending (buy_order, session_id, amount, fondo_id, email)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (buy_order) DO NOTHING`,
+      [buyOrder, sessionId, clp, fondoId || 1, email || null]
+    );
+
+    res.json({ url: response.url, token: response.token });
+  } catch (error) {
+    console.error("Error Webpay init:", error);
+    res.status(500).json({ error: "Error al iniciar pago Webpay" });
+  }
+});
+
+// Retorno desde Webpay (Transbank hace POST a esta URL)
+app.post("/api/webpay/return", async (req, res) => {
+  const token = req.body.token_ws;
+  const tbkToken = req.body.TBK_TOKEN; // cancelación
+  const frontendUrl = process.env.FRONTEND_URL || "https://vidanuevaimp.com";
+
+  // Cancelado por el usuario
+  if (!token && tbkToken) {
+    await pool.query("DELETE FROM webpay_pending WHERE session_id IS NOT NULL AND created_at < NOW() - INTERVAL '30 minutes'").catch(() => {});
+    return res.redirect(`${frontendUrl}/donacion?webpay=cancelado`);
+  }
+
+  if (!token) {
+    return res.redirect(`${frontendUrl}/donacion?webpay=error`);
+  }
+
+  try {
+    const response = await webpayTx.commit(token);
+
+    if (response.response_code === 0) {
+      const pending = await pool.query(
+        "SELECT * FROM webpay_pending WHERE buy_order = $1",
+        [response.buy_order]
+      );
+
+      if (pending.rows.length > 0) {
+        const p = pending.rows[0];
+        const payerName = response.card_detail?.card_number
+          ? `Tarjeta ****${response.card_detail.card_number}`
+          : "Webpay";
+
+        await pool.query(
+          `INSERT INTO donaciones (order_id, email, payer_name, amount_clp, amount_usd, fondo_id, fecha)
+           VALUES ($1, $2, $3, $4, 0, $5, NOW())
+           ON CONFLICT (order_id) DO NOTHING`,
+          [response.buy_order, p.email, payerName, p.amount, p.fondo_id]
+        );
+        await pool.query("DELETE FROM webpay_pending WHERE buy_order = $1", [response.buy_order]);
+      }
+
+      return res.redirect(`${frontendUrl}/donacion?webpay=exito&monto=${response.amount}`);
+    } else {
+      return res.redirect(`${frontendUrl}/donacion?webpay=rechazado`);
+    }
+  } catch (error) {
+    console.error("Error Webpay return:", error);
+    return res.redirect(`${frontendUrl}/donacion?webpay=error`);
+  }
+});
+
 // ========================
 
 // Middleware para verificar token JWT

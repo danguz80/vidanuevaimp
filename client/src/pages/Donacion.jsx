@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Heart, Gift, Church, Users, Book, Lightbulb } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 
 export default function DonacionPage() {
+  const [searchParams] = useSearchParams();
   const [amount, setAmount] = useState(null);
   const [customAmount, setCustomAmount] = useState("");
   const [debouncedCustomAmount, setDebouncedCustomAmount] = useState("");
@@ -15,6 +17,58 @@ export default function DonacionPage() {
   const [fondoSeleccionado, setFondoSeleccionado] = useState(null);
   const fondoSeleccionadoRef = useRef(null);
   const paypalRef = useRef();
+  const [webpayLoading, setWebpayLoading] = useState(false);
+  const [webpayMsg, setWebpayMsg] = useState(null);
+
+  // Leer resultado del retorno de Webpay
+  useEffect(() => {
+    const estado = searchParams.get("webpay");
+    const monto = searchParams.get("monto");
+    if (estado === "exito") setWebpayMsg({ tipo: "ok", texto: `¡Pago exitoso por $${parseInt(monto).toLocaleString("es-CL")} CLP! Gracias por tu donación.` });
+    else if (estado === "cancelado") setWebpayMsg({ tipo: "warn", texto: "Pago cancelado. Puedes intentarlo nuevamente cuando quieras." });
+    else if (estado === "rechazado") setWebpayMsg({ tipo: "error", texto: "El pago fue rechazado por el banco." });
+    else if (estado === "error") setWebpayMsg({ tipo: "error", texto: "Ocurrió un error al procesar el pago." });
+  }, [searchParams]);
+
+  const handleWebpay = async () => {
+    const finalAmount = customAmount || amount;
+    if (!finalAmount || parseInt(finalAmount) < 1) {
+      alert("Selecciona o ingresa un monto antes de continuar.");
+      return;
+    }
+    setWebpayLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/webpay/init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: parseInt(finalAmount),
+          fondoId: fondoSeleccionadoRef.current?.id || 1,
+          email: emailRef.current || null,
+        }),
+      });
+      const data = await res.json();
+      if (data.url && data.token) {
+        // Redirigir al formulario de Webpay (POST)
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = data.url;
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "token_ws";
+        input.value = data.token;
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+      } else {
+        alert("Error al iniciar el pago. Inténtalo nuevamente.");
+        setWebpayLoading(false);
+      }
+    } catch {
+      alert("Error de conexión. Inténtalo nuevamente.");
+      setWebpayLoading(false);
+    }
+  };
   
   const predefinedAmountsCLP = [5000, 10000, 20000];
 
@@ -201,7 +255,6 @@ Que Dios te bendiga abundantemente.`);
   }, [showPayPalButtons, amount, debouncedCustomAmount, exchangeRate]);
 
   const handlePayPalMe = () => {
-    // Opción alternativa con PayPal.me (requiere cuenta)
     window.open('https://www.paypal.com/paypalme/SU079009320', '_blank');
   };
 
@@ -219,7 +272,18 @@ Que Dios te bendiga abundantemente.`);
           </p>
         </div>
       </section>
-
+      {/* Banner resultado Webpay */}
+      {webpayMsg && (
+        <div className={`max-w-2xl mx-auto mt-6 px-4`}>
+          <div className={`rounded-lg p-4 text-center font-semibold ${
+            webpayMsg.tipo === "ok" ? "bg-green-100 text-green-800 border border-green-300" :
+            webpayMsg.tipo === "warn" ? "bg-yellow-100 text-yellow-800 border border-yellow-300" :
+            "bg-red-100 text-red-800 border border-red-300"
+          }`}>
+            {webpayMsg.texto}
+          </div>
+        </div>
+      )}
       <div className="max-w-6xl mx-auto px-4 py-12">
         <div className="grid md:grid-cols-2 gap-8 mb-12">
           {/* Información sobre donaciones */}
@@ -380,26 +444,36 @@ Que Dios te bendiga abundantemente.`);
               ✓ Tu donación es segura y encriptada
             </div>
 
-            {/* Opción alternativa con PayPal.me */}
-            <div className="pt-4 border-t border-gray-200">
-              <button
-                onClick={handlePayPalMe}
-                className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3 px-6 rounded-lg transition"
-              >
-                O dona cualquier monto con PayPal.me
-              </button>
-            </div>
-
-            {/* Información de PayPal directo */}
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <p className="text-sm text-gray-600 mb-2 text-center">O envía directamente a nuestra cuenta PayPal:</p>
-              <p className="text-center font-semibold text-gray-800 bg-gray-50 py-2 px-4 rounded">
-                vidanuevaimp@gmail.com
-              </p>
-              <p className="text-xs text-center text-gray-500 mt-2">
-                paypal.me/SU079009320
-              </p>
-            </div>
+            {/* Botón Webpay */}
+            {(amount || customAmount) && (
+              <div className="pt-4 border-t border-gray-200">
+                <p className="text-sm text-center text-gray-600 mb-3">
+                  ¿Prefieres pagar con débito o crédito?
+                </p>
+                <button
+                  onClick={handleWebpay}
+                  disabled={webpayLoading}
+                  className="w-full flex items-center justify-center gap-3 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-bold py-3 px-6 rounded-lg transition"
+                >
+                  {webpayLoading ? (
+                    <span>Redirigiendo...</span>
+                  ) : (
+                    <>
+                      <img
+                        src="https://www.webpay.cl/assets/images/logo_webpay3.png"
+                        alt="Webpay"
+                        className="h-6"
+                        onError={e => e.target.style.display='none'}
+                      />
+                      Pagar con Webpay (Débito / Crédito)
+                    </>
+                  )}
+                </button>
+                <p className="text-xs text-center text-gray-500 mt-2">
+                  Serás redirigido al sitio seguro de Transbank
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
