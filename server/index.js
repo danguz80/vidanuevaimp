@@ -144,26 +144,33 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASSWORD },
     });
 
-    await transporter.sendMail({
-      from: `"Iglesia Vida Nueva" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Recuperación de contraseña - Panel Admin",
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px;">
-          <h2 style="color: #1d4ed8;">Recuperación de Contraseña</h2>
-          <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta de administrador.</p>
-          <p>Haz clic en el botón para crear una nueva contraseña. El enlace expira en <strong>1 hora</strong>.</p>
-          <div style="text-align: center; margin: 32px 0;">
-            <a href="${resetUrl}" style="background-color:#1d4ed8;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold;">
-              Restablecer Contraseña
-            </a>
+    try {
+      await transporter.sendMail({
+        from: `"Iglesia Vida Nueva" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Recuperación de contraseña - Panel Admin",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px;">
+            <h2 style="color: #1d4ed8;">Recuperación de Contraseña</h2>
+            <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta de administrador.</p>
+            <p>Haz clic en el botón para crear una nueva contraseña. El enlace expira en <strong>1 hora</strong>.</p>
+            <div style="text-align: center; margin: 32px 0;">
+              <a href="${resetUrl}" style="background-color:#1d4ed8;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold;">
+                Restablecer Contraseña
+              </a>
+            </div>
+            <p style="font-size:12px;color:#9ca3af;">Si no solicitaste esto, ignora este mensaje. Tu contraseña no cambiará.</p>
+            <hr style="border:none;border-top:1px solid #e5e7eb;margin-top:24px;" />
+            <p style="font-size:11px;color:#9ca3af;text-align:center;">Iglesia Misión Pentecostés Templo Vida Nueva</p>
           </div>
-          <p style="font-size:12px;color:#9ca3af;">Si no solicitaste esto, ignora este mensaje. Tu contraseña no cambiará.</p>
-          <hr style="border:none;border-top:1px solid #e5e7eb;margin-top:24px;" />
-          <p style="font-size:11px;color:#9ca3af;text-align:center;">Iglesia Misión Pentecostés Templo Vida Nueva</p>
-        </div>
-      `,
-    });
+        `,
+      });
+    } catch (emailError) {
+      // El email falló pero el token ya fue guardado — loguear y continuar
+      console.error("Error al enviar email de recuperación:", emailError.message);
+      // En desarrollo, mostrar el enlace en consola como fallback
+      console.log("🔗 Enlace de recuperación (fallback):", resetUrl);
+    }
 
     res.json({ message: "Si el email existe, recibirás un enlace de recuperación." });
   } catch (error) {
