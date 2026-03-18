@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 import { v2 as cloudinary } from "cloudinary";
+import { sendDonationReceipt, saveDonation } from "./emailService.js";
 
 // ✅ Cargar .env lo antes posible
 dotenv.config();
@@ -24,7 +25,11 @@ const { Pool } = pkg;
 const app = express();
 app.use(
   cors({
-    origin: ["https://vidanuevaimp.com", "http://localhost:5174", "http://localhost:5173"], // ✅ tu dominio real + localhost para desarrollo
+    origin: [
+      "https://vidanuevaimp.com", 
+      "http://localhost:5173",
+      /^https:\/\/.*\.app\.github\.dev$/  // Permite todos los dominios de Codespaces
+    ],
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   })
@@ -623,6 +628,56 @@ app.get("/api/test-cloudinary", async (req, res) => {
   } catch (error) {
     console.error("❌ Error en test Cloudinary:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+
+// --- Endpoint para procesar donaciones y enviar comprobante ---
+app.post("/api/donaciones", async (req, res) => {
+  const { orderId, email, payerName, amountCLP, amountUSD } = req.body;
+
+  if (!orderId || !amountCLP || !amountUSD) {
+    return res.status(400).json({ 
+      error: "orderId, amountCLP y amountUSD son requeridos" 
+    });
+  }
+
+  try {
+    // Guardar donación en la base de datos
+    const donation = await saveDonation(pool, {
+      orderId,
+      email: email || null,
+      payerName: payerName || null,
+      amountCLP: parseFloat(amountCLP),
+      amountUSD: parseFloat(amountUSD)
+    });
+
+    // Si hay email, enviar comprobante
+    let emailSent = false;
+    if (email) {
+      try {
+        await sendDonationReceipt({
+          orderId,
+          email,
+          payerName: payerName || 'Anónimo',
+          amountCLP: parseFloat(amountCLP),
+          amountUSD: parseFloat(amountUSD)
+        });
+        emailSent = true;
+      } catch (emailError) {
+        console.error("Error al enviar email:", emailError);
+        // No fallar la petición si el email falla
+      }
+    }
+
+    res.status(201).json({ 
+      success: true,
+      donation,
+      emailSent 
+    });
+  } catch (error) {
+    console.error("Error al procesar donación:", error);
+    res.status(500).json({ error: "Error al procesar donación" });
   }
 });
 
