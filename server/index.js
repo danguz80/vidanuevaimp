@@ -742,12 +742,15 @@ app.get("/api/fondos/progreso", async (req, res) => {
         f.id,
         f.nombre,
         f.descripcion,
-        ROUND(
-          LEAST(
-            COALESCE(SUM(d.amount_clp), 0) / NULLIF(f.meta, 0) * 100,
-            100
-          ), 1
-        ) AS porcentaje
+        CASE
+          WHEN f.meta IS NULL THEN NULL
+          ELSE ROUND(
+            LEAST(
+              COALESCE(SUM(d.amount_clp), 0) / f.meta * 100,
+              100
+            ), 1
+          )
+        END AS porcentaje
       FROM fondos f
       LEFT JOIN donaciones d ON d.fondo_id = f.id
       WHERE f.activo = TRUE
@@ -772,12 +775,15 @@ app.get("/api/fondos", authenticateToken, async (req, res) => {
         f.meta,
         COALESCE(SUM(d.amount_clp), 0) AS total_recaudado,
         COUNT(d.id) AS cantidad_donaciones,
-        ROUND(
-          LEAST(
-            COALESCE(SUM(d.amount_clp), 0) / NULLIF(f.meta, 0) * 100,
-            100
-          ), 1
-        ) AS porcentaje
+        CASE
+          WHEN f.meta IS NULL THEN NULL
+          ELSE ROUND(
+            LEAST(
+              COALESCE(SUM(d.amount_clp), 0) / f.meta * 100,
+              100
+            ), 1
+          )
+        END AS porcentaje
       FROM fondos f
       LEFT JOIN donaciones d ON d.fondo_id = f.id
       WHERE f.activo = TRUE
