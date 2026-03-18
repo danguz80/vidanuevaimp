@@ -21,6 +21,8 @@ import AdminPanel from "./pages/AdminPanel";
 import AdminMensajes from "./pages/AdminMensajes";
 import AdminVideos from "./pages/AdminVideos";
 import AdminFondos from "./pages/AdminFondos";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 
 import SoundCloudPage from "./pages/SoundCloudPage";
 
@@ -37,6 +39,8 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/quienes-somos" element={<QuienesSomos />} />
               <Route path="/eventos" element={<Eventos />} />
               <Route path="/horarios" element={<Horarios />} />

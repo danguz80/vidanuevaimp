@@ -112,6 +112,97 @@ app.get("/api/auth/verify", authenticateToken, (req, res) => {
   res.json({ valid: true, user: req.user });
 });
 
+// Endpoint: solicitar recuperación de contraseña
+app.post("/api/auth/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "Email requerido" });
+
+  try {
+    const result = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
+    // Responder siempre igual para no revelar si el email existe
+    if (result.rows.length === 0) {
+      return res.json({ message: "Si el email existe, recibirás un enlace de recuperación." });
+    }
+
+    const user = result.rows[0];
+    // Token aleatorio seguro
+    const crypto = await import("crypto");
+    const token = crypto.randomBytes(32).toString("hex");
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+
+    await pool.query(
+      "UPDATE usuarios SET reset_token = $1, reset_token_expires = $2 WHERE id = $3",
+      [token, expires, user.id]
+    );
+
+    const resetUrl = `${process.env.FRONTEND_URL || "https://vidanuevaimp.com"}/reset-password?token=${token}`;
+
+    // Enviar email
+    const nodemailer = await import("nodemailer");
+    const transporter = nodemailer.default.createTransport({
+      service: "gmail",
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASSWORD },
+    });
+
+    await transporter.sendMail({
+      from: `"Iglesia Vida Nueva" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Recuperación de contraseña - Panel Admin",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px;">
+          <h2 style="color: #1d4ed8;">Recuperación de Contraseña</h2>
+          <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta de administrador.</p>
+          <p>Haz clic en el botón para crear una nueva contraseña. El enlace expira en <strong>1 hora</strong>.</p>
+          <div style="text-align: center; margin: 32px 0;">
+            <a href="${resetUrl}" style="background-color:#1d4ed8;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold;">
+              Restablecer Contraseña
+            </a>
+          </div>
+          <p style="font-size:12px;color:#9ca3af;">Si no solicitaste esto, ignora este mensaje. Tu contraseña no cambiará.</p>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin-top:24px;" />
+          <p style="font-size:11px;color:#9ca3af;text-align:center;">Iglesia Misión Pentecostés Templo Vida Nueva</p>
+        </div>
+      `,
+    });
+
+    res.json({ message: "Si el email existe, recibirás un enlace de recuperación." });
+  } catch (error) {
+    console.error("Error en forgot-password:", error);
+    res.status(500).json({ error: "Error al procesar la solicitud" });
+  }
+});
+
+// Endpoint: restablecer contraseña con token
+app.post("/api/auth/reset-password", async (req, res) => {
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) return res.status(400).json({ error: "Token y nueva contraseña requeridos" });
+  if (newPassword.length < 8) return res.status(400).json({ error: "La contraseña debe tener al menos 8 caracteres" });
+
+  try {
+    const result = await pool.query(
+      "SELECT * FROM usuarios WHERE reset_token = $1 AND reset_token_expires > NOW()",
+      [token]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: "Token inválido o expirado" });
+    }
+
+    const user = result.rows[0];
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    await pool.query(
+      "UPDATE usuarios SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
+      [passwordHash, user.id]
+    );
+
+    res.json({ message: "Contraseña restablecida exitosamente" });
+  } catch (error) {
+    console.error("Error en reset-password:", error);
+    res.status(500).json({ error: "Error al restablecer contraseña" });
+  }
+});
+
 // ========================
 // 📝 ENDPOINTS EXISTENTES
 // ========================
