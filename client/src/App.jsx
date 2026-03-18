@@ -20,10 +20,12 @@ import NotFound from "./pages/NotFound";
 import AdminPanel from "./pages/AdminPanel";
 import AdminMensajes from "./pages/AdminMensajes";
 import AdminVideos from "./pages/AdminVideos";
+import AdminFondos from "./pages/AdminFondos";
 
 import SoundCloudPage from "./pages/SoundCloudPage";
 
 import GaleriaFotos from "./pages/GaleriaFotos";
+import ProgresoFondos from "./pages/ProgresoFondos";
 
 export default function App() {
   return (
@@ -42,6 +44,7 @@ export default function App() {
               <Route path="/ministerios" element={<Ministerios />} />
               <Route path="/contacto" element={<Contacto />} />
               <Route path="/donacion" element={<Donacion />} />
+              <Route path="/fondos" element={<ProgresoFondos />} />
               <Route path="/soundcloud" element={<SoundCloudPage />} />
               <Route path="/galeria" element={<GaleriaFotos />} />
               
@@ -50,6 +53,7 @@ export default function App() {
               <Route path="/admin/hero" element={<ProtectedRoute><AdminHero /></ProtectedRoute>} />
               <Route path="/admin/mensajes" element={<ProtectedRoute><AdminMensajes /></ProtectedRoute>} />
               <Route path="/admin/videos" element={<ProtectedRoute><AdminVideos /></ProtectedRoute>} />
+              <Route path="/admin/fondos" element={<ProtectedRoute><AdminFondos /></ProtectedRoute>} />
               
               <Route path="*" element={<NotFound />} />
             </Routes>

@@ -48,6 +48,7 @@ export default function Header() {
           <Link to="/galeria" className="text-gray-700 hover:text-blue-600">Galería</Link>
           <Link to="/soundcloud" className="text-gray-700 hover:text-blue-600">Música</Link>
           <Link to="/contacto" className="text-gray-700 hover:text-blue-600">Contacto</Link>
+          <Link to="/fondos" className="text-gray-700 hover:text-blue-600">Fondos</Link>
           <Link to="/donacion" className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Donar</Link>
           
           {user ? (
@@ -72,6 +73,7 @@ export default function Header() {
           <Link to="/galeria" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Galería</Link>
           <Link to="/soundcloud" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Música</Link>
           <Link to="/contacto" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Contacto</Link>
+          <Link to="/fondos" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Fondos</Link>
           <Link to="/donacion" onClick={() => setMenuOpen(false)} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Donar</Link>
           
           {user ? (

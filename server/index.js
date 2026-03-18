@@ -632,9 +632,110 @@ app.get("/api/test-cloudinary", async (req, res) => {
 });
 
 
+// ========================
+// 💰 FONDOS Y DONACIONES
+// ========================
+
+// GET público: fondos con % de cumplimiento (sin montos)
+app.get("/api/fondos/progreso", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        f.id,
+        f.nombre,
+        f.descripcion,
+        ROUND(
+          LEAST(
+            COALESCE(SUM(d.amount_clp), 0) / NULLIF(f.meta, 0) * 100,
+            100
+          ), 1
+        ) AS porcentaje
+      FROM fondos f
+      LEFT JOIN donaciones d ON d.fondo_id = f.id
+      WHERE f.activo = TRUE
+      GROUP BY f.id, f.nombre, f.descripcion, f.meta
+      ORDER BY f.id
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener progreso de fondos:", error);
+    res.status(500).json({ error: "Error al obtener fondos" });
+  }
+});
+
+// GET admin: fondos con montos reales (protegido)
+app.get("/api/fondos", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        f.id,
+        f.nombre,
+        f.descripcion,
+        f.meta,
+        COALESCE(SUM(d.amount_clp), 0) AS total_recaudado,
+        COUNT(d.id) AS cantidad_donaciones,
+        ROUND(
+          LEAST(
+            COALESCE(SUM(d.amount_clp), 0) / NULLIF(f.meta, 0) * 100,
+            100
+          ), 1
+        ) AS porcentaje
+      FROM fondos f
+      LEFT JOIN donaciones d ON d.fondo_id = f.id
+      WHERE f.activo = TRUE
+      GROUP BY f.id, f.nombre, f.descripcion, f.meta
+      ORDER BY f.id
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener fondos:", error);
+    res.status(500).json({ error: "Error al obtener fondos" });
+  }
+});
+
+// PUT admin: actualizar meta de un fondo (protegido)
+app.put("/api/fondos/:id/meta", authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { meta } = req.body;
+
+  if (!meta || isNaN(meta) || parseFloat(meta) <= 0) {
+    return res.status(400).json({ error: "Meta inválida" });
+  }
+
+  try {
+    const result = await pool.query(
+      "UPDATE fondos SET meta = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+      [parseFloat(meta), id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Fondo no encontrado" });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error al actualizar meta:", error);
+    res.status(500).json({ error: "Error al actualizar meta" });
+  }
+});
+
+// GET admin: detalle de donaciones por fondo (protegido)
+app.get("/api/fondos/:id/donaciones", authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT id, order_id, payer_name, email, amount_clp, amount_usd, fecha
+       FROM donaciones WHERE fondo_id = $1 ORDER BY fecha DESC`,
+      [id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener donaciones del fondo:", error);
+    res.status(500).json({ error: "Error al obtener donaciones" });
+  }
+});
+
 // --- Endpoint para procesar donaciones y enviar comprobante ---
 app.post("/api/donaciones", async (req, res) => {
-  const { orderId, email, payerName, amountCLP, amountUSD } = req.body;
+  const { orderId, email, payerName, amountCLP, amountUSD, fondoId } = req.body;
 
   if (!orderId || !amountCLP || !amountUSD) {
     return res.status(400).json({ 
@@ -643,16 +744,22 @@ app.post("/api/donaciones", async (req, res) => {
   }
 
   try {
-    // Guardar donación en la base de datos
     const donation = await saveDonation(pool, {
       orderId,
       email: email || null,
       payerName: payerName || null,
       amountCLP: parseFloat(amountCLP),
-      amountUSD: parseFloat(amountUSD)
+      amountUSD: parseFloat(amountUSD),
+      fondoId: fondoId || 1
     });
 
-    // Si hay email, enviar comprobante
+    // Obtener nombre del fondo para el comprobante
+    let fondoNombre = "Ofrendas";
+    try {
+      const fondoResult = await pool.query("SELECT nombre FROM fondos WHERE id = $1", [fondoId || 1]);
+      if (fondoResult.rows.length > 0) fondoNombre = fondoResult.rows[0].nombre;
+    } catch (_) {}
+
     let emailSent = false;
     if (email) {
       try {
@@ -661,12 +768,12 @@ app.post("/api/donaciones", async (req, res) => {
           email,
           payerName: payerName || 'Anónimo',
           amountCLP: parseFloat(amountCLP),
-          amountUSD: parseFloat(amountUSD)
+          amountUSD: parseFloat(amountUSD),
+          fondoNombre
         });
         emailSent = true;
       } catch (emailError) {
         console.error("Error al enviar email:", emailError);
-        // No fallar la petición si el email falla
       }
     }
 

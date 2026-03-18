@@ -47,6 +47,13 @@ export default function AdminPanel() {
         >
           Administrar Hero
         </button>
+
+        <button
+          onClick={() => navigate("/admin/fondos")}
+          className="bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-3 px-6 rounded transition"
+        >
+          Fondos y Donaciones
+        </button>
       </div>
     </div>
   );

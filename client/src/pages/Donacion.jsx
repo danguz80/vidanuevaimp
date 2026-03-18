@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Heart, Gift, Church, Users, Book, Lightbulb } from "lucide-react";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://iglesia-backend.onrender.com";
+
 export default function DonacionPage() {
   const [amount, setAmount] = useState(null);
   const [customAmount, setCustomAmount] = useState("");
@@ -8,10 +10,33 @@ export default function DonacionPage() {
   const [email, setEmail] = useState("");
   const [showPayPalButtons, setShowPayPalButtons] = useState(false);
   const [exchangeRate, setExchangeRate] = useState(null);
+  const [fondos, setFondos] = useState([]);
+  const [fondoSeleccionado, setFondoSeleccionado] = useState(null);
   const paypalRef = useRef();
   
-  // Montos predefinidos en CLP (mostrados al usuario)
   const predefinedAmountsCLP = [5000, 10000, 20000];
+
+  // Cargar fondos disponibles
+  useEffect(() => {
+    fetch(`${API_URL}/api/fondos/progreso`)
+      .then(r => r.json())
+      .then(data => {
+        setFondos(data);
+        if (data.length > 0) setFondoSeleccionado(data[0]);
+      })
+      .catch(() => {
+        // Fondos por defecto si falla el servidor
+        const defaults = [
+          { id: 1, nombre: "Ofrendas" },
+          { id: 2, nombre: "Sala de Control" },
+          { id: 3, nombre: "Ampliación Cocina" },
+          { id: 4, nombre: "Construcción Escala" },
+          { id: 5, nombre: "Cuotas" },
+        ];
+        setFondos(defaults);
+        setFondoSeleccionado(defaults[0]);
+      });
+  }, []);
 
   // Obtener tipo de cambio CLP a USD
   useEffect(() => {
@@ -95,7 +120,7 @@ export default function DonacionPage() {
                 currency_code: 'USD',
                 value: finalAmountUSD
               },
-              description: `Donación de $${finalAmountCLP.toLocaleString('es-CL')} CLP - Iglesia Misión Pentecostés Templo Vida Nueva`,
+              description: `Donación: ${fondoSeleccionado?.nombre || 'Fondo General'} - $${finalAmountCLP.toLocaleString('es-CL')} CLP - Iglesia Misión Pentecostés Templo Vida Nueva`,
               custom_id: email || 'sin-email'
             }]
           });
@@ -119,7 +144,8 @@ export default function DonacionPage() {
                     ? `${order.payer.name.given_name} ${order.payer.name.surname}`
                     : order.payer?.email_address || 'Anónimo',
                   amountCLP: finalAmountCLP,
-                  amountUSD: finalAmountUSD
+                  amountUSD: finalAmountUSD,
+                  fondoId: fondoSeleccionado?.id || 1
                 })
               });
 
@@ -231,6 +257,28 @@ Que Dios te bendiga abundantemente.`);
               <Gift className="text-green-500" />
               Realizar Donación
             </h2>
+
+            {/* Selector de fondo */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-700 mb-3">
+                Selecciona un fondo:
+              </label>
+              <div className="grid grid-cols-1 gap-2">
+                {fondos.map((fondo) => (
+                  <button
+                    key={fondo.id}
+                    onClick={() => setFondoSeleccionado(fondo)}
+                    className={`py-2 px-4 rounded-lg font-medium text-left transition border-2 ${
+                      fondoSeleccionado?.id === fondo.id
+                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        : "border-gray-200 bg-white text-gray-700 hover:border-blue-300"
+                    }`}
+                  >
+                    {fondo.nombre}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div className="mb-6">
               <label className="block text-sm font-semibold text-gray-700 mb-3">

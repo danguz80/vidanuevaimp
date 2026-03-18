@@ -139,15 +139,16 @@ export const saveDonation = async (pool, donationData) => {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `INSERT INTO donaciones (order_id, email, payer_name, amount_clp, amount_usd, fecha)
-       VALUES ($1, $2, $3, $4, $5, NOW())
+      `INSERT INTO donaciones (order_id, email, payer_name, amount_clp, amount_usd, fondo_id, fecha)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
        RETURNING *`,
       [
         donationData.orderId,
         donationData.email,
         donationData.payerName,
         donationData.amountCLP,
-        donationData.amountUSD
+        donationData.amountUSD,
+        donationData.fondoId || 1
       ]
     );
     return result.rows[0];
