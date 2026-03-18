@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Heart, Gift, Church, Users, Book, Lightbulb } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://iglesia-backend.onrender.com";
+const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 
 export default function DonacionPage() {
   const [amount, setAmount] = useState(null);
@@ -132,7 +132,7 @@ export default function DonacionPage() {
             
             // Enviar información al backend para generar y enviar comprobante
             try {
-              const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://iglesia-backend.onrender.com'}/api/donaciones`, {
+              const response = await fetch(`${API_URL}/api/donaciones`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',

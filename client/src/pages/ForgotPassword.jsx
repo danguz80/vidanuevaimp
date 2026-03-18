@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { Mail, ArrowLeft, CheckCircle } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://iglesia-backend.onrender.com";
+const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");

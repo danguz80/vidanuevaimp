@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { Lock, CheckCircle, XCircle } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://iglesia-backend.onrender.com";
+const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();

@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { Edit2, Save, X, ChevronDown, ChevronUp } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://iglesia-backend.onrender.com";
+const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 const COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"];
 
 export default function AdminFondos() {
