@@ -53,7 +53,7 @@ export default function DonacionPage() {
   useEffect(() => {
     // Configuración para USD
     const script = document.createElement("script");
-    script.src = "https://www.paypal.com/sdk/js?client-id=ARh2dyL9_bTmMf9WoDZG4bkOr_zEBhyJFcuk5h1ollXIESmwTWKb3mhFoxHTkblwMMTTOuh8zWrWfSMP&currency=USD&locale=es_CL";
+    script.src = `https://www.paypal.com/sdk/js?client-id=${import.meta.env.VITE_PAYPAL_CLIENT_ID}&currency=USD&locale=es_CL`;
     script.async = true;
     
     script.onload = () => {
@@ -167,7 +167,7 @@ Que Dios te bendiga abundantemente.`);
 
   const handlePayPalMe = () => {
     // Opción alternativa con PayPal.me (requiere cuenta)
-    window.open('https://www.paypal.com/paypalme/imptvn', '_blank');
+    window.open('https://www.paypal.com/paypalme/SU079009320', '_blank');
   };
 
   return (
@@ -340,7 +340,7 @@ Que Dios te bendiga abundantemente.`);
                 vidanuevaimp@gmail.com
               </p>
               <p className="text-xs text-center text-gray-500 mt-2">
-                paypal.me/imptvn
+                paypal.me/SU079009320
               </p>
             </div>
           </div>
