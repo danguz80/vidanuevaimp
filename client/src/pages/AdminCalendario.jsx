@@ -4,7 +4,7 @@ import AdminNav from "../components/AdminNav";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
-const DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
 const COLORES_EVENTO = [
@@ -36,8 +36,10 @@ function diasEnMes(anio, mes) {
   return new Date(anio, mes + 1, 0).getDate();
 }
 
+// Devuelve el offset lunes=0 … domingo=6
 function primerDiaMes(anio, mes) {
-  return new Date(anio, mes, 1).getDay();
+  const dia = new Date(anio, mes, 1).getDay(); // 0=dom,1=lun…6=sab
+  return dia === 0 ? 6 : dia - 1;
 }
 
 // Expande un evento recurrente dentro de un mes dado
@@ -558,8 +560,16 @@ export default function AdminCalendario() {
                     className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                   >
                     <option value="">Usar el día de la fecha de inicio</option>
-                    {DIAS_SEMANA.map((d, i) => (
-                      <option key={i} value={i}>{d}</option>
+                    {[
+                      { label: "Lunes",     jsDay: 1 },
+                      { label: "Martes",    jsDay: 2 },
+                      { label: "Miércoles", jsDay: 3 },
+                      { label: "Jueves",    jsDay: 4 },
+                      { label: "Viernes",   jsDay: 5 },
+                      { label: "Sábado",    jsDay: 6 },
+                      { label: "Domingo",   jsDay: 0 },
+                    ].map(({ label, jsDay }) => (
+                      <option key={jsDay} value={jsDay}>{label}</option>
                     ))}
                   </select>
                 </div>
