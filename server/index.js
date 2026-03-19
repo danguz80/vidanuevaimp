@@ -1157,30 +1157,41 @@ app.get("/api/eventos/publicos", async (req, res) => {
     const client = await pool.connect();
     const result = await client.query(`
       SELECT e.*,
-        c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido,
-        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido,
+        enc.nombre AS encargado_nombre, enc.apellido AS encargado_apellido, enc.foto_url AS encargado_foto,
+        c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido, c.foto_url AS coordinador_foto,
+        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido,  p.foto_url AS predicador_foto,
         COALESCE(
           json_agg(
             json_build_object(
               'fecha',               oc.fecha,
+              'encargado_id',        oc.encargado_id,
+              'encargado_nombre',    encoc.nombre,
+              'encargado_apellido',  encoc.apellido,
+              'encargado_foto',      encoc.foto_url,
               'coordinador_id',      oc.coordinador_id,
               'coordinador_nombre',  cm.nombre,
               'coordinador_apellido',cm.apellido,
+              'coordinador_foto',    cm.foto_url,
               'predicador_id',       oc.predicador_id,
               'predicador_nombre',   pm.nombre,
               'predicador_apellido', pm.apellido,
+              'predicador_foto',     pm.foto_url,
               'notas',               oc.notas
             ) ORDER BY oc.fecha
           ) FILTER (WHERE oc.id IS NOT NULL),
           '[]'::json
         ) AS ocurrencias
       FROM eventos e
-      LEFT JOIN miembros c  ON c.id  = e.coordinador_id
-      LEFT JOIN miembros p  ON p.id  = e.predicador_id
-      LEFT JOIN evento_ocurrencias oc ON oc.evento_id = e.id
-      LEFT JOIN miembros cm ON cm.id = oc.coordinador_id
-      LEFT JOIN miembros pm ON pm.id = oc.predicador_id
-      GROUP BY e.id, c.nombre, c.apellido, p.nombre, p.apellido
+      LEFT JOIN miembros enc ON enc.id = e.encargado_id
+      LEFT JOIN miembros c   ON c.id   = e.coordinador_id
+      LEFT JOIN miembros p   ON p.id   = e.predicador_id
+      LEFT JOIN evento_ocurrencias oc    ON oc.evento_id  = e.id
+      LEFT JOIN miembros encoc ON encoc.id = oc.encargado_id
+      LEFT JOIN miembros cm    ON cm.id    = oc.coordinador_id
+      LEFT JOIN miembros pm    ON pm.id    = oc.predicador_id
+      GROUP BY e.id, enc.nombre, enc.apellido, enc.foto_url,
+                       c.nombre, c.apellido, c.foto_url,
+                       p.nombre, p.apellido, p.foto_url
       ORDER BY e.fecha_inicio ASC
     `);
     client.release();
@@ -1191,36 +1202,47 @@ app.get("/api/eventos/publicos", async (req, res) => {
   }
 });
 
-// GET /api/eventos — listar todos, con coordinador, predicador y ocurrencias por fecha
+// GET /api/eventos — listar todos, con encargado, coordinador, predicador y ocurrencias por fecha
 app.get("/api/eventos", authenticateToken, async (req, res) => {
   try {
     const client = await pool.connect();
     const result = await client.query(`
       SELECT e.*,
-        c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido,
-        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido,
+        enc.nombre AS encargado_nombre, enc.apellido AS encargado_apellido, enc.foto_url AS encargado_foto,
+        c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido, c.foto_url AS coordinador_foto,
+        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido,  p.foto_url AS predicador_foto,
         COALESCE(
           json_agg(
             json_build_object(
               'fecha',               oc.fecha,
+              'encargado_id',        oc.encargado_id,
+              'encargado_nombre',    encoc.nombre,
+              'encargado_apellido',  encoc.apellido,
+              'encargado_foto',      encoc.foto_url,
               'coordinador_id',      oc.coordinador_id,
               'coordinador_nombre',  cm.nombre,
               'coordinador_apellido',cm.apellido,
+              'coordinador_foto',    cm.foto_url,
               'predicador_id',       oc.predicador_id,
               'predicador_nombre',   pm.nombre,
               'predicador_apellido', pm.apellido,
+              'predicador_foto',     pm.foto_url,
               'notas',               oc.notas
             ) ORDER BY oc.fecha
           ) FILTER (WHERE oc.id IS NOT NULL),
           '[]'::json
         ) AS ocurrencias
       FROM eventos e
-      LEFT JOIN miembros c  ON c.id  = e.coordinador_id
-      LEFT JOIN miembros p  ON p.id  = e.predicador_id
-      LEFT JOIN evento_ocurrencias oc ON oc.evento_id = e.id
-      LEFT JOIN miembros cm ON cm.id = oc.coordinador_id
-      LEFT JOIN miembros pm ON pm.id = oc.predicador_id
-      GROUP BY e.id, c.nombre, c.apellido, p.nombre, p.apellido
+      LEFT JOIN miembros enc ON enc.id = e.encargado_id
+      LEFT JOIN miembros c   ON c.id   = e.coordinador_id
+      LEFT JOIN miembros p   ON p.id   = e.predicador_id
+      LEFT JOIN evento_ocurrencias oc    ON oc.evento_id  = e.id
+      LEFT JOIN miembros encoc ON encoc.id = oc.encargado_id
+      LEFT JOIN miembros cm    ON cm.id    = oc.coordinador_id
+      LEFT JOIN miembros pm    ON pm.id    = oc.predicador_id
+      GROUP BY e.id, enc.nombre, enc.apellido, enc.foto_url,
+                       c.nombre, c.apellido, c.foto_url,
+                       p.nombre, p.apellido, p.foto_url
       ORDER BY e.fecha_inicio ASC
     `);
     client.release();
@@ -1255,16 +1277,16 @@ app.get("/api/eventos/:id", authenticateToken, async (req, res) => {
 
 // POST /api/eventos
 app.post("/api/eventos", authenticateToken, async (req, res) => {
-  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color, notas } = req.body;
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas } = req.body;
   if (!titulo || !fecha_inicio) return res.status(400).json({ error: "Título y fecha de inicio son obligatorios" });
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color, notas)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
       [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
        tipo || "especial", recurrencia || "ninguna", dia_semana ?? null,
-       coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null]
+       encargado_id || null, coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null]
     );
     client.release();
     res.status(201).json(result.rows[0]);
@@ -1276,16 +1298,16 @@ app.post("/api/eventos", authenticateToken, async (req, res) => {
 
 // PUT /api/eventos/:id
 app.put("/api/eventos/:id", authenticateToken, async (req, res) => {
-  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color, notas } = req.body;
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas } = req.body;
   try {
     const client = await pool.connect();
     const result = await client.query(
       `UPDATE eventos SET titulo=$1, descripcion=$2, imagen_url=$3, fecha_inicio=$4, fecha_fin=$5,
-       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, coordinador_id=$10, predicador_id=$11, color=$12, notas=$13
-       WHERE id=$14 RETURNING *`,
+       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, encargado_id=$10, coordinador_id=$11, predicador_id=$12, color=$13, notas=$14
+       WHERE id=$15 RETURNING *`,
       [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
        tipo || "especial", recurrencia || "ninguna", dia_semana ?? null,
-       coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null, req.params.id]
+       encargado_id || null, coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null, req.params.id]
     );
     client.release();
     if (result.rows.length === 0) return res.status(404).json({ error: "Evento no encontrado" });
@@ -1309,21 +1331,22 @@ app.delete("/api/eventos/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/eventos/:id/ocurrencias — upsert coordinador/predicador/notas para una fecha específica
+// POST /api/eventos/:id/ocurrencias — upsert encargado/coordinador/predicador/notas para una fecha específica
 app.post("/api/eventos/:id/ocurrencias", authenticateToken, async (req, res) => {
-  const { fecha, coordinador_id, predicador_id, notas } = req.body;
+  const { fecha, encargado_id, coordinador_id, predicador_id, notas } = req.body;
   if (!fecha) return res.status(400).json({ error: "La fecha es obligatoria" });
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `INSERT INTO evento_ocurrencias (evento_id, fecha, coordinador_id, predicador_id, notas)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO evento_ocurrencias (evento_id, fecha, encargado_id, coordinador_id, predicador_id, notas)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (evento_id, fecha)
-       DO UPDATE SET coordinador_id = EXCLUDED.coordinador_id,
+       DO UPDATE SET encargado_id   = EXCLUDED.encargado_id,
+                     coordinador_id = EXCLUDED.coordinador_id,
                      predicador_id  = EXCLUDED.predicador_id,
                      notas          = EXCLUDED.notas
        RETURNING *`,
-      [req.params.id, fecha, coordinador_id || null, predicador_id || null, notas || null]
+      [req.params.id, fecha, encargado_id || null, coordinador_id || null, predicador_id || null, notas || null]
     );
     client.release();
     res.json(result.rows[0]);

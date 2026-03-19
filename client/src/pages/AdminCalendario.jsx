@@ -58,11 +58,26 @@ const FORM_INICIAL = {
   tipo: "especial",
   recurrencia: "ninguna",
   dia_semana: "",
+  encargado_id: "",
   coordinador_id: "",
   predicador_id: "",
   notas: "",
   color: "#3B82F6",
 };
+
+function Avatar({ nombre, apellido, foto_url, label }) {
+  const initials = `${nombre?.[0] || ""}${apellido?.[0] || ""}`.toUpperCase();
+  return (
+    <div className="flex items-center gap-2">
+      {foto_url ? (
+        <img src={foto_url} className="w-7 h-7 rounded-full object-cover border border-gray-200 flex-shrink-0" alt="" />
+      ) : (
+        <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 flex-shrink-0">{initials}</div>
+      )}
+      <span>{label && <span className="font-medium">{label}: </span>}{nombre} {apellido}</span>
+    </div>
+  );
+}
 
 function diasEnMes(anio, mes) {
   return new Date(anio, mes + 1, 0).getDate();
@@ -82,12 +97,18 @@ function mergeOc(ev, fecha) {
   if (!oc) return ev;
   return {
     ...ev,
+    encargado_id:         oc.encargado_id        !== undefined ? oc.encargado_id        : ev.encargado_id,
+    encargado_nombre:     oc.encargado_nombre    != null      ? oc.encargado_nombre    : ev.encargado_nombre,
+    encargado_apellido:   oc.encargado_apellido  != null      ? oc.encargado_apellido  : ev.encargado_apellido,
+    encargado_foto:       oc.encargado_foto      != null      ? oc.encargado_foto      : ev.encargado_foto,
     coordinador_id:       oc.coordinador_id      !== undefined ? oc.coordinador_id      : ev.coordinador_id,
     coordinador_nombre:   oc.coordinador_nombre  != null      ? oc.coordinador_nombre  : ev.coordinador_nombre,
     coordinador_apellido: oc.coordinador_apellido != null     ? oc.coordinador_apellido : ev.coordinador_apellido,
+    coordinador_foto:     oc.coordinador_foto    != null      ? oc.coordinador_foto    : ev.coordinador_foto,
     predicador_id:        oc.predicador_id       !== undefined ? oc.predicador_id       : ev.predicador_id,
     predicador_nombre:    oc.predicador_nombre   != null      ? oc.predicador_nombre   : ev.predicador_nombre,
     predicador_apellido:  oc.predicador_apellido != null      ? oc.predicador_apellido  : ev.predicador_apellido,
+    predicador_foto:      oc.predicador_foto     != null      ? oc.predicador_foto     : ev.predicador_foto,
     notas:                oc.notas               != null      ? oc.notas                : ev.notas,
   };
 }
@@ -176,7 +197,7 @@ export default function AdminCalendario() {
   const [guardando, setGuardando] = useState(false);
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   const [vistaEvento, setVistaEvento] = useState(null);
-  const [ocForm, setOcForm] = useState({ coordinador_id: "", predicador_id: "", notas: "" });
+  const [ocForm, setOcForm] = useState({ encargado_id: "", coordinador_id: "", predicador_id: "", notas: "" });
   const [guardandoOc, setGuardandoOc] = useState(false);
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}` });
@@ -232,6 +253,7 @@ export default function AdminCalendario() {
       tipo: ev.tipo || "especial",
       recurrencia: ev.recurrencia || "ninguna",
       dia_semana: ev.dia_semana ?? "",
+      encargado_id: ev.encargado_id || "",
       coordinador_id: ev.coordinador_id || "",
       predicador_id: ev.predicador_id || "",
       notas: ev.notas || "",
@@ -250,6 +272,7 @@ export default function AdminCalendario() {
   useEffect(() => {
     if (vistaEvento && vistaEvento.tipo === "recurrente") {
       setOcForm({
+        encargado_id:   vistaEvento.encargado_id   ? String(vistaEvento.encargado_id)   : "",
         coordinador_id: vistaEvento.coordinador_id ? String(vistaEvento.coordinador_id) : "",
         predicador_id:  vistaEvento.predicador_id  ? String(vistaEvento.predicador_id)  : "",
         notas:          vistaEvento.notas || "",
@@ -267,6 +290,7 @@ export default function AdminCalendario() {
         headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({
           fecha,
+          encargado_id:   ocForm.encargado_id   || null,
           coordinador_id: ocForm.coordinador_id || null,
           predicador_id:  ocForm.predicador_id  || null,
           notas:          ocForm.notas          || null,
@@ -294,6 +318,7 @@ export default function AdminCalendario() {
       const body = {
         ...form,
         dia_semana: form.dia_semana !== "" ? parseInt(form.dia_semana) : null,
+        encargado_id: form.encargado_id || null,
         coordinador_id: form.coordinador_id || null,
         predicador_id: form.predicador_id || null,
       };
@@ -495,15 +520,23 @@ export default function AdminCalendario() {
                       })}
                     </p>
                     {ev.lugar && <p className="text-xs text-gray-400 mt-0.5">📍 {ev.lugar}</p>}
-                    {ev.coordinador_nombre && (
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        🎯 {ev.coordinador_nombre} {ev.coordinador_apellido}
-                      </p>
-                    )}
-                    {ev.predicador_nombre && (
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        🎤 {ev.predicador_nombre} {ev.predicador_apellido}
-                      </p>
+                    {ev.encargado_nombre ? (
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        <Avatar nombre={ev.encargado_nombre} apellido={ev.encargado_apellido} foto_url={ev.encargado_foto} />
+                      </div>
+                    ) : (
+                      <>
+                        {ev.coordinador_nombre && (
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            <Avatar nombre={ev.coordinador_nombre} apellido={ev.coordinador_apellido} foto_url={ev.coordinador_foto} />
+                          </div>
+                        )}
+                        {ev.predicador_nombre && (
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            <Avatar nombre={ev.predicador_nombre} apellido={ev.predicador_apellido} foto_url={ev.predicador_foto} />
+                          </div>
+                        )}
+                      </>
                     )}
                     <span className={`mt-1 inline-block text-xs px-2 py-0.5 rounded-full ${ev.tipo === "recurrente" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
                       {ev.tipo === "recurrente" ? `🔁 ${ev.recurrencia}` : "📅 especial"}
@@ -545,28 +578,60 @@ export default function AdminCalendario() {
                 </div>
               )}
               {vistaEvento.lugar && <p className="text-sm text-gray-500 mb-1">📍 {vistaEvento.lugar}</p>}
-              {vistaEvento.coordinador_nombre && (
-                <p className="text-sm text-gray-500 mb-1">
-                  🎯 Coordinador/a: {vistaEvento.coordinador_nombre} {vistaEvento.coordinador_apellido}
-                </p>
-              )}
-              {vistaEvento.predicador_nombre && (
-                <p className="text-sm text-gray-500 mb-1">
-                  🎤 Predicador/a: {vistaEvento.predicador_nombre} {vistaEvento.predicador_apellido}
-                </p>
+              {vistaEvento.encargado_nombre ? (
+                <div className="text-sm text-gray-600 mb-1">
+                  <Avatar nombre={vistaEvento.encargado_nombre} apellido={vistaEvento.encargado_apellido} foto_url={vistaEvento.encargado_foto} label="Encargado/a" />
+                </div>
+              ) : (
+                <>
+                  {vistaEvento.coordinador_nombre && (
+                    <div className="text-sm text-gray-600 mb-1">
+                      <Avatar nombre={vistaEvento.coordinador_nombre} apellido={vistaEvento.coordinador_apellido} foto_url={vistaEvento.coordinador_foto} label="Coordinador/a" />
+                    </div>
+                  )}
+                  {vistaEvento.predicador_nombre && (
+                    <div className="text-sm text-gray-600 mb-1">
+                      <Avatar nombre={vistaEvento.predicador_nombre} apellido={vistaEvento.predicador_apellido} foto_url={vistaEvento.predicador_foto} label="Predicador/a" />
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Asignación específica para esta ocurrencia (solo recurrentes) */}
               {vistaEvento.tipo === "recurrente" && (
                 <div className="border-t pt-4 mt-3">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Asignar para esta fecha</p>
+                  <div className="mb-2">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Encargado/a{(ocForm.coordinador_id || ocForm.predicador_id) ? " (bloqueado)" : ""}
+                    </label>
+                    <select
+                      value={ocForm.encargado_id}
+                      onChange={e => setOcForm(p => ({ ...p, encargado_id: e.target.value, coordinador_id: "", predicador_id: "" }))}
+                      disabled={!!(ocForm.coordinador_id || ocForm.predicador_id)}
+                      className={`w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                        ocForm.coordinador_id || ocForm.predicador_id ? "opacity-40 cursor-not-allowed bg-gray-100" : ""
+                      }`}
+                    >
+                      <option value="">Sin asignar</option>
+                      {miembros.map(m => (
+                        <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-center text-xs text-gray-400 mb-2">— o separar en —</p>
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Coordinador/a</label>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Coordinador/a{ocForm.encargado_id ? " (bloqueado)" : ""}
+                      </label>
                       <select
                         value={ocForm.coordinador_id}
-                        onChange={e => setOcForm(p => ({ ...p, coordinador_id: e.target.value }))}
-                        className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                        onChange={e => setOcForm(p => ({ ...p, coordinador_id: e.target.value, encargado_id: "" }))}
+                        disabled={!!ocForm.encargado_id}
+                        className={`w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 ${
+                          ocForm.encargado_id ? "opacity-40 cursor-not-allowed bg-gray-100" : ""
+                        }`}
                       >
                         <option value="">Sin asignar</option>
                         {miembros.map(m => (
@@ -575,11 +640,16 @@ export default function AdminCalendario() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Predicador/a</label>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Predicador/a{ocForm.encargado_id ? " (bloqueado)" : ""}
+                      </label>
                       <select
                         value={ocForm.predicador_id}
-                        onChange={e => setOcForm(p => ({ ...p, predicador_id: e.target.value }))}
-                        className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                        onChange={e => setOcForm(p => ({ ...p, predicador_id: e.target.value, encargado_id: "" }))}
+                        disabled={!!ocForm.encargado_id}
+                        className={`w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 ${
+                          ocForm.encargado_id ? "opacity-40 cursor-not-allowed bg-gray-100" : ""
+                        }`}
                       >
                         <option value="">Sin asignar</option>
                         {miembros.map(m => (
@@ -759,14 +829,20 @@ export default function AdminCalendario() {
                 />
               </div>
 
-              {/* Coordinador y Predicador */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Responsables (exclusión mutua: Encargado vs Coordinador+Predicador) */}
+              <div className="space-y-3 border rounded-xl p-3 bg-gray-50">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Responsables</p>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Coordinador/a</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    Encargado/a{(form.coordinador_id || form.predicador_id) ? " (bloqueado)" : ""}
+                  </label>
                   <select
-                    value={form.coordinador_id}
-                    onChange={e => setForm(p => ({ ...p, coordinador_id: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    value={form.encargado_id}
+                    onChange={e => setForm(p => ({ ...p, encargado_id: e.target.value, coordinador_id: "", predicador_id: "" }))}
+                    disabled={!!(form.coordinador_id || form.predicador_id)}
+                    className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                      form.coordinador_id || form.predicador_id ? "opacity-40 cursor-not-allowed bg-gray-100" : ""
+                    }`}
                   >
                     <option value="">Sin asignar</option>
                     {miembros.map(m => (
@@ -774,18 +850,44 @@ export default function AdminCalendario() {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Predicador/a</label>
-                  <select
-                    value={form.predicador_id}
-                    onChange={e => setForm(p => ({ ...p, predicador_id: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  >
-                    <option value="">Sin asignar</option>
-                    {miembros.map(m => (
-                      <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-                    ))}
-                  </select>
+                <p className="text-center text-xs text-gray-400">— o separar en —</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Coordinador/a{form.encargado_id ? " (bloqueado)" : ""}
+                    </label>
+                    <select
+                      value={form.coordinador_id}
+                      onChange={e => setForm(p => ({ ...p, coordinador_id: e.target.value, encargado_id: "" }))}
+                      disabled={!!form.encargado_id}
+                      className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                        form.encargado_id ? "opacity-40 cursor-not-allowed bg-gray-100" : ""
+                      }`}
+                    >
+                      <option value="">Sin asignar</option>
+                      {miembros.map(m => (
+                        <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                      Predicador/a{form.encargado_id ? " (bloqueado)" : ""}
+                    </label>
+                    <select
+                      value={form.predicador_id}
+                      onChange={e => setForm(p => ({ ...p, predicador_id: e.target.value, encargado_id: "" }))}
+                      disabled={!!form.encargado_id}
+                      className={`w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                        form.encargado_id ? "opacity-40 cursor-not-allowed bg-gray-100" : ""
+                      }`}
+                    >
+                      <option value="">Sin asignar</option>
+                      {miembros.map(m => (
+                        <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 

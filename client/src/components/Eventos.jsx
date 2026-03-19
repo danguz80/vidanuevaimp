@@ -27,6 +27,20 @@ function normUrl(url) {
   return url.startsWith("/") ? url : `/${url}`;
 }
 
+function Avatar({ nombre, apellido, foto_url, label }) {
+  const initials = `${nombre?.[0] || ""}${apellido?.[0] || ""}`.toUpperCase();
+  return (
+    <div className="flex items-center gap-1.5">
+      {foto_url ? (
+        <img src={foto_url} className="w-6 h-6 rounded-full object-cover border border-gray-200 flex-shrink-0" alt="" />
+      ) : (
+        <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 flex-shrink-0">{initials}</div>
+      )}
+      <span>{label && <span className="font-medium">{label}: </span>}{nombre} {apellido}</span>
+    </div>
+  );
+}
+
 // Aplica el override de ocurrencia (si existe para esa fecha) sobre un evento base
 function mergeOc(ev, fecha) {
   if (!ev.ocurrencias || !Array.isArray(ev.ocurrencias)) return ev;
@@ -35,12 +49,18 @@ function mergeOc(ev, fecha) {
   if (!oc) return ev;
   return {
     ...ev,
+    encargado_id:         oc.encargado_id        !== undefined ? oc.encargado_id        : ev.encargado_id,
+    encargado_nombre:     oc.encargado_nombre    != null      ? oc.encargado_nombre    : ev.encargado_nombre,
+    encargado_apellido:   oc.encargado_apellido  != null      ? oc.encargado_apellido  : ev.encargado_apellido,
+    encargado_foto:       oc.encargado_foto      != null      ? oc.encargado_foto      : ev.encargado_foto,
     coordinador_id:       oc.coordinador_id      !== undefined ? oc.coordinador_id      : ev.coordinador_id,
     coordinador_nombre:   oc.coordinador_nombre  != null      ? oc.coordinador_nombre  : ev.coordinador_nombre,
     coordinador_apellido: oc.coordinador_apellido != null     ? oc.coordinador_apellido : ev.coordinador_apellido,
+    coordinador_foto:     oc.coordinador_foto    != null      ? oc.coordinador_foto    : ev.coordinador_foto,
     predicador_id:        oc.predicador_id       !== undefined ? oc.predicador_id       : ev.predicador_id,
     predicador_nombre:    oc.predicador_nombre   != null      ? oc.predicador_nombre   : ev.predicador_nombre,
     predicador_apellido:  oc.predicador_apellido != null      ? oc.predicador_apellido  : ev.predicador_apellido,
+    predicador_foto:      oc.predicador_foto     != null      ? oc.predicador_foto     : ev.predicador_foto,
     notas:                oc.notas               != null      ? oc.notas                : ev.notas,
   };
 }
@@ -214,13 +234,19 @@ export default function Eventos() {
                   <p className="text-gray-600 text-sm mb-3 line-clamp-3">{ev.descripcion}</p>
                 )}
 
-                <div className="space-y-1 text-xs text-gray-400">
+                <div className="space-y-1 text-xs text-gray-500 mt-1">
                   {ev.lugar && <p>📍 {ev.lugar}</p>}
-                  {ev.coordinador_nombre && (
-                    <p>🎯 Coordinador/a: {ev.coordinador_nombre} {ev.coordinador_apellido}</p>
-                  )}
-                  {ev.predicador_nombre && (
-                    <p>🎤 Predicador/a: {ev.predicador_nombre} {ev.predicador_apellido}</p>
+                  {ev.encargado_nombre ? (
+                    <Avatar nombre={ev.encargado_nombre} apellido={ev.encargado_apellido} foto_url={ev.encargado_foto} label="Encargado/a" />
+                  ) : (
+                    <>
+                      {ev.coordinador_nombre && (
+                        <Avatar nombre={ev.coordinador_nombre} apellido={ev.coordinador_apellido} foto_url={ev.coordinador_foto} label="Coordinador/a" />
+                      )}
+                      {ev.predicador_nombre && (
+                        <Avatar nombre={ev.predicador_nombre} apellido={ev.predicador_apellido} foto_url={ev.predicador_foto} label="Predicador/a" />
+                      )}
+                    </>
                   )}
                 </div>
                 {ev.notas && (
