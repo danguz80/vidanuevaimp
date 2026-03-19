@@ -37,6 +37,18 @@ function toLocalISOString(date) {
 const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
+// Renderiza texto convirtiendo URLs en hipervínculos clicables
+function renderTexto(texto) {
+  if (!texto) return null;
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const partes = texto.split(urlRegex);
+  return partes.map((parte, i) =>
+    urlRegex.test(parte)
+      ? <a key={i} href={parte} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800 break-all">{parte}</a>
+      : parte
+  );
+}
+
 const COLORES_EVENTO = [
   { label: "Azul",   value: "#3B82F6" },
   { label: "Verde",  value: "#10B981" },
@@ -569,7 +581,7 @@ export default function AdminCalendario() {
                 </div>
               </div>
               {vistaEvento.descripcion && (
-                <p className="text-gray-600 text-sm mb-3">{vistaEvento.descripcion}</p>
+                <p className="text-gray-600 text-sm mb-3">{renderTexto(vistaEvento.descripcion)}</p>
               )}
               {vistaEvento.notas && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">

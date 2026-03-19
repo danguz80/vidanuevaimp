@@ -27,6 +27,18 @@ function normUrl(url) {
   return url.startsWith("/") ? url : `/${url}`;
 }
 
+// Renderiza texto convirtiendo URLs en hipervínculos clicables
+function renderTexto(texto) {
+  if (!texto) return null;
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const partes = texto.split(urlRegex);
+  return partes.map((parte, i) =>
+    urlRegex.test(parte)
+      ? <a key={i} href={parte} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800 break-all">{parte}</a>
+      : parte
+  );
+}
+
 function Avatar({ nombre, apellido, foto_url, label }) {
   const initials = `${nombre?.[0] || ""}${apellido?.[0] || ""}`.toUpperCase();
   return (
@@ -231,7 +243,7 @@ export default function Eventos() {
                 </p>
 
                 {ev.descripcion && (
-                  <p className="text-gray-600 text-sm mb-3 line-clamp-3">{ev.descripcion}</p>
+                  <p className="text-gray-600 text-sm mb-3">{renderTexto(ev.descripcion)}</p>
                 )}
 
                 <div className="space-y-1 text-xs text-gray-500 mt-1">
