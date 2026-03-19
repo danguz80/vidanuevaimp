@@ -514,8 +514,18 @@ Que Dios te bendiga abundantemente.`);
           </div>
         </div>
 
+        {/* Enlace a progreso de fondos */}
+        <div className="text-center mt-10">
+          <a
+            href="/fondos"
+            className="inline-flex items-center gap-2 bg-white border-2 border-blue-500 text-blue-600 hover:bg-blue-600 hover:text-white font-semibold py-3 px-7 rounded-lg transition"
+          >
+            📊 Ver progreso de fondos
+          </a>
+        </div>
+
         {/* Contacto */}
-        <div className="text-center mt-12 text-gray-600">
+        <div className="text-center mt-8 text-gray-600">
           <p className="mb-2">¿Preguntas sobre donaciones?</p>
           <p className="font-semibold">Contáctanos: vidanuevaimp@gmail.com</p>
         </div>
