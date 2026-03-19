@@ -3,15 +3,19 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 const NAV_ITEMS = [
-  { label: "Mensajes", path: "/admin/mensajes", color: "blue" },
-  { label: "Sermones", path: "/admin/videos", color: "green" },
-  { label: "Hero", path: "/admin/hero", color: "purple" },
-  { label: "Fondos", path: "/admin/fondos", color: "yellow" },
+  { label: "Miembros",   path: "/admin/miembros",   color: "indigo" },
+  { label: "Calendario", path: "/admin/calendario", color: "teal" },
+  { label: "Mensajes",   path: "/admin/mensajes",   color: "blue" },
+  { label: "Sermones",   path: "/admin/videos",     color: "green" },
+  { label: "Hero",       path: "/admin/hero",       color: "purple" },
+  { label: "Fondos",     path: "/admin/fondos",     color: "yellow" },
 ];
 
 const COLOR_MAP = {
-  blue:   { base: "bg-blue-600 hover:bg-blue-700",   active: "bg-blue-800" },
-  green:  { base: "bg-green-600 hover:bg-green-700", active: "bg-green-800" },
+  indigo: { base: "bg-indigo-600 hover:bg-indigo-700", active: "bg-indigo-800" },
+  teal:   { base: "bg-teal-600 hover:bg-teal-700",     active: "bg-teal-800" },
+  blue:   { base: "bg-blue-600 hover:bg-blue-700",     active: "bg-blue-800" },
+  green:  { base: "bg-green-600 hover:bg-green-700",   active: "bg-green-800" },
   purple: { base: "bg-purple-600 hover:bg-purple-700", active: "bg-purple-800" },
   yellow: { base: "bg-yellow-600 hover:bg-yellow-700", active: "bg-yellow-800" },
 };

@@ -21,6 +21,8 @@ import AdminPanel from "./pages/AdminPanel";
 import AdminMensajes from "./pages/AdminMensajes";
 import AdminVideos from "./pages/AdminVideos";
 import AdminFondos from "./pages/AdminFondos";
+import AdminMiembros from "./pages/AdminMiembros";
+import AdminCalendario from "./pages/AdminCalendario";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 
@@ -58,6 +60,8 @@ export default function App() {
               <Route path="/admin/mensajes" element={<ProtectedRoute><AdminMensajes /></ProtectedRoute>} />
               <Route path="/admin/videos" element={<ProtectedRoute><AdminVideos /></ProtectedRoute>} />
               <Route path="/admin/fondos" element={<ProtectedRoute><AdminFondos /></ProtectedRoute>} />
+              <Route path="/admin/miembros" element={<ProtectedRoute><AdminMiembros /></ProtectedRoute>} />
+              <Route path="/admin/calendario" element={<ProtectedRoute><AdminCalendario /></ProtectedRoute>} />
               
               <Route path="*" element={<NotFound />} />
             </Routes>

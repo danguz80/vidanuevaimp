@@ -1004,6 +1004,244 @@ app.put("/api/donaciones/:id/anular", authenticateToken, async (req, res) => {
 });
 
 
+// =============================================
+// PCO - MIEMBROS
+// =============================================
+
+// GET /api/miembros — listar todos con roles
+app.get("/api/miembros", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT m.*, 
+        COALESCE(
+          json_agg(mr.rol) FILTER (WHERE mr.rol IS NOT NULL),
+          '[]'
+        ) AS roles
+      FROM miembros m
+      LEFT JOIN miembro_roles mr ON mr.miembro_id = m.id
+      GROUP BY m.id
+      ORDER BY m.apellido, m.nombre
+    `);
+    client.release();
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener miembros:", error);
+    res.status(500).json({ error: "Error al obtener miembros" });
+  }
+});
+
+// GET /api/miembros/:id — detalle de un miembro
+app.get("/api/miembros/:id", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT m.*,
+        COALESCE(
+          json_agg(mr.rol) FILTER (WHERE mr.rol IS NOT NULL),
+          '[]'
+        ) AS roles
+      FROM miembros m
+      LEFT JOIN miembro_roles mr ON mr.miembro_id = m.id
+      WHERE m.id = $1
+      GROUP BY m.id
+    `, [req.params.id]);
+    client.release();
+    if (result.rows.length === 0) return res.status(404).json({ error: "Miembro no encontrado" });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error al obtener miembro:", error);
+    res.status(500).json({ error: "Error al obtener miembro" });
+  }
+});
+
+// POST /api/miembros — crear miembro
+app.post("/api/miembros", authenticateToken, async (req, res) => {
+  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles } = req.body;
+  if (!nombre || !apellido) return res.status(400).json({ error: "Nombre y apellido son obligatorios" });
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      `INSERT INTO miembros (nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null]
+    );
+    const miembro = result.rows[0];
+    if (Array.isArray(roles) && roles.length > 0) {
+      for (const rol of roles) {
+        await client.query(
+          `INSERT INTO miembro_roles (miembro_id, rol) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [miembro.id, rol]
+        );
+      }
+    }
+    client.release();
+    res.status(201).json({ ...miembro, roles: roles || [] });
+  } catch (error) {
+    console.error("Error al crear miembro:", error);
+    res.status(500).json({ error: "Error al crear miembro" });
+  }
+});
+
+// PUT /api/miembros/:id — actualizar miembro
+app.put("/api/miembros/:id", authenticateToken, async (req, res) => {
+  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles } = req.body;
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      `UPDATE miembros SET nombre=$1, apellido=$2, foto_url=$3, fecha_nacimiento=$4, celular=$5, 
+       email=$6, direccion=$7, estado=$8, notas=$9 WHERE id=$10 RETURNING *`,
+      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, req.params.id]
+    );
+    if (result.rows.length === 0) { client.release(); return res.status(404).json({ error: "Miembro no encontrado" }); }
+    if (Array.isArray(roles)) {
+      await client.query("DELETE FROM miembro_roles WHERE miembro_id = $1", [req.params.id]);
+      for (const rol of roles) {
+        await client.query(
+          `INSERT INTO miembro_roles (miembro_id, rol) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [req.params.id, rol]
+        );
+      }
+    }
+    client.release();
+    res.json({ ...result.rows[0], roles: roles || [] });
+  } catch (error) {
+    console.error("Error al actualizar miembro:", error);
+    res.status(500).json({ error: "Error al actualizar miembro" });
+  }
+});
+
+// DELETE /api/miembros/:id
+app.delete("/api/miembros/:id", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    await client.query("DELETE FROM miembros WHERE id = $1", [req.params.id]);
+    client.release();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error al eliminar miembro:", error);
+    res.status(500).json({ error: "Error al eliminar miembro" });
+  }
+});
+
+// POST /api/miembros/:id/foto — subir foto a Cloudinary
+app.post("/api/miembros/:id/foto", authenticateToken, async (req, res) => {
+  const { imagen_base64 } = req.body;
+  if (!imagen_base64) return res.status(400).json({ error: "Imagen requerida" });
+  try {
+    const uploadResult = await cloudinary.uploader.upload(imagen_base64, {
+      folder: "iglesia/miembros",
+      transformation: [{ width: 400, height: 400, crop: "fill", gravity: "face" }],
+    });
+    const client = await pool.connect();
+    await client.query("UPDATE miembros SET foto_url=$1 WHERE id=$2", [uploadResult.secure_url, req.params.id]);
+    client.release();
+    res.json({ foto_url: uploadResult.secure_url });
+  } catch (error) {
+    console.error("Error al subir foto:", error);
+    res.status(500).json({ error: "Error al subir foto" });
+  }
+});
+
+// =============================================
+// PCO - EVENTOS
+// =============================================
+
+// GET /api/eventos — listar todos, con encargado
+app.get("/api/eventos", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT e.*,
+        m.nombre AS encargado_nombre,
+        m.apellido AS encargado_apellido
+      FROM eventos e
+      LEFT JOIN miembros m ON m.id = e.encargado_id
+      ORDER BY e.fecha_inicio ASC
+    `);
+    client.release();
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener eventos:", error);
+    res.status(500).json({ error: "Error al obtener eventos" });
+  }
+});
+
+// GET /api/eventos/:id
+app.get("/api/eventos/:id", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT e.*,
+        m.nombre AS encargado_nombre,
+        m.apellido AS encargado_apellido
+      FROM eventos e
+      LEFT JOIN miembros m ON m.id = e.encargado_id
+      WHERE e.id = $1
+    `, [req.params.id]);
+    client.release();
+    if (result.rows.length === 0) return res.status(404).json({ error: "Evento no encontrado" });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error al obtener evento:", error);
+    res.status(500).json({ error: "Error al obtener evento" });
+  }
+});
+
+// POST /api/eventos
+app.post("/api/eventos", authenticateToken, async (req, res) => {
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, color } = req.body;
+  if (!titulo || !fecha_inicio) return res.status(400).json({ error: "Título y fecha de inicio son obligatorios" });
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, color)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
+       tipo || "especial", recurrencia || "ninguna", dia_semana ?? null, encargado_id || null, color || "#3B82F6"]
+    );
+    client.release();
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error("Error al crear evento:", error);
+    res.status(500).json({ error: "Error al crear evento" });
+  }
+});
+
+// PUT /api/eventos/:id
+app.put("/api/eventos/:id", authenticateToken, async (req, res) => {
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, color } = req.body;
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      `UPDATE eventos SET titulo=$1, descripcion=$2, imagen_url=$3, fecha_inicio=$4, fecha_fin=$5,
+       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, encargado_id=$10, color=$11
+       WHERE id=$12 RETURNING *`,
+      [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
+       tipo || "especial", recurrencia || "ninguna", dia_semana ?? null, encargado_id || null, color || "#3B82F6", req.params.id]
+    );
+    client.release();
+    if (result.rows.length === 0) return res.status(404).json({ error: "Evento no encontrado" });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error al actualizar evento:", error);
+    res.status(500).json({ error: "Error al actualizar evento" });
+  }
+});
+
+// DELETE /api/eventos/:id
+app.delete("/api/eventos/:id", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    await client.query("DELETE FROM eventos WHERE id = $1", [req.params.id]);
+    client.release();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error al eliminar evento:", error);
+    res.status(500).json({ error: "Error al eliminar evento" });
+  }
+});
+
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
