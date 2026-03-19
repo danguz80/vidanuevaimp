@@ -2,6 +2,25 @@ import React, { useState, useEffect } from "react";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
+// ---------------------------------------------------------------------------
+// Helpers de fecha sin conversión de zona horaria
+// ---------------------------------------------------------------------------
+function parseLocalDate(str) {
+  if (!str) return null;
+  return new Date(str.slice(0, 16)); // hora local, sin Z
+}
+
+function toLocalDateStr(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function toLocalISOString(date) {
+  return `${toLocalDateStr(date)}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 function normUrl(url) {
   if (!url) return "";
   if (url.startsWith("http") || url.startsWith("//")) return url;
@@ -11,7 +30,7 @@ function normUrl(url) {
 // Aplica el override de ocurrencia (si existe para esa fecha) sobre un evento base
 function mergeOc(ev, fecha) {
   if (!ev.ocurrencias || !Array.isArray(ev.ocurrencias)) return ev;
-  const fs = fecha.toISOString().slice(0, 10);
+  const fs = fecha.toLocaleDateString("sv"); // "2026-03-19" usando hora local
   const oc = ev.ocurrencias.find(o => o.fecha && String(o.fecha).slice(0, 10) === fs);
   if (!oc) return ev;
   return {
@@ -36,7 +55,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
   const resultado = [];
 
   for (const ev of eventos) {
-    const inicio = new Date(ev.fecha_inicio);
+    const inicio = parseLocalDate(ev.fecha_inicio);
 
     if (ev.tipo === "recurrente" && ev.recurrencia !== "ninguna") {
       switch (ev.recurrencia) {
@@ -45,7 +64,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
           let d = new Date(hoy);
           while (d.getDay() !== diaSemana) d.setDate(d.getDate() + 1);
           while (d <= limite) {
-            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
+            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${toLocalISOString(d)}` });
             d.setDate(d.getDate() + 7);
           }
           break;
@@ -57,7 +76,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
           let count = 0;
           while (d <= limite) {
             if (count % 2 === 0) {
-              resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
+              resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${toLocalISOString(d)}` });
             }
             d.setDate(d.getDate() + 7);
             count++;
@@ -68,7 +87,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
           let d = new Date(inicio);
           while (d < hoy) d.setMonth(d.getMonth() + 1);
           while (d <= limite) {
-            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
+            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${toLocalISOString(d)}` });
             d.setMonth(d.getMonth() + 1);
           }
           break;
@@ -77,7 +96,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
           let d = new Date(inicio);
           while (d < hoy) d.setFullYear(d.getFullYear() + 1);
           while (d <= limite) {
-            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
+            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${toLocalISOString(d)}` });
             d.setFullYear(d.getFullYear() + 1);
           }
           break;
@@ -187,7 +206,7 @@ export default function Eventos() {
                     day: "numeric",
                   })}
                   {ev.fecha_inicio && (
-                    <> · {new Date(ev.fecha_inicio).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}</>
+                    <> · {parseLocalDate(ev.fecha_inicio).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}</>
                   )}
                 </p>
 

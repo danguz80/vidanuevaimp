@@ -4,6 +4,36 @@ import AdminNav from "../components/AdminNav";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
+// ---------------------------------------------------------------------------
+// Helpers de fecha sin conversión de zona horaria
+// La BD devuelve fechas con sufijo UTC (Z), pero los eventos se almacenan con
+// la hora local ingresada. Estos helpers evitan que el navegador convierta.
+// ---------------------------------------------------------------------------
+
+// Parsea un string de fecha de la API como hora local (sin conversión tz)
+function parseLocalDate(str) {
+  if (!str) return null;
+  return new Date(str.slice(0, 16)); // "2026-03-19T11:30" → hora local
+}
+
+// Devuelve "YYYY-MM-DD" usando la hora local del Date (no UTC)
+function toLocalDateStr(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// Devuelve "YYYY-MM-DDTHH:mm" usando la hora local (no UTC)
+function toLocalISOString(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d}T${h}:${min}`;
+}
+
 const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
@@ -47,7 +77,7 @@ function primerDiaMes(anio, mes) {
 // Aplica el override de ocurrencia (si existe para esa fecha) sobre un evento base
 function mergeOc(ev, fecha) {
   if (!ev.ocurrencias || !Array.isArray(ev.ocurrencias)) return ev;
-  const fs = fecha.toISOString().slice(0, 10);
+  const fs = fecha.toLocaleDateString("sv"); // "2026-03-19" usando hora local
   const oc = ev.ocurrencias.find(o => o.fecha && String(o.fecha).slice(0, 10) === fs);
   if (!oc) return ev;
   return {
@@ -69,7 +99,7 @@ function expandirEventos(eventos, anio, mes) {
   const ultimoDia = new Date(anio, mes + 1, 0);
 
   for (const ev of eventos) {
-    const inicio = new Date(ev.fecha_inicio);
+    const inicio = parseLocalDate(ev.fecha_inicio);
 
     if (ev.tipo === "recurrente" && ev.recurrencia !== "ninguna") {
       switch (ev.recurrencia) {
@@ -184,7 +214,7 @@ export default function AdminCalendario() {
     const fechaBase = diaInicio
       ? new Date(anioActual, mesActual, diaInicio)
       : new Date();
-    const iso = fechaBase.toISOString().slice(0, 16);
+    const iso = toLocalISOString(fechaBase);
     setForm({ ...FORM_INICIAL, fecha_inicio: iso });
     setModalAbierto(true);
   };
@@ -231,7 +261,7 @@ export default function AdminCalendario() {
     if (!vistaEvento || !vistaEvento._fecha) return;
     setGuardandoOc(true);
     try {
-      const fecha = vistaEvento._fecha.toISOString().slice(0, 10);
+      const fecha = toLocalDateStr(vistaEvento._fecha);
       const res = await fetch(`${API}/api/eventos/${vistaEvento.id}/ocurrencias`, {
         method: "POST",
         headers: { ...headers(), "Content-Type": "application/json" },
