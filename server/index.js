@@ -1147,16 +1147,42 @@ app.post("/api/miembros/:id/foto", authenticateToken, async (req, res) => {
 // PCO - EVENTOS
 // =============================================
 
-// GET /api/eventos — listar todos, con encargado
+// =============================================
+// PCO - EVENTOS
+// =============================================
+
+// GET /api/eventos/publicos — sin auth, para la página pública
+app.get("/api/eventos/publicos", async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT e.*,
+        c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido,
+        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido
+      FROM eventos e
+      LEFT JOIN miembros c ON c.id = e.coordinador_id
+      LEFT JOIN miembros p ON p.id = e.predicador_id
+      ORDER BY e.fecha_inicio ASC
+    `);
+    client.release();
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener eventos públicos:", error);
+    res.status(500).json({ error: "Error al obtener eventos" });
+  }
+});
+
+// GET /api/eventos — listar todos, con coordinador y predicador
 app.get("/api/eventos", authenticateToken, async (req, res) => {
   try {
     const client = await pool.connect();
     const result = await client.query(`
       SELECT e.*,
-        m.nombre AS encargado_nombre,
-        m.apellido AS encargado_apellido
+        c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido,
+        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido
       FROM eventos e
-      LEFT JOIN miembros m ON m.id = e.encargado_id
+      LEFT JOIN miembros c ON c.id = e.coordinador_id
+      LEFT JOIN miembros p ON p.id = e.predicador_id
       ORDER BY e.fecha_inicio ASC
     `);
     client.release();
@@ -1173,10 +1199,11 @@ app.get("/api/eventos/:id", authenticateToken, async (req, res) => {
     const client = await pool.connect();
     const result = await client.query(`
       SELECT e.*,
-        m.nombre AS encargado_nombre,
-        m.apellido AS encargado_apellido
+        c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido,
+        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido
       FROM eventos e
-      LEFT JOIN miembros m ON m.id = e.encargado_id
+      LEFT JOIN miembros c ON c.id = e.coordinador_id
+      LEFT JOIN miembros p ON p.id = e.predicador_id
       WHERE e.id = $1
     `, [req.params.id]);
     client.release();
@@ -1190,15 +1217,16 @@ app.get("/api/eventos/:id", authenticateToken, async (req, res) => {
 
 // POST /api/eventos
 app.post("/api/eventos", authenticateToken, async (req, res) => {
-  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, color } = req.body;
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color } = req.body;
   if (!titulo || !fecha_inicio) return res.status(400).json({ error: "Título y fecha de inicio son obligatorios" });
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, color)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
-       tipo || "especial", recurrencia || "ninguna", dia_semana ?? null, encargado_id || null, color || "#3B82F6"]
+       tipo || "especial", recurrencia || "ninguna", dia_semana ?? null,
+       coordinador_id || null, predicador_id || null, color || "#3B82F6"]
     );
     client.release();
     res.status(201).json(result.rows[0]);
@@ -1210,15 +1238,16 @@ app.post("/api/eventos", authenticateToken, async (req, res) => {
 
 // PUT /api/eventos/:id
 app.put("/api/eventos/:id", authenticateToken, async (req, res) => {
-  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, color } = req.body;
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color } = req.body;
   try {
     const client = await pool.connect();
     const result = await client.query(
       `UPDATE eventos SET titulo=$1, descripcion=$2, imagen_url=$3, fecha_inicio=$4, fecha_fin=$5,
-       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, encargado_id=$10, color=$11
-       WHERE id=$12 RETURNING *`,
+       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, coordinador_id=$10, predicador_id=$11, color=$12
+       WHERE id=$13 RETURNING *`,
       [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
-       tipo || "especial", recurrencia || "ninguna", dia_semana ?? null, encargado_id || null, color || "#3B82F6", req.params.id]
+       tipo || "especial", recurrencia || "ninguna", dia_semana ?? null,
+       coordinador_id || null, predicador_id || null, color || "#3B82F6", req.params.id]
     );
     client.release();
     if (result.rows.length === 0) return res.status(404).json({ error: "Evento no encontrado" });

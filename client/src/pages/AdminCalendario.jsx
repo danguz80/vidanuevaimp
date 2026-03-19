@@ -28,7 +28,8 @@ const FORM_INICIAL = {
   tipo: "especial",
   recurrencia: "ninguna",
   dia_semana: "",
-  encargado_id: "",
+  coordinador_id: "",
+  predicador_id: "",
   color: "#3B82F6",
 };
 
@@ -180,7 +181,8 @@ export default function AdminCalendario() {
       tipo: ev.tipo || "especial",
       recurrencia: ev.recurrencia || "ninguna",
       dia_semana: ev.dia_semana ?? "",
-      encargado_id: ev.encargado_id || "",
+      coordinador_id: ev.coordinador_id || "",
+      predicador_id: ev.predicador_id || "",
       color: ev.color || "#3B82F6",
     });
     setModalAbierto(true);
@@ -204,7 +206,8 @@ export default function AdminCalendario() {
       const body = {
         ...form,
         dia_semana: form.dia_semana !== "" ? parseInt(form.dia_semana) : null,
-        encargado_id: form.encargado_id || null,
+        coordinador_id: form.coordinador_id || null,
+        predicador_id: form.predicador_id || null,
       };
       const res = await fetch(url, {
         method,
@@ -404,9 +407,14 @@ export default function AdminCalendario() {
                       })}
                     </p>
                     {ev.lugar && <p className="text-xs text-gray-400 mt-0.5">📍 {ev.lugar}</p>}
-                    {ev.encargado_nombre && (
+                    {ev.coordinador_nombre && (
                       <p className="text-xs text-gray-400 mt-0.5">
-                        👤 {ev.encargado_nombre} {ev.encargado_apellido}
+                        🎯 {ev.coordinador_nombre} {ev.coordinador_apellido}
+                      </p>
+                    )}
+                    {ev.predicador_nombre && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        🎤 {ev.predicador_nombre} {ev.predicador_apellido}
                       </p>
                     )}
                     <span className={`mt-1 inline-block text-xs px-2 py-0.5 rounded-full ${ev.tipo === "recurrente" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
@@ -443,9 +451,14 @@ export default function AdminCalendario() {
                 <p className="text-gray-600 text-sm mb-3">{vistaEvento.descripcion}</p>
               )}
               {vistaEvento.lugar && <p className="text-sm text-gray-500 mb-1">📍 {vistaEvento.lugar}</p>}
-              {vistaEvento.encargado_nombre && (
+              {vistaEvento.coordinador_nombre && (
                 <p className="text-sm text-gray-500 mb-1">
-                  👤 {vistaEvento.encargado_nombre} {vistaEvento.encargado_apellido}
+                  🎯 Coordinador/a: {vistaEvento.coordinador_nombre} {vistaEvento.coordinador_apellido}
+                </p>
+              )}
+              {vistaEvento.predicador_nombre && (
+                <p className="text-sm text-gray-500 mb-1">
+                  🎤 Predicador/a: {vistaEvento.predicador_nombre} {vistaEvento.predicador_apellido}
                 </p>
               )}
               <p className="text-sm mt-3">
@@ -588,23 +601,38 @@ export default function AdminCalendario() {
                 </div>
               )}
 
-              {/* Lugar y encargado */}
+              {/* Lugar */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Lugar</label>
+                <input
+                  type="text"
+                  value={form.lugar}
+                  onChange={e => setForm(p => ({ ...p, lugar: e.target.value }))}
+                  placeholder="Templo, Salón, etc."
+                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+
+              {/* Coordinador y Predicador */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Lugar</label>
-                  <input
-                    type="text"
-                    value={form.lugar}
-                    onChange={e => setForm(p => ({ ...p, lugar: e.target.value }))}
-                    placeholder="Templo, Salón, etc."
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Coordinador/a</label>
+                  <select
+                    value={form.coordinador_id}
+                    onChange={e => setForm(p => ({ ...p, coordinador_id: e.target.value }))}
                     className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
+                  >
+                    <option value="">Sin asignar</option>
+                    {miembros.map(m => (
+                      <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Encargado</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Predicador/a</label>
                   <select
-                    value={form.encargado_id}
-                    onChange={e => setForm(p => ({ ...p, encargado_id: e.target.value }))}
+                    value={form.predicador_id}
+                    onChange={e => setForm(p => ({ ...p, predicador_id: e.target.value }))}
                     className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                   >
                     <option value="">Sin asignar</option>
