@@ -30,6 +30,7 @@ const FORM_INICIAL = {
   dia_semana: "",
   coordinador_id: "",
   predicador_id: "",
+  notas: "",
   color: "#3B82F6",
 };
 
@@ -57,6 +58,7 @@ function mergeOc(ev, fecha) {
     predicador_id:        oc.predicador_id       !== undefined ? oc.predicador_id       : ev.predicador_id,
     predicador_nombre:    oc.predicador_nombre   != null      ? oc.predicador_nombre   : ev.predicador_nombre,
     predicador_apellido:  oc.predicador_apellido != null      ? oc.predicador_apellido  : ev.predicador_apellido,
+    notas:                oc.notas               != null      ? oc.notas                : ev.notas,
   };
 }
 
@@ -144,7 +146,7 @@ export default function AdminCalendario() {
   const [guardando, setGuardando] = useState(false);
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   const [vistaEvento, setVistaEvento] = useState(null);
-  const [ocForm, setOcForm] = useState({ coordinador_id: "", predicador_id: "" });
+  const [ocForm, setOcForm] = useState({ coordinador_id: "", predicador_id: "", notas: "" });
   const [guardandoOc, setGuardandoOc] = useState(false);
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}` });
@@ -202,6 +204,7 @@ export default function AdminCalendario() {
       dia_semana: ev.dia_semana ?? "",
       coordinador_id: ev.coordinador_id || "",
       predicador_id: ev.predicador_id || "",
+      notas: ev.notas || "",
       color: ev.color || "#3B82F6",
     });
     setModalAbierto(true);
@@ -219,6 +222,7 @@ export default function AdminCalendario() {
       setOcForm({
         coordinador_id: vistaEvento.coordinador_id ? String(vistaEvento.coordinador_id) : "",
         predicador_id:  vistaEvento.predicador_id  ? String(vistaEvento.predicador_id)  : "",
+        notas:          vistaEvento.notas || "",
       });
     }
   }, [vistaEvento]);
@@ -235,6 +239,7 @@ export default function AdminCalendario() {
           fecha,
           coordinador_id: ocForm.coordinador_id || null,
           predicador_id:  ocForm.predicador_id  || null,
+          notas:          ocForm.notas          || null,
         }),
       });
       if (!res.ok) throw new Error("Error al guardar");
@@ -503,6 +508,12 @@ export default function AdminCalendario() {
               {vistaEvento.descripcion && (
                 <p className="text-gray-600 text-sm mb-3">{vistaEvento.descripcion}</p>
               )}
+              {vistaEvento.notas && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+                  <p className="text-xs font-semibold text-amber-700 mb-0.5">📝 Notas</p>
+                  <p className="text-sm text-amber-900 whitespace-pre-wrap">{vistaEvento.notas}</p>
+                </div>
+              )}
               {vistaEvento.lugar && <p className="text-sm text-gray-500 mb-1">📍 {vistaEvento.lugar}</p>}
               {vistaEvento.coordinador_nombre && (
                 <p className="text-sm text-gray-500 mb-1">
@@ -546,6 +557,16 @@ export default function AdminCalendario() {
                         ))}
                       </select>
                     </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Notas para esta fecha</label>
+                    <textarea
+                      rows={3}
+                      value={ocForm.notas}
+                      onChange={e => setOcForm(p => ({ ...p, notas: e.target.value }))}
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none"
+                      placeholder="Anuncios, cambios, instrucciones especiales..."
+                    />
                   </div>
                   <button
                     onClick={guardarOcurrencia}
@@ -747,6 +768,18 @@ export default function AdminCalendario() {
                   onChange={e => setForm(p => ({ ...p, descripcion: e.target.value }))}
                   className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
                   placeholder="Detalles del evento..."
+                />
+              </div>
+
+              {/* Notas */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Notas</label>
+                <textarea
+                  rows={3}
+                  value={form.notas}
+                  onChange={e => setForm(p => ({ ...p, notas: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+                  placeholder="Notas internas, instrucciones generales del evento..."
                 />
               </div>
 

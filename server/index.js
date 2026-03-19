@@ -1168,7 +1168,8 @@ app.get("/api/eventos/publicos", async (req, res) => {
               'coordinador_apellido',cm.apellido,
               'predicador_id',       oc.predicador_id,
               'predicador_nombre',   pm.nombre,
-              'predicador_apellido', pm.apellido
+              'predicador_apellido', pm.apellido,
+              'notas',               oc.notas
             ) ORDER BY oc.fecha
           ) FILTER (WHERE oc.id IS NOT NULL),
           '[]'::json
@@ -1207,7 +1208,8 @@ app.get("/api/eventos", authenticateToken, async (req, res) => {
               'coordinador_apellido',cm.apellido,
               'predicador_id',       oc.predicador_id,
               'predicador_nombre',   pm.nombre,
-              'predicador_apellido', pm.apellido
+              'predicador_apellido', pm.apellido,
+              'notas',               oc.notas
             ) ORDER BY oc.fecha
           ) FILTER (WHERE oc.id IS NOT NULL),
           '[]'::json
@@ -1253,16 +1255,16 @@ app.get("/api/eventos/:id", authenticateToken, async (req, res) => {
 
 // POST /api/eventos
 app.post("/api/eventos", authenticateToken, async (req, res) => {
-  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color } = req.body;
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color, notas } = req.body;
   if (!titulo || !fecha_inicio) return res.status(400).json({ error: "Título y fecha de inicio son obligatorios" });
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color, notas)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
        tipo || "especial", recurrencia || "ninguna", dia_semana ?? null,
-       coordinador_id || null, predicador_id || null, color || "#3B82F6"]
+       coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null]
     );
     client.release();
     res.status(201).json(result.rows[0]);
@@ -1274,16 +1276,16 @@ app.post("/api/eventos", authenticateToken, async (req, res) => {
 
 // PUT /api/eventos/:id
 app.put("/api/eventos/:id", authenticateToken, async (req, res) => {
-  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color } = req.body;
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, coordinador_id, predicador_id, color, notas } = req.body;
   try {
     const client = await pool.connect();
     const result = await client.query(
       `UPDATE eventos SET titulo=$1, descripcion=$2, imagen_url=$3, fecha_inicio=$4, fecha_fin=$5,
-       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, coordinador_id=$10, predicador_id=$11, color=$12
-       WHERE id=$13 RETURNING *`,
+       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, coordinador_id=$10, predicador_id=$11, color=$12, notas=$13
+       WHERE id=$14 RETURNING *`,
       [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
        tipo || "especial", recurrencia || "ninguna", dia_semana ?? null,
-       coordinador_id || null, predicador_id || null, color || "#3B82F6", req.params.id]
+       coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null, req.params.id]
     );
     client.release();
     if (result.rows.length === 0) return res.status(404).json({ error: "Evento no encontrado" });
@@ -1307,20 +1309,21 @@ app.delete("/api/eventos/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/eventos/:id/ocurrencias — upsert coordinador/predicador para una fecha específica
+// POST /api/eventos/:id/ocurrencias — upsert coordinador/predicador/notas para una fecha específica
 app.post("/api/eventos/:id/ocurrencias", authenticateToken, async (req, res) => {
-  const { fecha, coordinador_id, predicador_id } = req.body;
+  const { fecha, coordinador_id, predicador_id, notas } = req.body;
   if (!fecha) return res.status(400).json({ error: "La fecha es obligatoria" });
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `INSERT INTO evento_ocurrencias (evento_id, fecha, coordinador_id, predicador_id)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO evento_ocurrencias (evento_id, fecha, coordinador_id, predicador_id, notas)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (evento_id, fecha)
        DO UPDATE SET coordinador_id = EXCLUDED.coordinador_id,
-                     predicador_id  = EXCLUDED.predicador_id
+                     predicador_id  = EXCLUDED.predicador_id,
+                     notas          = EXCLUDED.notas
        RETURNING *`,
-      [req.params.id, fecha, coordinador_id || null, predicador_id || null]
+      [req.params.id, fecha, coordinador_id || null, predicador_id || null, notas || null]
     );
     client.release();
     res.json(result.rows[0]);
