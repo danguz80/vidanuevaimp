@@ -105,6 +105,13 @@ function expandirEventos(eventos, anio, mes) {
   return resultado;
 }
 
+// Normaliza URLs relativas añadiendo / al inicio si es necesario
+const normUrl = (url) => {
+  if (!url) return null;
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("/")) return url;
+  return "/" + url;
+};
+
 export default function AdminCalendario() {
   const { getToken } = useAuth();
   const [eventos, setEventos] = useState([]);
@@ -418,7 +425,7 @@ export default function AdminCalendario() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             {vistaEvento.imagen_url && (
-              <img src={vistaEvento.imagen_url} alt={vistaEvento.titulo} className="w-full h-40 object-cover rounded-t-2xl" />
+              <img src={normUrl(vistaEvento.imagen_url)} alt={vistaEvento.titulo} className="w-full h-40 object-cover rounded-t-2xl" />
             )}
             <div className="p-6">
               <div className="flex items-start gap-3 mb-4">
@@ -526,7 +533,13 @@ export default function AdminCalendario() {
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Tipo</label>
                   <select
                     value={form.tipo}
-                    onChange={e => setForm(p => ({ ...p, tipo: e.target.value, recurrencia: e.target.value === "especial" ? "ninguna" : p.recurrencia }))}
+                    onChange={e => setForm(p => ({
+                      ...p,
+                      tipo: e.target.value,
+                      recurrencia: e.target.value === "especial"
+                        ? "ninguna"
+                        : (p.recurrencia === "ninguna" ? "semanal" : p.recurrencia),
+                    }))}
                     className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                   >
                     <option value="especial">📅 Especial (una sola vez)</option>
@@ -621,9 +634,18 @@ export default function AdminCalendario() {
                   type="text"
                   value={form.imagen_url}
                   onChange={e => setForm(p => ({ ...p, imagen_url: e.target.value }))}
-                  placeholder="https://..."
+                  placeholder="https://... o /carpeta/imagen.jpg"
                   className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
+                {form.imagen_url && (
+                  <img
+                    src={normUrl(form.imagen_url)}
+                    alt="preview"
+                    className="mt-2 h-24 w-full object-cover rounded-lg border"
+                    onError={e => { e.target.style.display = "none"; }}
+                    onLoad={e => { e.target.style.display = "block"; }}
+                  />
+                )}
               </div>
 
               {/* Color */}
