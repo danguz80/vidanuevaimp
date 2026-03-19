@@ -43,6 +43,23 @@ function primerDiaMes(anio, mes) {
   return dia === 0 ? 6 : dia - 1;
 }
 
+// Aplica el override de ocurrencia (si existe para esa fecha) sobre un evento base
+function mergeOc(ev, fecha) {
+  if (!ev.ocurrencias || !Array.isArray(ev.ocurrencias)) return ev;
+  const fs = fecha.toISOString().slice(0, 10);
+  const oc = ev.ocurrencias.find(o => o.fecha && String(o.fecha).slice(0, 10) === fs);
+  if (!oc) return ev;
+  return {
+    ...ev,
+    coordinador_id:       oc.coordinador_id      !== undefined ? oc.coordinador_id      : ev.coordinador_id,
+    coordinador_nombre:   oc.coordinador_nombre  != null      ? oc.coordinador_nombre  : ev.coordinador_nombre,
+    coordinador_apellido: oc.coordinador_apellido != null     ? oc.coordinador_apellido : ev.coordinador_apellido,
+    predicador_id:        oc.predicador_id       !== undefined ? oc.predicador_id       : ev.predicador_id,
+    predicador_nombre:    oc.predicador_nombre   != null      ? oc.predicador_nombre   : ev.predicador_nombre,
+    predicador_apellido:  oc.predicador_apellido != null      ? oc.predicador_apellido  : ev.predicador_apellido,
+  };
+}
+
 // Expande un evento recurrente dentro de un mes dado
 function expandirEventos(eventos, anio, mes) {
   const resultado = [];
@@ -60,7 +77,7 @@ function expandirEventos(eventos, anio, mes) {
           let d = new Date(anio, mes, 1);
           while (d.getDay() !== diaSemana) d.setDate(d.getDate() + 1);
           while (d <= ultimoDia) {
-            resultado.push({ ...ev, _fecha: new Date(d), _key: `${ev.id}-${d.getDate()}` });
+            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.getDate()}` });
             d.setDate(d.getDate() + 7);
           }
           break;
@@ -72,7 +89,7 @@ function expandirEventos(eventos, anio, mes) {
           let count = 0;
           while (d <= ultimoDia) {
             if (count % 2 === 0) {
-              resultado.push({ ...ev, _fecha: new Date(d), _key: `${ev.id}-${d.getDate()}` });
+              resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.getDate()}` });
             }
             d.setDate(d.getDate() + 7);
             count++;
@@ -83,14 +100,14 @@ function expandirEventos(eventos, anio, mes) {
           const dia = inicio.getDate();
           const fecha = new Date(anio, mes, dia);
           if (fecha >= primerDia && fecha <= ultimoDia) {
-            resultado.push({ ...ev, _fecha: fecha, _key: `${ev.id}-m` });
+            resultado.push({ ...mergeOc(ev, fecha), _fecha: fecha, _key: `${ev.id}-m` });
           }
           break;
         }
         case "anual": {
           if (inicio.getMonth() === mes) {
             const fecha = new Date(anio, mes, inicio.getDate());
-            resultado.push({ ...ev, _fecha: fecha, _key: `${ev.id}-a` });
+            resultado.push({ ...mergeOc(ev, fecha), _fecha: fecha, _key: `${ev.id}-a` });
           }
           break;
         }
@@ -99,7 +116,7 @@ function expandirEventos(eventos, anio, mes) {
     } else {
       // Evento especial (una sola vez)
       if (inicio.getFullYear() === anio && inicio.getMonth() === mes) {
-        resultado.push({ ...ev, _fecha: inicio, _key: `${ev.id}` });
+        resultado.push({ ...mergeOc(ev, inicio), _fecha: inicio, _key: `${ev.id}` });
       }
     }
   }
@@ -127,6 +144,8 @@ export default function AdminCalendario() {
   const [guardando, setGuardando] = useState(false);
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   const [vistaEvento, setVistaEvento] = useState(null);
+  const [ocForm, setOcForm] = useState({ coordinador_id: "", predicador_id: "" });
+  const [guardandoOc, setGuardandoOc] = useState(false);
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}` });
 
@@ -192,6 +211,40 @@ export default function AdminCalendario() {
     setModalAbierto(false);
     setEditando(null);
     setForm(FORM_INICIAL);
+  };
+
+  // Sincroniza el formulario de ocurrencia al seleccionar un evento recurrente
+  useEffect(() => {
+    if (vistaEvento && vistaEvento.tipo === "recurrente") {
+      setOcForm({
+        coordinador_id: vistaEvento.coordinador_id ? String(vistaEvento.coordinador_id) : "",
+        predicador_id:  vistaEvento.predicador_id  ? String(vistaEvento.predicador_id)  : "",
+      });
+    }
+  }, [vistaEvento]);
+
+  const guardarOcurrencia = async () => {
+    if (!vistaEvento || !vistaEvento._fecha) return;
+    setGuardandoOc(true);
+    try {
+      const fecha = vistaEvento._fecha.toISOString().slice(0, 10);
+      const res = await fetch(`${API}/api/eventos/${vistaEvento.id}/ocurrencias`, {
+        method: "POST",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fecha,
+          coordinador_id: ocForm.coordinador_id || null,
+          predicador_id:  ocForm.predicador_id  || null,
+        }),
+      });
+      if (!res.ok) throw new Error("Error al guardar");
+      await cargar();
+      setVistaEvento(null);
+    } catch {
+      alert("Error al guardar la asignación para esta fecha.");
+    } finally {
+      setGuardandoOc(false);
+    }
   };
 
   const guardar = async () => {
@@ -460,6 +513,48 @@ export default function AdminCalendario() {
                 <p className="text-sm text-gray-500 mb-1">
                   🎤 Predicador/a: {vistaEvento.predicador_nombre} {vistaEvento.predicador_apellido}
                 </p>
+              )}
+
+              {/* Asignación específica para esta ocurrencia (solo recurrentes) */}
+              {vistaEvento.tipo === "recurrente" && (
+                <div className="border-t pt-4 mt-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Asignar para esta fecha</p>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Coordinador/a</label>
+                      <select
+                        value={ocForm.coordinador_id}
+                        onChange={e => setOcForm(p => ({ ...p, coordinador_id: e.target.value }))}
+                        className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                      >
+                        <option value="">Sin asignar</option>
+                        {miembros.map(m => (
+                          <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Predicador/a</label>
+                      <select
+                        value={ocForm.predicador_id}
+                        onChange={e => setOcForm(p => ({ ...p, predicador_id: e.target.value }))}
+                        className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                      >
+                        <option value="">Sin asignar</option>
+                        {miembros.map(m => (
+                          <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <button
+                    onClick={guardarOcurrencia}
+                    disabled={guardandoOc}
+                    className="w-full bg-teal-500 hover:bg-teal-600 text-white text-sm font-semibold py-2 rounded-lg transition disabled:opacity-50"
+                  >
+                    {guardandoOc ? "Guardando..." : "💾 Guardar para esta fecha"}
+                  </button>
+                </div>
               )}
               <p className="text-sm mt-3">
                 <span className={`px-2 py-1 rounded-full text-xs font-semibold ${

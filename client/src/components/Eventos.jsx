@@ -8,6 +8,23 @@ function normUrl(url) {
   return url.startsWith("/") ? url : `/${url}`;
 }
 
+// Aplica el override de ocurrencia (si existe para esa fecha) sobre un evento base
+function mergeOc(ev, fecha) {
+  if (!ev.ocurrencias || !Array.isArray(ev.ocurrencias)) return ev;
+  const fs = fecha.toISOString().slice(0, 10);
+  const oc = ev.ocurrencias.find(o => o.fecha && String(o.fecha).slice(0, 10) === fs);
+  if (!oc) return ev;
+  return {
+    ...ev,
+    coordinador_id:       oc.coordinador_id      !== undefined ? oc.coordinador_id      : ev.coordinador_id,
+    coordinador_nombre:   oc.coordinador_nombre  != null      ? oc.coordinador_nombre  : ev.coordinador_nombre,
+    coordinador_apellido: oc.coordinador_apellido != null     ? oc.coordinador_apellido : ev.coordinador_apellido,
+    predicador_id:        oc.predicador_id       !== undefined ? oc.predicador_id       : ev.predicador_id,
+    predicador_nombre:    oc.predicador_nombre   != null      ? oc.predicador_nombre   : ev.predicador_nombre,
+    predicador_apellido:  oc.predicador_apellido != null      ? oc.predicador_apellido  : ev.predicador_apellido,
+  };
+}
+
 // Expande eventos recurrentes en un rango de fechas
 function expandirProximos(eventos, mesesAdelante = 3) {
   const hoy = new Date();
@@ -27,7 +44,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
           let d = new Date(hoy);
           while (d.getDay() !== diaSemana) d.setDate(d.getDate() + 1);
           while (d <= limite) {
-            resultado.push({ ...ev, _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
+            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
             d.setDate(d.getDate() + 7);
           }
           break;
@@ -39,7 +56,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
           let count = 0;
           while (d <= limite) {
             if (count % 2 === 0) {
-              resultado.push({ ...ev, _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
+              resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
             }
             d.setDate(d.getDate() + 7);
             count++;
@@ -50,7 +67,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
           let d = new Date(inicio);
           while (d < hoy) d.setMonth(d.getMonth() + 1);
           while (d <= limite) {
-            resultado.push({ ...ev, _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
+            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
             d.setMonth(d.getMonth() + 1);
           }
           break;
@@ -59,7 +76,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
           let d = new Date(inicio);
           while (d < hoy) d.setFullYear(d.getFullYear() + 1);
           while (d <= limite) {
-            resultado.push({ ...ev, _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
+            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.toISOString()}` });
             d.setFullYear(d.getFullYear() + 1);
           }
           break;
@@ -70,7 +87,7 @@ function expandirProximos(eventos, mesesAdelante = 3) {
     } else {
       // Evento especial puntual
       if (inicio >= hoy && inicio <= limite) {
-        resultado.push({ ...ev, _fecha: inicio, _key: `${ev.id}-unico` });
+        resultado.push({ ...mergeOc(ev, inicio), _fecha: inicio, _key: `${ev.id}-unico` });
       }
     }
   }

@@ -1158,10 +1158,28 @@ app.get("/api/eventos/publicos", async (req, res) => {
     const result = await client.query(`
       SELECT e.*,
         c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido,
-        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido
+        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'fecha',               oc.fecha,
+              'coordinador_id',      oc.coordinador_id,
+              'coordinador_nombre',  cm.nombre,
+              'coordinador_apellido',cm.apellido,
+              'predicador_id',       oc.predicador_id,
+              'predicador_nombre',   pm.nombre,
+              'predicador_apellido', pm.apellido
+            ) ORDER BY oc.fecha
+          ) FILTER (WHERE oc.id IS NOT NULL),
+          '[]'::json
+        ) AS ocurrencias
       FROM eventos e
-      LEFT JOIN miembros c ON c.id = e.coordinador_id
-      LEFT JOIN miembros p ON p.id = e.predicador_id
+      LEFT JOIN miembros c  ON c.id  = e.coordinador_id
+      LEFT JOIN miembros p  ON p.id  = e.predicador_id
+      LEFT JOIN evento_ocurrencias oc ON oc.evento_id = e.id
+      LEFT JOIN miembros cm ON cm.id = oc.coordinador_id
+      LEFT JOIN miembros pm ON pm.id = oc.predicador_id
+      GROUP BY e.id, c.nombre, c.apellido, p.nombre, p.apellido
       ORDER BY e.fecha_inicio ASC
     `);
     client.release();
@@ -1172,17 +1190,35 @@ app.get("/api/eventos/publicos", async (req, res) => {
   }
 });
 
-// GET /api/eventos — listar todos, con coordinador y predicador
+// GET /api/eventos — listar todos, con coordinador, predicador y ocurrencias por fecha
 app.get("/api/eventos", authenticateToken, async (req, res) => {
   try {
     const client = await pool.connect();
     const result = await client.query(`
       SELECT e.*,
         c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido,
-        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido
+        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'fecha',               oc.fecha,
+              'coordinador_id',      oc.coordinador_id,
+              'coordinador_nombre',  cm.nombre,
+              'coordinador_apellido',cm.apellido,
+              'predicador_id',       oc.predicador_id,
+              'predicador_nombre',   pm.nombre,
+              'predicador_apellido', pm.apellido
+            ) ORDER BY oc.fecha
+          ) FILTER (WHERE oc.id IS NOT NULL),
+          '[]'::json
+        ) AS ocurrencias
       FROM eventos e
-      LEFT JOIN miembros c ON c.id = e.coordinador_id
-      LEFT JOIN miembros p ON p.id = e.predicador_id
+      LEFT JOIN miembros c  ON c.id  = e.coordinador_id
+      LEFT JOIN miembros p  ON p.id  = e.predicador_id
+      LEFT JOIN evento_ocurrencias oc ON oc.evento_id = e.id
+      LEFT JOIN miembros cm ON cm.id = oc.coordinador_id
+      LEFT JOIN miembros pm ON pm.id = oc.predicador_id
+      GROUP BY e.id, c.nombre, c.apellido, p.nombre, p.apellido
       ORDER BY e.fecha_inicio ASC
     `);
     client.release();
@@ -1268,6 +1304,45 @@ app.delete("/api/eventos/:id", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error al eliminar evento:", error);
     res.status(500).json({ error: "Error al eliminar evento" });
+  }
+});
+
+// POST /api/eventos/:id/ocurrencias — upsert coordinador/predicador para una fecha específica
+app.post("/api/eventos/:id/ocurrencias", authenticateToken, async (req, res) => {
+  const { fecha, coordinador_id, predicador_id } = req.body;
+  if (!fecha) return res.status(400).json({ error: "La fecha es obligatoria" });
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      `INSERT INTO evento_ocurrencias (evento_id, fecha, coordinador_id, predicador_id)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (evento_id, fecha)
+       DO UPDATE SET coordinador_id = EXCLUDED.coordinador_id,
+                     predicador_id  = EXCLUDED.predicador_id
+       RETURNING *`,
+      [req.params.id, fecha, coordinador_id || null, predicador_id || null]
+    );
+    client.release();
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error al guardar ocurrencia:", error);
+    res.status(500).json({ error: "Error al guardar ocurrencia" });
+  }
+});
+
+// DELETE /api/eventos/:id/ocurrencias/:fecha — eliminar override de una fecha
+app.delete("/api/eventos/:id/ocurrencias/:fecha", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    await client.query(
+      "DELETE FROM evento_ocurrencias WHERE evento_id = $1 AND fecha = $2",
+      [req.params.id, req.params.fecha]
+    );
+    client.release();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error al eliminar ocurrencia:", error);
+    res.status(500).json({ error: "Error al eliminar ocurrencia" });
   }
 });
 
