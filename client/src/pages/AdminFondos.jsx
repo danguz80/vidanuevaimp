@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import AdminNav from "../components/AdminNav";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { Edit2, Save, X, ChevronDown, ChevronUp, CheckCircle, XCircle } from "lucide-react";
 
@@ -9,8 +9,7 @@ const COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"];
 
 export default function AdminFondos() {
   const { getToken } = useAuth();
-  const navigate = useNavigate();
-  const [fondos, setFondos] = useState([]);
+  const [fondos, setFondos] = useState([]);;
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);
   const [nuevaMeta, setNuevaMeta] = useState("");
@@ -127,18 +126,12 @@ export default function AdminFondos() {
   const totalContable = fondos.reduce((s, f) => s + parseFloat(f.total_contable || 0), 0);
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-800">Administración de Fondos</h1>
-          <p className="text-gray-500 mt-1">Gestiona las metas y revisa los montos recaudados por fondo</p>
-        </div>
-        <button
-          onClick={() => navigate("/admin")}
-          className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded transition"
-        >
-          ← Volver al Panel
-        </button>
+    <>
+      <AdminNav />
+      <div className="p-6 max-w-5xl mx-auto">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-800">Administración de Fondos</h1>
+        <p className="text-gray-500 mt-1">Gestiona las metas y revisa los montos recaudados por fondo</p>
       </div>
 
       {loading ? (
@@ -401,6 +394,7 @@ export default function AdminFondos() {
         </>
       )}
     </div>
+    </>
   );
 }
 

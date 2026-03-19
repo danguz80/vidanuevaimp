@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import AdminNav from "./AdminNav";
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
 export default function AdminMensajes() {
   const [mensajes, setMensajes] = useState([]);
-  const navigate = useNavigate();
   const { getToken } = useAuth();
 
   useEffect(() => {
@@ -65,17 +64,10 @@ export default function AdminMensajes() {
   };
 
   return (
-    <div className="p-6">
+    <>
+      <AdminNav />
+      <div className="p-6">
       <h2 className="text-2xl font-bold text-center mb-4">Mensajes Recibidos</h2>
-
-      <div className="flex justify-center mb-6">
-        <button
-          onClick={() => navigate("/admin")}
-          className="bg-gray-700 text-white px-6 py-2 rounded hover:bg-gray-800 transition"
-        >
-          Volver al Panel de Administración
-        </button>
-      </div>
 
       <div className="overflow-x-auto">
         <table className="w-full table-auto border-collapse text-left">
@@ -119,5 +111,6 @@ export default function AdminMensajes() {
         </table>
       </div>
     </div>
+    </>
   );
 }

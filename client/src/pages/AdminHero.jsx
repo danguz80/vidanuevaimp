@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import AdminNav from "../components/AdminNav";
 
 export default function AdminHero() {
     const [slides, setSlides] = useState([]);
@@ -119,6 +120,8 @@ export default function AdminHero() {
     }, []);
 
     return (
+        <>
+        <AdminNav />
         <div className="p-8 max-w-4xl mx-auto">
             <h1 className="text-2xl font-bold mb-6 text-center">Administrar Hero</h1>
 
@@ -387,5 +390,6 @@ export default function AdminHero() {
                 ))}
             </ul>
         </div>
+        </>
     );
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import AdminNav from "../components/AdminNav";
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
@@ -13,7 +13,6 @@ export default function AdminVideos() {
     thumbnail: "",
     start: 0,
   });
-  const navigate = useNavigate();
   const { getToken } = useAuth();
 
   useEffect(() => {
@@ -140,19 +139,12 @@ export default function AdminVideos() {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <>
+      <AdminNav />
+      <div className="p-6 max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold text-center mb-6">
         Administrar Videos de Sermones
       </h1>
-
-      <div className="flex justify-center mb-6">
-        <button
-          onClick={() => navigate("/admin")}
-          className="bg-gray-700 text-white px-6 py-2 rounded hover:bg-gray-800 transition"
-        >
-          Volver al Panel de Administración
-        </button>
-      </div>
 
       <div className="mb-10 max-w-xl mx-auto">
         <h3 className="text-lg font-semibold mb-2 text-center">
@@ -279,5 +271,6 @@ export default function AdminVideos() {
         </table>
       </div>
     </div>
+    </>
   );
 }
