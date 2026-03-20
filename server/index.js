@@ -520,6 +520,62 @@ app.delete("/api/hero/:id", authenticateToken, async (req, res) => {
   }
 });
 
+// --- API para verificar transmisión en vivo de YouTube ---
+let liveStreamCache = null;
+let liveStreamCacheTimestamp = 0;
+const LIVE_STREAM_CACHE_DURATION = 2 * 60 * 1000; // 2 minutos
+
+app.get("/api/youtube/live-status", async (req, res) => {
+  const now = Date.now();
+  
+  // Retornar caché si es válido
+  if (liveStreamCache && now - liveStreamCacheTimestamp < LIVE_STREAM_CACHE_DURATION) {
+    return res.json(liveStreamCache);
+  }
+
+  try {
+    const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+    const CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID;
+
+    if (!YOUTUBE_API_KEY || !CHANNEL_ID) {
+      return res.json({ isLive: false, message: "YouTube API no configurada" });
+    }
+
+    // Buscar transmisiones en vivo activas del canal
+    const response = await axios.get(
+      "https://www.googleapis.com/youtube/v3/search",
+      {
+        params: {
+          part: "snippet",
+          channelId: CHANNEL_ID,
+          eventType: "live",
+          type: "video",
+          key: YOUTUBE_API_KEY,
+        },
+      }
+    );
+
+    if (response.data.items && response.data.items.length > 0) {
+      const liveVideo = response.data.items[0];
+      liveStreamCache = {
+        isLive: true,
+        videoId: liveVideo.id.videoId,
+        title: liveVideo.snippet.title,
+        description: liveVideo.snippet.description,
+        thumbnail: liveVideo.snippet.thumbnails.high.url,
+      };
+    } else {
+      liveStreamCache = { isLive: false };
+    }
+
+    liveStreamCacheTimestamp = now;
+    res.json(liveStreamCache);
+  } catch (error) {
+    console.error("Error al verificar transmisión en vivo:", error.message);
+    res.json({ isLive: false, error: error.message });
+  }
+});
+
 // --- API para obtener fotos públicas desde Flickr ---
 let cachedFotos = null;
 let cacheTimestamp = 0;
