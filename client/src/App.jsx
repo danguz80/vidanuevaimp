@@ -1,6 +1,8 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import { AuthProvider } from "./context/AuthContext";
+import { MemberAuthProvider } from "./context/MemberAuthContext";
 import Header from "./components/Header";
 import Footer from "./components/Footer";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -31,11 +33,15 @@ import SoundCloudPage from "./pages/SoundCloudPage";
 
 import GaleriaFotos from "./pages/GaleriaFotos";
 import ProgresoFondos from "./pages/ProgresoFondos";
+import LoginMiembro from "./pages/LoginMiembro";
+import MiPortal from "./pages/MiPortal";
 
 export default function App() {
   return (
+    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
     <Router>
       <AuthProvider>
+        <MemberAuthProvider>
         <div className="min-h-screen flex flex-col">
           <Header />
           <main className="flex-grow">
@@ -64,13 +70,19 @@ export default function App() {
               <Route path="/admin/miembros" element={<ProtectedRoute><AdminMiembros /></ProtectedRoute>} />
               <Route path="/admin/miembros/:id" element={<ProtectedRoute><PerfilMiembro /></ProtectedRoute>} />
               <Route path="/admin/calendario" element={<ProtectedRoute><AdminCalendario /></ProtectedRoute>} />
+
+              {/* Portal de miembros */}
+              <Route path="/portal/login" element={<LoginMiembro />} />
+              <Route path="/portal" element={<MiPortal />} />
               
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>
           <Footer />
         </div>
+        </MemberAuthProvider>
       </AuthProvider>
     </Router>
+    </GoogleOAuthProvider>
   );
 }

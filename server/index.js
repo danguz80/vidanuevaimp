@@ -13,6 +13,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { v2 as cloudinary } from "cloudinary";
+import { OAuth2Client } from "google-auth-library";
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 import { sendDonationReceipt, saveDonation, sendCashDonationReceipt } from "./emailService.js";
 
 // ✅ Cargar .env lo antes posible
@@ -112,6 +115,153 @@ app.post("/api/auth/login", async (req, res) => {
 // Endpoint para verificar token
 app.get("/api/auth/verify", authenticateToken, (req, res) => {
   res.json({ valid: true, user: req.user });
+});
+
+// ──────────────────────────────────────────────
+// AUTH MIEMBROS (portal de miembros)
+// ──────────────────────────────────────────────
+
+// Middleware para autenticar token de miembro
+const authenticateMiembro = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "Token requerido" });
+  jwt.verify(token, process.env.JWT_SECRET, (err, payload) => {
+    if (err || payload.tipo !== "miembro") return res.status(403).json({ error: "Acceso denegado" });
+    req.miembro = payload;
+    next();
+  });
+};
+
+// Login miembro: POST /api/miembros/login
+app.post("/api/miembros/login", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email y contraseña requeridos" });
+
+  try {
+    const result = await pool.query(
+      "SELECT id, nombre, apellido, foto_url, email, password_hash FROM miembros WHERE LOWER(email) = LOWER($1)",
+      [email.trim()]
+    );
+    if (result.rows.length === 0) return res.status(401).json({ error: "Credenciales inválidas" });
+
+    const miembro = result.rows[0];
+    if (!miembro.password_hash) return res.status(401).json({ error: "Cuenta no configurada, contacta al administrador" });
+
+    const valid = await bcrypt.compare(password, miembro.password_hash);
+    if (!valid) return res.status(401).json({ error: "Credenciales inválidas" });
+
+    const token = jwt.sign(
+      { id: miembro.id, nombre: miembro.nombre, apellido: miembro.apellido, tipo: "miembro" },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      token,
+      miembro: {
+        id: miembro.id,
+        nombre: miembro.nombre,
+        apellido: miembro.apellido,
+        foto_url: miembro.foto_url,
+        email: miembro.email,
+      },
+    });
+  } catch (err) {
+    console.error("Error login miembro:", err.message);
+    res.status(500).json({ error: "Error al iniciar sesión" });
+  }
+});
+
+// Obtener mi perfil: GET /api/miembros/me
+app.get("/api/miembros/me", authenticateMiembro, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT m.id, m.nombre, m.apellido, m.foto_url, m.email, m.celular,
+              m.fecha_nacimiento, m.direccion, m.estado, m.notas,
+              COALESCE(json_agg(mr.rol) FILTER (WHERE mr.rol IS NOT NULL), '[]') AS roles
+       FROM miembros m
+       LEFT JOIN miembro_roles mr ON mr.miembro_id = m.id
+       WHERE m.id = $1
+       GROUP BY m.id`,
+      [req.miembro.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Miembro no encontrado" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error GET /api/miembros/me:", err.message);
+    res.status(500).json({ error: "Error al obtener perfil" });
+  }
+});
+
+// Cambiar contraseña: PUT /api/miembros/me/password
+app.put("/api/miembros/me/password", authenticateMiembro, async (req, res) => {
+  const { passwordActual, passwordNuevo } = req.body;
+  if (!passwordActual || !passwordNuevo) return res.status(400).json({ error: "Faltan datos" });
+  if (passwordNuevo.length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+
+  try {
+    const result = await pool.query("SELECT password_hash FROM miembros WHERE id = $1", [req.miembro.id]);
+    const miembro = result.rows[0];
+    const valid = await bcrypt.compare(passwordActual, miembro.password_hash);
+    if (!valid) return res.status(401).json({ error: "Contraseña actual incorrecta" });
+
+    const newHash = await bcrypt.hash(passwordNuevo, 10);
+    await pool.query("UPDATE miembros SET password_hash = $1 WHERE id = $2", [newHash, req.miembro.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error cambiar password miembro:", err.message);
+    res.status(500).json({ error: "Error al cambiar contraseña" });
+  }
+});
+
+// Login miembro con Google: POST /api/miembros/auth/google
+app.post("/api/miembros/auth/google", async (req, res) => {
+  const { credential } = req.body;
+  if (!credential) return res.status(400).json({ error: "Token de Google requerido" });
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    const emailGoogle = payload.email;
+
+    if (!payload.email_verified) {
+      return res.status(401).json({ error: "El email de Google no está verificado" });
+    }
+
+    const result = await pool.query(
+      "SELECT id, nombre, apellido, foto_url, email FROM miembros WHERE LOWER(email) = LOWER($1)",
+      [emailGoogle]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: "Tu cuenta de Google no está registrada como miembro. Contacta al administrador." });
+    }
+
+    const miembro = result.rows[0];
+    const token = jwt.sign(
+      { id: miembro.id, nombre: miembro.nombre, apellido: miembro.apellido, tipo: "miembro" },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      token,
+      miembro: {
+        id: miembro.id,
+        nombre: miembro.nombre,
+        apellido: miembro.apellido,
+        foto_url: miembro.foto_url,
+        email: miembro.email,
+      },
+    });
+  } catch (err) {
+    console.error("Error Google login miembro:", err.message);
+    res.status(500).json({ error: "Error al verificar cuenta de Google" });
+  }
 });
 
 // Endpoint: solicitar recuperación de contraseña
