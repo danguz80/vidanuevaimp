@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import AdminNav from "../components/AdminNav";
 
@@ -17,6 +18,12 @@ const ROLES_DISPONIBLES = [
   "Ujieres",
   "Voluntario",
   "Miembro",
+  "Joven",
+  "Adolescente",
+  "Niño",
+  "Dorca",
+  "Coordinador/a",
+  "Predicador/a",
 ];
 
 const ESTADO_COLORES = {
@@ -38,8 +45,15 @@ const FORM_INICIAL = {
   roles: [],
 };
 
+const PARENTESCOS = [
+  "cónyuge", "padre", "madre", "hijo", "hija",
+  "hermano", "hermana", "abuelo", "abuela",
+  "nieto", "nieta", "tío", "tía", "otro",
+];
+
 export default function AdminMiembros() {
   const { getToken } = useAuth();
+  const navigate = useNavigate();
   const [miembros, setMiembros] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState("");
@@ -51,6 +65,17 @@ export default function AdminMiembros() {
   const [guardando, setGuardando] = useState(false);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Estado modal familia
+  const [modalFamilia, setModalFamilia] = useState(false);
+  const [miembroFamiliaActual, setMiembroFamiliaActual] = useState(null);
+  const [familias, setFamilias] = useState([]); // familias del miembro actual
+  const [cargandoFamilia, setCargandoFamilia] = useState(false);
+  const [nuevaFamiliaNombre, setNuevaFamiliaNombre] = useState("");
+  const [parentescoSeleccionado, setParentescoSeleccionado] = useState("cónyuge");
+  const [miembroParaAgregar, setMiembroParaAgregar] = useState("");
+  const [familiaParaAgregar, setFamiliaParaAgregar] = useState(""); // id familia destino
+  const [guardandoFamilia, setGuardandoFamilia] = useState(false);
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}` });
 
@@ -166,6 +191,112 @@ export default function AdminMiembros() {
     }
   };
 
+  // ---- LÓGICA FAMILIA ----
+  const abrirModalFamilia = async (m) => {
+    setMiembroFamiliaActual(m);
+    setModalFamilia(true);
+    setCargandoFamilia(true);
+    setNuevaFamiliaNombre("");
+    setMiembroParaAgregar("");
+    setFamiliaParaAgregar("");
+    try {
+      const res = await fetch(`${API}/api/miembros/${m.id}/familia`, { headers: headers() });
+      const data = await res.json();
+      setFamilias(Array.isArray(data) ? data : []);
+      if (data.length > 0) setFamiliaParaAgregar(String(data[0].id));
+    } catch (e) {
+      setFamilias([]);
+    } finally {
+      setCargandoFamilia(false);
+    }
+  };
+
+  const cerrarModalFamilia = () => {
+    setModalFamilia(false);
+    setMiembroFamiliaActual(null);
+    setFamilias([]);
+  };
+
+  const crearFamilia = async () => {
+    if (!miembroFamiliaActual) return;
+    setGuardandoFamilia(true);
+    try {
+      const res = await fetch(`${API}/api/familias`, {
+        method: "POST",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre: nuevaFamiliaNombre.trim() || null,
+          miembros: [{ miembro_id: miembroFamiliaActual.id, parentesco: "otro" }],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Error ${res.status}`);
+      }
+      const nueva = await res.json();
+      const famRes = await fetch(`${API}/api/miembros/${miembroFamiliaActual.id}/familia`, { headers: headers() });
+      const data = await famRes.json();
+      setFamilias(Array.isArray(data) ? data : []);
+      setFamiliaParaAgregar(String(nueva.id));
+      setNuevaFamiliaNombre("");
+    } catch (e) {
+      alert(`Error al crear familia: ${e.message}`);
+    } finally {
+      setGuardandoFamilia(false);
+    }
+  };
+
+  const agregarMiembroFamilia = async (familiaId) => {
+    if (!familiaId || !miembroParaAgregar) return;
+    setGuardandoFamilia(true);
+    try {
+      const res = await fetch(`${API}/api/familias/${familiaId}/miembros`, {
+        method: "POST",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({ miembro_id: parseInt(miembroParaAgregar), parentesco: parentescoSeleccionado }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Error ${res.status}`);
+      }
+      const famRes = await fetch(`${API}/api/miembros/${miembroFamiliaActual.id}/familia`, { headers: headers() });
+      const data = await famRes.json();
+      setFamilias(Array.isArray(data) ? data : []);
+      setMiembroParaAgregar("");
+    } catch (e) {
+      alert(`Error al agregar miembro: ${e.message}`);
+    } finally {
+      setGuardandoFamilia(false);
+    }
+  };
+
+  const quitarDeFamilia = async (familiaId, miembroId) => {
+    if (!confirm("¿Quitar este miembro del grupo familiar?")) return;
+    try {
+      await fetch(`${API}/api/familias/${familiaId}/miembros/${miembroId}`, {
+        method: "DELETE", headers: headers(),
+      });
+      setFamilias(prev => prev.map(f =>
+        f.id === familiaId
+          ? { ...f, miembros: f.miembros.filter(m => m.miembro_id !== miembroId) }
+          : f
+      ).filter(f => f.miembros.length > 0));
+    } catch (e) {
+      alert("Error al quitar miembro");
+    }
+  };
+
+  const eliminarFamilia = async (familiaId) => {
+    if (!confirm("¿Eliminar este grupo familiar? Los miembros no serán eliminados.")) return;
+    try {
+      await fetch(`${API}/api/familias/${familiaId}`, { method: "DELETE", headers: headers() });
+      setFamilias(prev => prev.filter(f => f.id !== familiaId));
+    } catch (e) {
+      alert("Error al eliminar familia");
+    }
+  };
+  // ---- FIN LÓGICA FAMILIA ----
+
   const miembrosFiltrados = miembros.filter(m => {
     const nombre = `${m.nombre} ${m.apellido}`.toLowerCase();
     const coincideBusqueda = nombre.includes(busqueda.toLowerCase()) ||
@@ -257,25 +388,28 @@ export default function AdminMiembros() {
                 {miembrosFiltrados.map(m => (
                   <tr key={m.id} className="hover:bg-gray-50 transition">
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => navigate(`/admin/miembros/${m.id}`)}
+                        className="flex items-center gap-3 text-left hover:opacity-80 transition group"
+                      >
                         {m.foto_url ? (
                           <img
                             src={m.foto_url}
                             alt={m.nombre}
-                            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                            className="w-10 h-10 rounded-full object-cover flex-shrink-0 ring-2 ring-transparent group-hover:ring-blue-400 transition"
                           />
                         ) : (
-                          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 ring-2 ring-transparent group-hover:ring-blue-400 transition">
                             <span className="text-blue-600 font-bold text-sm">
                               {m.nombre[0]}{m.apellido[0]}
                             </span>
                           </div>
                         )}
                         <div>
-                          <p className="font-semibold text-gray-800">{m.nombre} {m.apellido}</p>
+                          <p className="font-semibold text-gray-800 group-hover:text-blue-700 transition">{m.nombre} {m.apellido}</p>
                           {m.email && <p className="text-xs text-gray-400 md:hidden">{m.email}</p>}
                         </div>
-                      </div>
+                      </button>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
                       <p className="text-sm text-gray-700">{m.email || "—"}</p>
@@ -300,7 +434,13 @@ export default function AdminMiembros() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <div className="flex justify-center gap-2">
+                      <div className="flex justify-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => abrirModalFamilia(m)}
+                          className="text-xs bg-green-100 text-green-700 px-3 py-1.5 rounded hover:bg-green-200 transition font-medium"
+                        >
+                          👨‍👩‍👧 Familia
+                        </button>
                         <button
                           onClick={() => abrirEditar(m)}
                           className="text-xs bg-amber-100 text-amber-700 px-3 py-1.5 rounded hover:bg-amber-200 transition font-medium"
@@ -500,6 +640,138 @@ export default function AdminMiembros() {
                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg transition disabled:opacity-50"
               >
                 {guardando ? "Guardando..." : editando ? "Guardar Cambios" : "Crear Miembro"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal familia */}
+      {modalFamilia && miembroFamiliaActual && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8">
+            <div className="flex justify-between items-center p-6 border-b">
+              <div>
+                <h2 className="text-xl font-bold text-gray-800">
+                  Familia de {miembroFamiliaActual.nombre} {miembroFamiliaActual.apellido}
+                </h2>
+                <p className="text-sm text-gray-400 mt-0.5">Grupos familiares asociados</p>
+              </div>
+              <button onClick={cerrarModalFamilia} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {cargandoFamilia ? (
+                <p className="text-center text-gray-400 py-8">Cargando...</p>
+              ) : (
+                <>
+                  {/* Familias existentes */}
+                  {familias.length === 0 ? (
+                    <p className="text-center text-gray-400 py-4">Este miembro no pertenece a ningún grupo familiar aún.</p>
+                  ) : (
+                    familias.map(familia => (
+                      <div key={familia.id} className="border rounded-xl p-4">
+                        <div className="flex justify-between items-center mb-3">
+                          <h3 className="font-semibold text-gray-700">
+                            {familia.nombre || `Grupo familiar #${familia.id}`}
+                          </h3>
+                          <button
+                            onClick={() => eliminarFamilia(familia.id)}
+                            className="text-xs text-red-500 hover:text-red-700"
+                          >
+                            Eliminar grupo
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {familia.miembros.map(rel => (
+                            <div key={rel.miembro_id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                              <div className="flex items-center gap-3">
+                                {rel.foto_url ? (
+                                  <img src={rel.foto_url} alt={rel.nombre} className="w-8 h-8 rounded-full object-cover" />
+                                ) : (
+                                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-600">
+                                    {rel.nombre?.[0]}{rel.apellido?.[0]}
+                                  </div>
+                                )}
+                                <div>
+                                  <p className="text-sm font-medium text-gray-800">{rel.nombre} {rel.apellido}</p>
+                                  <p className="text-xs text-gray-400 capitalize">{rel.parentesco}</p>
+                                </div>
+                              </div>
+                              {rel.miembro_id !== miembroFamiliaActual.id && (
+                                <button
+                                  onClick={() => quitarDeFamilia(familia.id, rel.miembro_id)}
+                                  className="text-xs text-red-400 hover:text-red-600 ml-2"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Agregar miembro a esta familia */}
+                        <div className="mt-3 pt-3 border-t">
+                          <p className="text-xs font-semibold text-gray-500 mb-2">Agregar integrante a este grupo</p>
+                          <div className="flex gap-2 flex-wrap">
+                            <select
+                              value={familiaParaAgregar === String(familia.id) ? miembroParaAgregar : ""}
+                              onChange={e => { setFamiliaParaAgregar(String(familia.id)); setMiembroParaAgregar(e.target.value); }}
+                              className="border rounded-lg px-2 py-1.5 text-sm flex-1 min-w-0 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                            >
+                              <option value="">— Seleccionar miembro —</option>
+                              {miembros
+                                .filter(m => !familia.miembros.some(r => r.miembro_id === m.id))
+                                .map(m => (
+                                  <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+                                ))}
+                            </select>
+                            <select
+                              value={familiaParaAgregar === String(familia.id) ? parentescoSeleccionado : "cónyuge"}
+                              onChange={e => { setFamiliaParaAgregar(String(familia.id)); setParentescoSeleccionado(e.target.value); }}
+                              className="border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                            >
+                              {PARENTESCOS.map(p => <option key={p} value={p} className="capitalize">{p}</option>)}
+                            </select>
+                            <button
+                              onClick={() => agregarMiembroFamilia(familia.id)}
+                              disabled={guardandoFamilia || !miembroParaAgregar || familiaParaAgregar !== String(familia.id)}
+                              className="bg-blue-600 text-white text-xs px-3 py-1.5 rounded-lg hover:bg-blue-700 transition disabled:opacity-40"
+                            >
+                              + Agregar
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+
+                  {/* Crear nuevo grupo familiar */}
+                  <div className="border-2 border-dashed border-gray-200 rounded-xl p-4">
+                    <p className="text-sm font-semibold text-gray-600 mb-3">Crear nuevo grupo familiar</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder='Nombre del grupo (ej. "Familia González") — opcional'
+                        value={nuevaFamiliaNombre}
+                        onChange={e => setNuevaFamiliaNombre(e.target.value)}
+                        className="border rounded-lg px-3 py-2 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      />
+                      <button
+                        onClick={crearFamilia}
+                        disabled={guardandoFamilia}
+                        className="bg-green-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-40 whitespace-nowrap"
+                      >
+                        {guardandoFamilia ? "..." : "Crear grupo"}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex justify-end px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
+              <button onClick={cerrarModalFamilia} className="px-5 py-2 text-gray-600 hover:text-gray-800 font-medium">
+                Cerrar
               </button>
             </div>
           </div>

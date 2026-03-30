@@ -8,6 +8,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 import { v2 as cloudinary } from "cloudinary";
 import { sendDonationReceipt, saveDonation, sendCashDonationReceipt } from "./emailService.js";
@@ -1260,6 +1263,95 @@ app.delete("/api/miembros/:id", authenticateToken, async (req, res) => {
   }
 });
 
+// POST /api/miembros/:id/foto-perfil — guardar foto en client/public/fotos_perfil (máx 1MB)
+app.post("/api/miembros/:id/foto-perfil", authenticateToken, async (req, res) => {
+  const { imagen_base64 } = req.body;
+  if (!imagen_base64) return res.status(400).json({ error: "Imagen requerida" });
+
+  // Validar tamaño: base64 ~1.37× el original. 1MB = 1048576 bytes → base64 ≈ 1437773 chars
+  const base64Data = imagen_base64.replace(/^data:image\/\w+;base64,/, "");
+  if (base64Data.length > 1437773) {
+    return res.status(413).json({ error: "La imagen supera el límite de 1 MB" });
+  }
+
+  // Validar mime type
+  const mimeMatch = imagen_base64.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,/);
+  if (!mimeMatch) return res.status(400).json({ error: "Formato de imagen no permitido (usa JPG, PNG o WebP)" });
+  const ext = mimeMatch[1].split("/")[1].replace("jpeg", "jpg");
+
+  try {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const fotosDir = path.join(__dirname, "../client/public/fotos_perfil");
+    if (!fs.existsSync(fotosDir)) fs.mkdirSync(fotosDir, { recursive: true });
+
+    const dbClient = await pool.connect();
+
+    // Obtener nombre y apellido del miembro
+    const miembroRes = await dbClient.query("SELECT nombre, apellido, foto_url FROM miembros WHERE id=$1", [req.params.id]);
+    if (miembroRes.rows.length === 0) { dbClient.release(); return res.status(404).json({ error: "Miembro no encontrado" }); }
+
+    const { nombre, apellido, foto_url: fotoAnterior } = miembroRes.rows[0];
+
+    // Normaliza un string: quita tildes, caracteres especiales y pone en minúsculas
+    const normalizar = (str) =>
+      (str || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase();
+
+    const parteNombre   = nombre.trim().split(/\s+/);
+    const parteApellido = apellido.trim().split(/\s+/);
+
+    const inicialNombre    = normalizar(parteNombre[0])[0] || "x";
+    const primerApellido   = normalizar(parteApellido[0]) || "miembro";
+    const inicialSegundo   = parteApellido[1] ? (normalizar(parteApellido[1])[0] || "") : "";
+
+    // Nombre base: inicialNombre + primerApellido  →  dguzman
+    const baseNombre = `${inicialNombre}${primerApellido}`;
+
+    // Comprobar si ese nombre BASE ya está en uso por OTRO miembro (sin contar al actual)
+    const conflicto = await dbClient.query(
+      `SELECT id FROM miembros
+       WHERE id <> $1
+         AND foto_url LIKE $2`,
+      [req.params.id, `/fotos_perfil/${baseNombre}.%`]
+    );
+
+    // Si hay conflicto, agregar inicial del 2do apellido: dguzmans
+    const baseFinal  = conflicto.rows.length > 0 && inicialSegundo
+      ? `${baseNombre}${inicialSegundo}`
+      : baseNombre;
+    const fileName   = `${baseFinal}.${ext}`;
+
+    // Si el propio usuario ya tenía un archivo con el nombre de colisión, también resolverlo
+    // Verificar si la foto anterior de ESTE usuario usaba el nombre base sin inicial 2do
+    // y ahora hay conflicto → renombrar la del otro miembro no es responsabilidad nuestra,
+    // pero sí actualizar la propia.
+
+    // Eliminar foto anterior del mismo usuario (en BD)
+    if (fotoAnterior && fotoAnterior.startsWith("/fotos_perfil/")) {
+      const archivoAnterior = path.join(fotosDir, path.basename(fotoAnterior));
+      if (fs.existsSync(archivoAnterior)) fs.unlinkSync(archivoAnterior);
+    }
+    // Eliminar si ya existe el archivo destino (ej. misma persona resubiendo)
+    const filePathFinal = path.join(fotosDir, fileName);
+    if (fs.existsSync(filePathFinal)) fs.unlinkSync(filePathFinal);
+
+    // Guardar nueva foto
+    fs.writeFileSync(filePathFinal, Buffer.from(base64Data, "base64"));
+
+    const foto_url = `/fotos_perfil/${fileName}`;
+    await dbClient.query("UPDATE miembros SET foto_url=$1 WHERE id=$2", [foto_url, req.params.id]);
+    dbClient.release();
+
+    res.json({ foto_url });
+  } catch (error) {
+    console.error("Error al guardar foto de perfil:", error);
+    res.status(500).json({ error: "Error al guardar foto" });
+  }
+});
+
 // POST /api/miembros/:id/foto — subir foto a Cloudinary
 app.post("/api/miembros/:id/foto", authenticateToken, async (req, res) => {
   const { imagen_base64 } = req.body;
@@ -1276,6 +1368,166 @@ app.post("/api/miembros/:id/foto", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error al subir foto:", error);
     res.status(500).json({ error: "Error al subir foto" });
+  }
+});
+
+// =============================================
+// FAMILIAS
+// =============================================
+
+// GET /api/familias — listar todas las familias con sus miembros
+app.get("/api/familias", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT f.id, f.nombre, f.created_at,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'miembro_id', m.id,
+              'nombre', m.nombre,
+              'apellido', m.apellido,
+              'foto_url', m.foto_url,
+              'parentesco', fm.parentesco
+            )
+          ) FILTER (WHERE m.id IS NOT NULL),
+          '[]'
+        ) AS miembros
+      FROM familias f
+      LEFT JOIN familia_miembros fm ON fm.familia_id = f.id
+      LEFT JOIN miembros m ON m.id = fm.miembro_id
+      GROUP BY f.id
+      ORDER BY f.nombre, f.id
+    `);
+    client.release();
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener familias:", error);
+    res.status(500).json({ error: "Error al obtener familias" });
+  }
+});
+
+// GET /api/miembros/:id/familia — familia de un miembro
+app.get("/api/miembros/:id/familia", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT f.id, f.nombre,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'miembro_id', m.id,
+              'nombre', m.nombre,
+              'apellido', m.apellido,
+              'foto_url', m.foto_url,
+              'parentesco', fm.parentesco
+            )
+          ) FILTER (WHERE m.id IS NOT NULL),
+          '[]'
+        ) AS miembros
+      FROM familia_miembros me2
+      JOIN familias f ON f.id = me2.familia_id
+      LEFT JOIN familia_miembros fm ON fm.familia_id = f.id
+      LEFT JOIN miembros m ON m.id = fm.miembro_id
+      WHERE me2.miembro_id = $1
+      GROUP BY f.id
+    `, [req.params.id]);
+    client.release();
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener familia del miembro:", error);
+    res.status(500).json({ error: "Error al obtener familia" });
+  }
+});
+
+// POST /api/familias — crear familia
+app.post("/api/familias", authenticateToken, async (req, res) => {
+  const { nombre, miembros } = req.body;
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      "INSERT INTO familias (nombre) VALUES ($1) RETURNING *",
+      [nombre || null]
+    );
+    const familia = result.rows[0];
+    if (Array.isArray(miembros) && miembros.length > 0) {
+      for (const { miembro_id, parentesco } of miembros) {
+        await client.query(
+          "INSERT INTO familia_miembros (familia_id, miembro_id, parentesco) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+          [familia.id, miembro_id, parentesco || "otro"]
+        );
+      }
+    }
+    client.release();
+    res.status(201).json(familia);
+  } catch (error) {
+    console.error("Error al crear familia:", error);
+    res.status(500).json({ error: "Error al crear familia" });
+  }
+});
+
+// PUT /api/familias/:id — actualizar nombre de familia
+app.put("/api/familias/:id", authenticateToken, async (req, res) => {
+  const { nombre } = req.body;
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      "UPDATE familias SET nombre=$1 WHERE id=$2 RETURNING *",
+      [nombre || null, req.params.id]
+    );
+    client.release();
+    if (result.rows.length === 0) return res.status(404).json({ error: "Familia no encontrada" });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error al actualizar familia:", error);
+    res.status(500).json({ error: "Error al actualizar familia" });
+  }
+});
+
+// DELETE /api/familias/:id — eliminar familia (no elimina miembros)
+app.delete("/api/familias/:id", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    await client.query("DELETE FROM familias WHERE id=$1", [req.params.id]);
+    client.release();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error al eliminar familia:", error);
+    res.status(500).json({ error: "Error al eliminar familia" });
+  }
+});
+
+// POST /api/familias/:id/miembros — agregar miembro a familia
+app.post("/api/familias/:id/miembros", authenticateToken, async (req, res) => {
+  const { miembro_id, parentesco } = req.body;
+  if (!miembro_id) return res.status(400).json({ error: "miembro_id requerido" });
+  try {
+    const client = await pool.connect();
+    await client.query(
+      "INSERT INTO familia_miembros (familia_id, miembro_id, parentesco) VALUES ($1,$2,$3) ON CONFLICT (familia_id, miembro_id) DO UPDATE SET parentesco=$3",
+      [req.params.id, miembro_id, parentesco || "otro"]
+    );
+    client.release();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error al agregar miembro a familia:", error);
+    res.status(500).json({ error: "Error al agregar miembro" });
+  }
+});
+
+// DELETE /api/familias/:id/miembros/:miembro_id — quitar miembro de familia
+app.delete("/api/familias/:id/miembros/:miembro_id", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    await client.query(
+      "DELETE FROM familia_miembros WHERE familia_id=$1 AND miembro_id=$2",
+      [req.params.id, req.params.miembro_id]
+    );
+    client.release();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error al quitar miembro de familia:", error);
+    res.status(500).json({ error: "Error al quitar miembro" });
   }
 });
 
@@ -1510,7 +1762,35 @@ app.delete("/api/eventos/:id/ocurrencias/:fecha", authenticateToken, async (req,
 
 // --- Iniciar servidor ---
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+
+async function initFamiliasTables() {
+  try {
+    const client = await pool.connect();
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS familias (
+        id SERIAL PRIMARY KEY,
+        nombre VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS familia_miembros (
+        id SERIAL PRIMARY KEY,
+        familia_id INTEGER NOT NULL REFERENCES familias(id) ON DELETE CASCADE,
+        miembro_id INTEGER NOT NULL REFERENCES miembros(id) ON DELETE CASCADE,
+        parentesco VARCHAR(50) NOT NULL DEFAULT 'otro',
+        UNIQUE (familia_id, miembro_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_familia_miembros_familia ON familia_miembros(familia_id);
+      CREATE INDEX IF NOT EXISTS idx_familia_miembros_miembro ON familia_miembros(miembro_id);
+    `);
+    client.release();
+    console.log("[DB] Tablas familias listas.");
+  } catch (err) {
+    console.error("[DB] Error al crear tablas familias:", err.message);
+  }
+}
+
+app.listen(PORT, async () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
+  await initFamiliasTables();
 });
 
