@@ -1,13 +1,17 @@
 import React, { useEffect, useState, useCallback } from "react";
 import useEmblaCarousel from "embla-carousel-react";
 import Autoplay from "embla-carousel-autoplay";
+import { useAuth } from "../context/AuthContext";
 
 export default function HeroSection() {
   const [slides, setSlides] = useState([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [liveStream, setLiveStream] = useState(null);
   const [isCheckingLive, setIsCheckingLive] = useState(true);
+  const [specialMode, setSpecialMode] = useState(false);
+  const [specialModeLoading, setSpecialModeLoading] = useState(false);
   const backendUrl = import.meta.env.VITE_BACKEND_URL;
+  const { user } = useAuth();
 
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true }, [
     Autoplay({ delay: 10000 }), // <-- tiempo fijo (10000ms = 10s)
@@ -25,6 +29,7 @@ export default function HeroSection() {
         const res = await fetch(`${backendUrl}/api/youtube/live-status`);
         const data = await res.json();
         setLiveStream(data.isLive ? data : null);
+        setSpecialMode(!!data.specialMode);
       } catch (error) {
         console.error("Error al verificar transmisión en vivo:", error);
         setLiveStream(null);
@@ -35,10 +40,56 @@ export default function HeroSection() {
 
     checkLiveStatus();
 
-    // Verificar cada 2 minutos si hay transmisión en vivo
-    const interval = setInterval(checkLiveStatus, 2 * 60 * 1000);
+    // Verificar cada 10 minutos si hay transmisión en vivo
+    const interval = setInterval(checkLiveStatus, 10 * 60 * 1000);
     return () => clearInterval(interval);
   }, [backendUrl]);
+
+  // Consultar estado del modo especial si es admin
+  useEffect(() => {
+    if (!user) return;
+    const token = localStorage.getItem("token");
+    fetch(`${backendUrl}/api/youtube/special-mode`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((d) => setSpecialMode(!!d.active))
+      .catch(() => {});
+  }, [user, backendUrl]);
+
+  const toggleSpecialMode = async () => {
+    const token = localStorage.getItem("token");
+    setSpecialModeLoading(true);
+    try {
+      if (specialMode) {
+        await fetch(`${backendUrl}/api/youtube/special-mode`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setSpecialMode(false);
+        // Limpiar live si estaba en modo especial
+        setLiveStream(null);
+      } else {
+        await fetch(`${backendUrl}/api/youtube/special-mode`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ hours: 4 }),
+        });
+        setSpecialMode(true);
+        // Forzar consulta inmediata
+        const res = await fetch(`${backendUrl}/api/youtube/live-status`);
+        const data = await res.json();
+        setLiveStream(data.isLive ? data : null);
+      }
+    } catch (e) {
+      console.error("Error al cambiar modo especial:", e);
+    } finally {
+      setSpecialModeLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchSlides = async () => {
@@ -70,12 +121,23 @@ export default function HeroSection() {
               allowFullScreen
             />
           </div>
-          
+
           {/* Badge de EN VIVO */}
           <div className="absolute top-4 left-4 z-20 bg-red-600 text-white px-4 py-2 rounded-full font-bold flex items-center gap-2 animate-pulse">
             <span className="w-3 h-3 bg-white rounded-full animate-ping"></span>
             EN VIVO
           </div>
+
+          {/* Botón admin para desactivar modo especial */}
+          {user && specialMode && (
+            <button
+              onClick={toggleSpecialMode}
+              disabled={specialModeLoading}
+              className="absolute top-4 right-4 z-20 bg-yellow-500 hover:bg-yellow-600 text-black px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg transition-colors disabled:opacity-50"
+            >
+              {specialModeLoading ? "..." : "⚡ Desactivar modo especial"}
+            </button>
+          )}
         </div>
       </section>
     );
@@ -84,6 +146,28 @@ export default function HeroSection() {
   // Si no hay transmisión, mostrar el carrusel de slides
   return (
     <section className="overflow-hidden relative">
+      {/* Botón admin: activar/desactivar modo especial */}
+      {user && (
+        <div className="absolute top-4 right-4 z-30">
+          <button
+            onClick={toggleSpecialMode}
+            disabled={specialModeLoading}
+            title={specialMode ? "Click para desactivar la detección fuera de horario" : "Activa la detección de YouTube por 4 horas (eventos especiales)"}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg transition-colors disabled:opacity-50 ${
+              specialMode
+                ? "bg-yellow-500 hover:bg-yellow-600 text-black"
+                : "bg-white/20 hover:bg-white/30 text-white border border-white/40 backdrop-blur-sm"
+            }`}
+          >
+            <span>{specialMode ? "⚡" : "📡"}</span>
+            {specialModeLoading
+              ? "..."
+              : specialMode
+              ? "Modo especial activo"
+              : "Activar detección en vivo"}
+          </button>
+        </div>
+      )}
       <div className="embla" ref={emblaRef}>
         <div className="embla__container flex">
           {slides.map((slide, index) => {

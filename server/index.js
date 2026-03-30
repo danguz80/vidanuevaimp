@@ -523,14 +523,63 @@ app.delete("/api/hero/:id", authenticateToken, async (req, res) => {
 // --- API para verificar transmisión en vivo de YouTube ---
 let liveStreamCache = null;
 let liveStreamCacheTimestamp = 0;
-const LIVE_STREAM_CACHE_DURATION = 2 * 60 * 1000; // 2 minutos
+const LIVE_STREAM_CACHE_DURATION = 10 * 60 * 1000; // 10 minutos
+let liveStreamQuotaBackoffUntil = 0;
 
+// Modo especial: permite detección fuera de horario (eventos especiales)
+let specialModeUntil = 0; // timestamp hasta cuando está activo el modo especial
+
+/**
+ * Determina si estamos dentro de la ventana horaria de transmisión regular.
+ * Jueves 18:30–22:00 y Domingos 11:00–14:00, horario Chile (America/Santiago).
+ */
+function isInLiveWindow() {
+  const now = new Date();
+  // Obtener hora local de Santiago de Chile
+  const santiago = new Intl.DateTimeFormat("es-CL", {
+    timeZone: "America/Santiago",
+    weekday: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+
+  const weekday = santiago.find((p) => p.type === "weekday")?.value?.toLowerCase();
+  const hour = parseInt(santiago.find((p) => p.type === "hour")?.value ?? "0", 10);
+  const minute = parseInt(santiago.find((p) => p.type === "minute")?.value ?? "0", 10);
+  const totalMinutes = hour * 60 + minute;
+
+  if (weekday === "jueves") {
+    // 18:30 a 22:00
+    return totalMinutes >= 18 * 60 + 30 && totalMinutes <= 22 * 60;
+  }
+  if (weekday === "domingo") {
+    // 11:00 a 14:00
+    return totalMinutes >= 11 * 60 && totalMinutes <= 14 * 60;
+  }
+  return false;
+}
+
+// GET estado de transmisión
 app.get("/api/youtube/live-status", async (req, res) => {
   const now = Date.now();
-  
+  const specialActive = now < specialModeUntil;
+  const inWindow = isInLiveWindow();
+
+  // Fuera de ventana y sin modo especial → no consumir cuota
+  if (!inWindow && !specialActive) {
+    return res.json({ isLive: false, inWindow: false, specialMode: false });
+  }
+
+  // Si la cuota está agotada, devolver el último caché
+  if (now < liveStreamQuotaBackoffUntil) {
+    console.warn("[YouTube] Cuota agotada, usando caché hasta", new Date(liveStreamQuotaBackoffUntil).toISOString());
+    return res.json(liveStreamCache || { isLive: false, message: "Cuota de YouTube agotada temporalmente" });
+  }
+
   // Retornar caché si es válido
   if (liveStreamCache && now - liveStreamCacheTimestamp < LIVE_STREAM_CACHE_DURATION) {
-    return res.json(liveStreamCache);
+    return res.json({ ...liveStreamCache, inWindow, specialMode: specialActive });
   }
 
   try {
@@ -541,7 +590,6 @@ app.get("/api/youtube/live-status", async (req, res) => {
       return res.json({ isLive: false, message: "YouTube API no configurada" });
     }
 
-    // Buscar transmisiones en vivo activas del canal
     const response = await axios.get(
       "https://www.googleapis.com/youtube/v3/search",
       {
@@ -569,11 +617,43 @@ app.get("/api/youtube/live-status", async (req, res) => {
     }
 
     liveStreamCacheTimestamp = now;
-    res.json(liveStreamCache);
+    res.json({ ...liveStreamCache, inWindow, specialMode: specialActive });
   } catch (error) {
-    console.error("Error al verificar transmisión en vivo:", error.message);
+    const status = error.response?.status;
+    const reason = error.response?.data?.error?.errors?.[0]?.reason;
+    if (status === 403 && (reason === "quotaExceeded" || reason === "dailyLimitExceeded")) {
+      liveStreamQuotaBackoffUntil = now + 2 * 60 * 60 * 1000;
+      console.error(`[YouTube] CUOTA AGOTADA. Suspendiendo consultas hasta ${new Date(liveStreamQuotaBackoffUntil).toISOString()}`);
+    } else {
+      console.error("[YouTube] Error al verificar transmisión en vivo:", error.message, { status, reason });
+    }
     res.json({ isLive: false, error: error.message });
   }
+});
+
+// POST activar modo especial (solo admins autenticados)
+app.post("/api/youtube/special-mode", authenticateToken, (req, res) => {
+  const hours = Math.min(parseInt(req.body?.hours ?? 4, 10), 12); // máx 12h
+  specialModeUntil = Date.now() + hours * 60 * 60 * 1000;
+  liveStreamCache = null; // forzar consulta inmediata
+  liveStreamCacheTimestamp = 0;
+  console.log(`[YouTube] Modo especial activado por ${req.user?.username} hasta ${new Date(specialModeUntil).toISOString()}`);
+  res.json({ success: true, specialModeUntil, hours });
+});
+
+// DELETE desactivar modo especial (solo admins autenticados)
+app.delete("/api/youtube/special-mode", authenticateToken, (req, res) => {
+  specialModeUntil = 0;
+  liveStreamCache = { isLive: false };
+  console.log(`[YouTube] Modo especial desactivado por ${req.user?.username}`);
+  res.json({ success: true });
+});
+
+// GET estado del modo especial (solo admins)
+app.get("/api/youtube/special-mode", authenticateToken, (req, res) => {
+  const now = Date.now();
+  const active = now < specialModeUntil;
+  res.json({ active, specialModeUntil: active ? specialModeUntil : null });
 });
 
 // --- API para obtener fotos públicas desde Flickr ---
