@@ -151,20 +151,35 @@ app.post("/api/miembros/login", async (req, res) => {
     const valid = await bcrypt.compare(password, miembro.password_hash);
     if (!valid) return res.status(401).json({ error: "Credenciales inválidas" });
 
+    const rolesRes = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [miembro.id]);
+    const roles = rolesRes.rows.map(r => r.rol);
+    const esAdmin = roles.includes("admin");
+
     const token = jwt.sign(
       { id: miembro.id, nombre: miembro.nombre, apellido: miembro.apellido, tipo: "miembro" },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
+    let adminToken = null;
+    if (esAdmin) {
+      adminToken = jwt.sign(
+        { id: miembro.id, username: `${miembro.nombre} ${miembro.apellido}` },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+    }
+
     res.json({
       token,
+      adminToken,
       miembro: {
         id: miembro.id,
         nombre: miembro.nombre,
         apellido: miembro.apellido,
         foto_url: miembro.foto_url,
         email: miembro.email,
+        esAdmin,
       },
     });
   } catch (err) {
@@ -178,7 +193,7 @@ app.get("/api/miembros/me", authenticateMiembro, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT m.id, m.nombre, m.apellido, m.foto_url, m.email, m.celular,
-              m.fecha_nacimiento, m.direccion, m.estado, m.notas,
+              m.fecha_nacimiento, m.direccion, m.estado, m.notas, m.acerca_de_mi,
               COALESCE(json_agg(mr.rol) FILTER (WHERE mr.rol IS NOT NULL), '[]') AS roles
        FROM miembros m
        LEFT JOIN miembro_roles mr ON mr.miembro_id = m.id
@@ -215,6 +230,99 @@ app.put("/api/miembros/me/password", authenticateMiembro, async (req, res) => {
   }
 });
 
+// POST /api/miembros/me/foto-perfil — miembro cambia su propia foto (máx 1MB)
+app.post("/api/miembros/me/foto-perfil", authenticateMiembro, async (req, res) => {
+  const { imagen_base64 } = req.body;
+  if (!imagen_base64) return res.status(400).json({ error: "Imagen requerida" });
+
+  const base64Data = imagen_base64.replace(/^data:image\/\w+;base64,/, "");
+  if (base64Data.length > 1437773) {
+    return res.status(413).json({ error: "La imagen supera el límite de 1 MB" });
+  }
+
+  const mimeMatch = imagen_base64.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,/);
+  if (!mimeMatch) return res.status(400).json({ error: "Formato de imagen no permitido (usa JPG, PNG o WebP)" });
+  const ext = mimeMatch[1].split("/")[1].replace("jpeg", "jpg");
+
+  try {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const fotosDir = path.join(__dirname, "../client/public/fotos_perfil");
+    if (!fs.existsSync(fotosDir)) fs.mkdirSync(fotosDir, { recursive: true });
+
+    const dbClient = await pool.connect();
+    const miembroId = req.miembro.id;
+
+    const miembroRes = await dbClient.query("SELECT nombre, apellido, foto_url FROM miembros WHERE id=$1", [miembroId]);
+    if (miembroRes.rows.length === 0) { dbClient.release(); return res.status(404).json({ error: "Miembro no encontrado" }); }
+
+    const { nombre, apellido, foto_url: fotoAnterior } = miembroRes.rows[0];
+
+    const normalizar = (str) =>
+      (str || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase();
+
+    const parteNombre   = nombre.trim().split(/\s+/);
+    const parteApellido = apellido.trim().split(/\s+/);
+
+    const inicialNombre  = normalizar(parteNombre[0])[0] || "x";
+    const primerApellido = normalizar(parteApellido[0]) || "miembro";
+    const inicialSegundo = parteApellido[1] ? (normalizar(parteApellido[1])[0] || "") : "";
+
+    const baseNombre = `${inicialNombre}${primerApellido}`;
+
+    const conflicto = await dbClient.query(
+      `SELECT id FROM miembros WHERE id <> $1 AND foto_url LIKE $2`,
+      [miembroId, `/fotos_perfil/${baseNombre}.%`]
+    );
+
+    const baseFinal = conflicto.rows.length > 0 && inicialSegundo
+      ? `${baseNombre}${inicialSegundo}`
+      : baseNombre;
+    const fileName = `${baseFinal}.${ext}`;
+
+    if (fotoAnterior && fotoAnterior.startsWith("/fotos_perfil/")) {
+      const archivoAnterior = path.join(fotosDir, path.basename(fotoAnterior));
+      if (fs.existsSync(archivoAnterior)) fs.unlinkSync(archivoAnterior);
+    }
+    const filePathFinal = path.join(fotosDir, fileName);
+    if (fs.existsSync(filePathFinal)) fs.unlinkSync(filePathFinal);
+
+    fs.writeFileSync(filePathFinal, Buffer.from(base64Data, "base64"));
+
+    const foto_url = `/fotos_perfil/${fileName}`;
+    await dbClient.query("UPDATE miembros SET foto_url=$1 WHERE id=$2", [foto_url, miembroId]);
+    dbClient.release();
+
+    res.json({ foto_url });
+  } catch (error) {
+    console.error("Error al guardar foto de perfil (miembro):", error);
+    res.status(500).json({ error: "Error al guardar foto" });
+  }
+});
+
+// PUT /api/miembros/me/acerca-de-mi — miembro actualiza su descripción personal
+app.put("/api/miembros/me/acerca-de-mi", authenticateMiembro, async (req, res) => {
+  const { acerca_de_mi } = req.body;
+  const texto = (acerca_de_mi || "").trim();
+  const palabras = texto ? texto.split(/\s+/).filter(Boolean) : [];
+  if (palabras.length > 100) {
+    return res.status(400).json({ error: "El texto no puede superar las 100 palabras" });
+  }
+  try {
+    await pool.query(
+      "UPDATE miembros SET acerca_de_mi = $1 WHERE id = $2",
+      [texto || null, req.miembro.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error acerca_de_mi:", err.message);
+    res.status(500).json({ error: "Error al guardar" });
+  }
+});
+
 // Login miembro con Google: POST /api/miembros/auth/google
 app.post("/api/miembros/auth/google", async (req, res) => {
   const { credential } = req.body;
@@ -242,20 +350,36 @@ app.post("/api/miembros/auth/google", async (req, res) => {
     }
 
     const miembro = result.rows[0];
+
+    const rolesRes = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [miembro.id]);
+    const roles = rolesRes.rows.map(r => r.rol);
+    const esAdmin = roles.includes("admin");
+
     const token = jwt.sign(
       { id: miembro.id, nombre: miembro.nombre, apellido: miembro.apellido, tipo: "miembro" },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
+    let adminToken = null;
+    if (esAdmin) {
+      adminToken = jwt.sign(
+        { id: miembro.id, username: `${miembro.nombre} ${miembro.apellido}` },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+    }
+
     res.json({
       token,
+      adminToken,
       miembro: {
         id: miembro.id,
         nombre: miembro.nombre,
         apellido: miembro.apellido,
         foto_url: miembro.foto_url,
         email: miembro.email,
+        esAdmin,
       },
     });
   } catch (err) {
@@ -1374,13 +1498,13 @@ app.post("/api/miembros", authenticateToken, async (req, res) => {
 
 // PUT /api/miembros/:id — actualizar miembro
 app.put("/api/miembros/:id", authenticateToken, async (req, res) => {
-  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles } = req.body;
+  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles, acerca_de_mi } = req.body;
   try {
     const client = await pool.connect();
     const result = await client.query(
       `UPDATE miembros SET nombre=$1, apellido=$2, foto_url=$3, fecha_nacimiento=$4, celular=$5, 
-       email=$6, direccion=$7, estado=$8, notas=$9 WHERE id=$10 RETURNING *`,
-      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, req.params.id]
+       email=$6, direccion=$7, estado=$8, notas=$9, acerca_de_mi=$10 WHERE id=$11 RETURNING *`,
+      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, acerca_de_mi || null, req.params.id]
     );
     if (result.rows.length === 0) { client.release(); return res.status(404).json({ error: "Miembro no encontrado" }); }
     if (Array.isArray(roles)) {

@@ -6,6 +6,7 @@ import AdminNav from "../components/AdminNav";
 const API = import.meta.env.VITE_BACKEND_URL;
 
 const ROLES_DISPONIBLES = [
+  "admin",
   "Pastor",
   "Obispo",
   "Diácono",

@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Eye, EyeOff, LogOut, Lock, User, Phone, Mail, MapPin, Calendar } from "lucide-react";
+import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X } from "lucide-react";
 import { useMemberAuth } from "../context/MemberAuthContext";
+import { useAuth } from "../context/AuthContext";
 
 function calcularEdad(fechaNac) {
   if (!fechaNac) return null;
@@ -92,22 +93,84 @@ function CambiarPasswordModal({ onClose, getToken }) {
   );
 }
 
+function contarPalabras(texto) {
+  return (texto || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
 export default function MiPortal() {
   const { miembro, logout, getToken } = useMemberAuth();
+  const { user: adminUser, logout: adminLogout } = useAuth();
   const [perfil, setPerfil] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showCambiarPwd, setShowCambiarPwd] = useState(false);
   const navigate = useNavigate();
 
+  // Foto
+  const fileInputRef = useRef(null);
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [errorFoto, setErrorFoto] = useState("");
+
+  // Acerca de mí
+  const [editandoAcerca, setEditandoAcerca] = useState(false);
+  const [textoAcerca, setTextoAcerca] = useState("");
+  const [guardandoAcerca, setGuardandoAcerca] = useState(false);
+  const [errorAcerca, setErrorAcerca] = useState("");
+
   useEffect(() => {
     if (!miembro) { navigate("/portal/login"); return; }
     fetch("/api/miembros/me", { headers: { Authorization: `Bearer ${getToken()}` } })
       .then(r => r.json())
-      .then(d => { setPerfil(d); setLoading(false); })
+      .then(d => { setPerfil(d); setTextoAcerca(d.acerca_de_mi || ""); setLoading(false); })
       .catch(() => setLoading(false));
   }, [miembro]);
 
-  const handleLogout = () => { logout(); navigate("/portal/login"); };
+  const cambiarFoto = (file) => {
+    if (!file) return;
+    setErrorFoto("");
+    if (file.size > 1 * 1024 * 1024) {
+      setErrorFoto("La imagen supera 1 MB. Elige una más pequeña.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      setSubiendoFoto(true);
+      try {
+        const res = await fetch("/api/miembros/me/foto-perfil", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+          body: JSON.stringify({ imagen_base64: e.target.result }),
+        });
+        const data = await res.json();
+        if (!res.ok) { setErrorFoto(data.error || "Error al subir foto"); return; }
+        setPerfil(prev => ({ ...prev, foto_url: data.foto_url }));
+      } catch { setErrorFoto("Error de conexión"); }
+      finally { setSubiendoFoto(false); }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const guardarAcerca = async () => {
+    setErrorAcerca("");
+    if (contarPalabras(textoAcerca) > 100) {
+      setErrorAcerca("Máximo 100 palabras");
+      return;
+    }
+    setGuardandoAcerca(true);
+    try {
+      const res = await fetch("/api/miembros/me/acerca-de-mi", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ acerca_de_mi: textoAcerca }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErrorAcerca(data.error || "Error al guardar"); return; }
+      setPerfil(prev => ({ ...prev, acerca_de_mi: textoAcerca || null }));
+      setEditandoAcerca(false);
+    } catch { setErrorAcerca("Error de conexión"); }
+    finally { setGuardandoAcerca(false); }
+  };
+
+  const handleLogout = () => { logout(); adminLogout(); navigate("/portal/login"); };
 
   if (!miembro) return null;
   if (loading) return (
@@ -147,12 +210,39 @@ export default function MiPortal() {
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
         {/* Foto + nombre */}
         <div className="bg-white rounded-2xl shadow-sm p-6 flex flex-col items-center text-center gap-3">
-          {foto ? (
-            <img src={foto} alt="" className="w-24 h-24 rounded-full object-cover ring-4 ring-indigo-100" />
-          ) : (
-            <div className="w-24 h-24 rounded-full bg-indigo-100 flex items-center justify-center text-3xl font-bold text-indigo-500 ring-4 ring-indigo-50">
-              {iniciales}
-            </div>
+          {/* Avatar con hover para cambiar foto */}
+          <div className="relative group">
+            {foto ? (
+              <img src={foto} alt="" className="w-24 h-24 rounded-full object-cover ring-4 ring-indigo-100" />
+            ) : (
+              <div className="w-24 h-24 rounded-full bg-indigo-100 flex items-center justify-center text-3xl font-bold text-indigo-500 ring-4 ring-indigo-50">
+                {iniciales}
+              </div>
+            )}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={subiendoFoto}
+              className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center text-white text-xs font-semibold gap-0.5"
+            >
+              {subiendoFoto ? (
+                <span className="text-xs">Subiendo...</span>
+              ) : (
+                <><Camera size={18} /><span>Cambiar</span></>
+              )}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => cambiarFoto(e.target.files[0])}
+            />
+          </div>
+          {errorFoto && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">{errorFoto}</p>
+          )}
+          {!errorFoto && (
+            <p className="text-xs text-gray-400">Toca la foto para cambiarla · máx. 1 MB</p>
           )}
           <div>
             <h1 className="text-xl font-bold text-gray-800">{perfil?.nombre} {perfil?.apellido}</h1>
@@ -171,6 +261,59 @@ export default function MiPortal() {
               {perfil?.estado || "activo"}
             </span>
           </div>
+        </div>
+
+        {/* Acerca de mí */}
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Acerca de mí</h2>
+            {!editandoAcerca && (
+              <button
+                onClick={() => { setTextoAcerca(perfil?.acerca_de_mi || ""); setEditandoAcerca(true); setErrorAcerca(""); }}
+                className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium transition"
+              >
+                <PenLine size={13} /> Editar
+              </button>
+            )}
+          </div>
+          {editandoAcerca ? (
+            <div className="space-y-2">
+              <textarea
+                rows={4}
+                value={textoAcerca}
+                onChange={e => setTextoAcerca(e.target.value)}
+                placeholder="Cuéntale a la congregación sobre ti. Por ejemplo: de dónde eres, cuántos años llevas en la iglesia, en qué trabajas, y una palabra de aliento para todos."
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+              />
+              <div className="flex items-center justify-between">
+                <span className={`text-xs ${
+                  contarPalabras(textoAcerca) > 100 ? "text-red-500 font-semibold" : "text-gray-400"
+                }`}>
+                  {contarPalabras(textoAcerca)} / 100 palabras
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setEditandoAcerca(false); setTextoAcerca(perfil?.acerca_de_mi || ""); setErrorAcerca(""); }}
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg px-3 py-1.5 transition"
+                  >
+                    <X size={12} /> Cancelar
+                  </button>
+                  <button
+                    onClick={guardarAcerca}
+                    disabled={guardandoAcerca || contarPalabras(textoAcerca) > 100}
+                    className="flex items-center gap-1 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 font-medium transition"
+                  >
+                    <Check size={12} /> {guardandoAcerca ? "Guardando..." : "Guardar"}
+                  </button>
+                </div>
+              </div>
+              {errorAcerca && <p className="text-xs text-red-500">{errorAcerca}</p>}
+            </div>
+          ) : perfil?.acerca_de_mi ? (
+            <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{perfil.acerca_de_mi}</p>
+          ) : (
+            <p className="text-sm text-gray-400 italic">Aún no has escrito nada. ¡Preséntate a la congregación!</p>
+          )}
         </div>
 
         {/* Datos personales */}
@@ -210,12 +353,22 @@ export default function MiPortal() {
         {/* Acciones */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Configuración</h2>
-          <button
-            onClick={() => setShowCambiarPwd(true)}
-            className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-900 font-medium transition"
-          >
-            <Lock size={16} /> Cambiar contraseña
-          </button>
+          <div className="space-y-3">
+            <button
+              onClick={() => setShowCambiarPwd(true)}
+              className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-900 font-medium transition"
+            >
+              <Lock size={16} /> Cambiar contraseña
+            </button>
+            {adminUser && (
+              <Link
+                to="/admin"
+                className="flex items-center gap-2 text-sm text-purple-700 hover:text-purple-900 font-medium transition"
+              >
+                <ShieldCheck size={16} /> Panel de Administración
+              </Link>
+            )}
+          </div>
         </div>
 
         <p className="text-center text-xs text-gray-400">

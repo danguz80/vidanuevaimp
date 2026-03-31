@@ -1,14 +1,17 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useMemberAuth } from "../context/MemberAuthContext";
 
 export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { user, logout } = useAuth();
+  const { miembro, logout: logoutMiembro } = useMemberAuth();
   const navigate = useNavigate();
 
   const handleLogout = () => {
     logout();
+    logoutMiembro();
     navigate("/");
     setMenuOpen(false);
   };
@@ -55,8 +58,15 @@ export default function Header() {
               <Link to="/admin" className="bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700">Admin</Link>
               <button onClick={handleLogout} className="bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700">Salir</button>
             </>
+          ) : miembro ? (
+            <>
+              <Link to="/portal" className="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">
+                {miembro.nombre}
+              </Link>
+              <button onClick={handleLogout} className="bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700">Salir</button>
+            </>
           ) : (
-            <Link to="/login" className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Admin</Link>
+            <Link to="/portal/login" className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Login</Link>
           )}
         </nav>
       </div>
@@ -79,8 +89,15 @@ export default function Header() {
               <Link to="/admin" onClick={() => setMenuOpen(false)} className="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700">Admin</Link>
               <button onClick={handleLogout} className="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700">Salir</button>
             </>
+          ) : miembro ? (
+            <>
+              <Link to="/portal" onClick={() => setMenuOpen(false)} className="bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700">
+                {miembro.nombre}
+              </Link>
+              <button onClick={handleLogout} className="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700">Salir</button>
+            </>
           ) : (
-            <Link to="/login" onClick={() => setMenuOpen(false)} className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700">Admin</Link>
+            <Link to="/portal/login" onClick={() => setMenuOpen(false)} className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700">Login</Link>
           )}
         </div>
       )}

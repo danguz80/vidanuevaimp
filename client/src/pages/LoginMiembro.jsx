@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import { GoogleLogin } from "@react-oauth/google";
 import { useMemberAuth } from "../context/MemberAuthContext";
+import { useAuth } from "../context/AuthContext";
 
 export default function LoginMiembro() {
   const [email, setEmail] = useState("");
@@ -11,7 +12,16 @@ export default function LoginMiembro() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useMemberAuth();
+  const { loginWithToken } = useAuth();
   const navigate = useNavigate();
+
+  const handleLoginSuccess = async (data) => {
+    login(data.token, data.miembro);
+    if (data.adminToken) {
+      await loginWithToken(data.adminToken);
+    }
+    navigate("/portal");
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,8 +38,7 @@ export default function LoginMiembro() {
         setError(data.error || "Error al iniciar sesión");
         return;
       }
-      login(data.token, data.miembro);
-      navigate("/portal");
+      await handleLoginSuccess(data);
     } catch {
       setError("Error de conexión, intenta nuevamente");
     } finally {
@@ -51,8 +60,7 @@ export default function LoginMiembro() {
         setError(data.error || "Error al iniciar sesión con Google");
         return;
       }
-      login(data.token, data.miembro);
-      navigate("/portal");
+      await handleLoginSuccess(data);
     } catch {
       setError("Error de conexión con Google, intenta nuevamente");
     } finally {

@@ -59,12 +59,17 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  const loginWithToken = async (token) => {
+    localStorage.setItem("token", token);
+    await verifyToken(token);
+  };
+
   const getToken = () => {
     return localStorage.getItem("token");
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, getToken }}>
+    <AuthContext.Provider value={{ user, login, logout, loginWithToken, loading, getToken }}>
       {children}
     </AuthContext.Provider>
   );

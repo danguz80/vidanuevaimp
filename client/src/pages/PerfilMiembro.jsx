@@ -5,6 +5,12 @@ import AdminNav from "../components/AdminNav";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
+const ROLES_DISPONIBLES = [
+  "admin","Pastor","Obispo","Diácono","Tesorero","Secretario","Músico",
+  "Líder de Alabanza","Encargado de Ministerio","Profesor","Ujieres",
+  "Voluntario","Miembro","Joven","Adolescente","Niño","Dorca","Coordinador/a","Predicador/a",
+];
+
 const PARENTESCO_LABEL = {
   cónyuge: "💑", padre: "👨", madre: "👩", hijo: "👦", hija: "👧",
   hermano: "🧑", hermana: "🧒", abuelo: "👴", abuela: "👵",
@@ -20,7 +26,7 @@ const ESTADO_COLORES = {
 export default function PerfilMiembro() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { getToken } = useAuth();
+  const { getToken, user } = useAuth();
   const fileInputRef = useRef(null);
 
   const [miembro, setMiembro] = useState(null);
@@ -28,6 +34,11 @@ export default function PerfilMiembro() {
   const [loading, setLoading] = useState(true);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [errorFoto, setErrorFoto] = useState("");
+
+  // Modal edición
+  const [modalEditar, setModalEditar] = useState(false);
+  const [form, setForm] = useState({});
+  const [guardando, setGuardando] = useState(false);
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}` });
 
@@ -98,6 +109,53 @@ export default function PerfilMiembro() {
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const abrirEditar = () => {
+    setForm({
+      nombre: miembro.nombre || "",
+      apellido: miembro.apellido || "",
+      fecha_nacimiento: miembro.fecha_nacimiento ? miembro.fecha_nacimiento.slice(0, 10) : "",
+      estado: miembro.estado || "activo",
+      celular: miembro.celular || "",
+      email: miembro.email || "",
+      direccion: miembro.direccion || "",
+      notas: miembro.notas || "",
+      acerca_de_mi: miembro.acerca_de_mi || "",
+      roles: miembro.roles || [],
+    });
+    setModalEditar(true);
+  };
+
+  const toggleRol = (rol) => {
+    setForm(prev => ({
+      ...prev,
+      roles: prev.roles.includes(rol)
+        ? prev.roles.filter(r => r !== rol)
+        : [...prev.roles, rol],
+    }));
+  };
+
+  const guardar = async () => {
+    if (!form.nombre.trim() || !form.apellido.trim()) {
+      alert("Nombre y apellido son obligatorios");
+      return;
+    }
+    setGuardando(true);
+    try {
+      const res = await fetch(`${API}/api/miembros/${id}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error("Error al guardar");
+      await cargar();
+      setModalEditar(false);
+    } catch {
+      alert("Error al guardar el miembro");
+    } finally {
+      setGuardando(false);
+    }
   };
 
   if (loading) {
@@ -197,6 +255,14 @@ export default function PerfilMiembro() {
               <p className="text-xs text-blue-100 mt-2">
                 Haz hover sobre la foto para cambiarla (máx. 1 MB · JPG/PNG/WebP)
               </p>
+              {user && (
+                <button
+                  onClick={abrirEditar}
+                  className="mt-3 inline-flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white text-sm font-semibold px-4 py-1.5 rounded-full transition"
+                >
+                  ✏️ Editar
+                </button>
+              )}
             </div>
           </div>
 
@@ -218,6 +284,12 @@ export default function PerfilMiembro() {
               <div className="sm:col-span-2 bg-yellow-50 border border-yellow-100 rounded-xl px-4 py-3">
                 <p className="text-xs font-semibold text-yellow-600 mb-1 uppercase tracking-wide">Notas</p>
                 <p className="text-sm text-gray-700 whitespace-pre-line">{miembro.notas}</p>
+              </div>
+            )}
+            {miembro.acerca_de_mi && miembro.acerca_de_mi.trim() && (
+              <div className="sm:col-span-2 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-indigo-500 mb-1 uppercase tracking-wide">Acerca de mí</p>
+                <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{miembro.acerca_de_mi}</p>
               </div>
             )}
           </div>
@@ -270,6 +342,118 @@ export default function PerfilMiembro() {
           )}
         </div>
       </div>
+
+      {/* Modal editar */}
+      {modalEditar && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-lg font-bold text-gray-800">Editar miembro</h2>
+              <button onClick={() => setModalEditar(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="overflow-y-auto px-6 py-4 space-y-4">
+              {/* Nombre / Apellido */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Nombre</label>
+                  <input type="text" value={form.nombre} onChange={e => setForm(p => ({ ...p, nombre: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Apellido</label>
+                  <input type="text" value={form.apellido} onChange={e => setForm(p => ({ ...p, apellido: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
+                </div>
+              </div>
+
+              {/* Fecha / Estado */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Fecha de nacimiento</label>
+                  <input type="date" value={form.fecha_nacimiento} onChange={e => setForm(p => ({ ...p, fecha_nacimiento: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Estado</label>
+                  <select value={form.estado} onChange={e => setForm(p => ({ ...p, estado: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm">
+                    <option value="activo">Activo</option>
+                    <option value="inactivo">Inactivo</option>
+                    <option value="visita">Visita</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Celular / Email */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Celular</label>
+                  <input type="tel" value={form.celular} onChange={e => setForm(p => ({ ...p, celular: e.target.value }))}
+                    placeholder="+56 9 XXXX XXXX"
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Email</label>
+                  <input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
+                </div>
+              </div>
+
+              {/* Dirección */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Dirección</label>
+                <input type="text" value={form.direccion} onChange={e => setForm(p => ({ ...p, direccion: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
+              </div>
+
+              {/* Roles */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Roles</label>
+                <div className="flex flex-wrap gap-2">
+                  {ROLES_DISPONIBLES.map(rol => (
+                    <button key={rol} type="button" onClick={() => toggleRol(rol)}
+                      className={`text-xs px-3 py-1.5 rounded-full border transition font-medium ${
+                        form.roles.includes(rol)
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+                      }`}>
+                      {rol}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Notas */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Notas</label>
+                <textarea rows={3} value={form.notas} onChange={e => setForm(p => ({ ...p, notas: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none"
+                  placeholder="Información adicional..." />
+              </div>
+
+              {/* Acerca de mí */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Acerca de mí</label>
+                <textarea rows={3} value={form.acerca_de_mi} onChange={e => setForm(p => ({ ...p, acerca_de_mi: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none"
+                  placeholder="De dónde es, cuántos años en la iglesia, a qué se dedica, saludo..." />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
+              <button onClick={() => setModalEditar(false)}
+                className="px-5 py-2 text-gray-600 hover:text-gray-800 font-medium text-sm">
+                Cancelar
+              </button>
+              <button onClick={guardar} disabled={guardando}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm disabled:opacity-50">
+                {guardando ? "Guardando..." : "Guardar cambios"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
