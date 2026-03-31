@@ -75,6 +75,7 @@ const FORM_INICIAL = {
   predicador_id: "",
   notas: "",
   color: "#3B82F6",
+  zoom_link: "",
 };
 
 function Avatar({ nombre, apellido, foto_url, label }) {
@@ -270,6 +271,7 @@ export default function AdminCalendario() {
       predicador_id: ev.predicador_id || "",
       notas: ev.notas || "",
       color: ev.color || "#3B82F6",
+      zoom_link: ev.zoom_link || "",
     });
     setModalAbierto(true);
   };
@@ -924,6 +926,18 @@ export default function AdminCalendario() {
                   onChange={e => setForm(p => ({ ...p, notas: e.target.value }))}
                   className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
                   placeholder="Notas internas, instrucciones generales del evento..."
+                />
+              </div>
+
+              {/* Link Zoom */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Link de Zoom <span className="font-normal text-gray-400">(solo visible para usuarios con sesión)</span></label>
+                <input
+                  type="url"
+                  value={form.zoom_link}
+                  onChange={e => setForm(p => ({ ...p, zoom_link: e.target.value }))}
+                  placeholder="https://us06web.zoom.us/j/..."
+                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
               </div>
 

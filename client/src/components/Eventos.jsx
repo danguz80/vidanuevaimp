@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { useAuth } from "../context/AuthContext";
+import { useMemberAuth } from "../context/MemberAuthContext";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
@@ -27,16 +29,27 @@ function normUrl(url) {
   return url.startsWith("/") ? url : `/${url}`;
 }
 
-// Renderiza texto convirtiendo URLs en hipervínculos clicables
-function renderTexto(texto) {
+// Renderiza texto convirtiendo URLs en hipervínculos clicables.
+// Las URLs de Zoom se ocultan si el usuario no está logueado.
+function renderTexto(texto, estaLogueado) {
   if (!texto) return null;
   const urlRegex = /(https?:\/\/[^\s]+)/g;
   const partes = texto.split(urlRegex);
-  return partes.map((parte, i) =>
-    urlRegex.test(parte)
-      ? <a key={i} href={parte} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800 break-all">{parte}</a>
-      : parte
-  );
+  return partes.map((parte, i) => {
+    if (!urlRegex.test(parte)) return parte;
+    // URL de Zoom: solo visible para logueados
+    if (parte.includes("zoom.us") || parte.includes("zoom.com")) {
+      if (!estaLogueado) return null;
+      return (
+        <a key={i} href={parte} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition mt-1">
+          📹 Conéctate a Zoom
+        </a>
+      );
+    }
+    // Cualquier otra URL
+    return <a key={i} href={parte} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800 break-all">{parte}</a>;
+  });
 }
 
 function Avatar({ nombre, apellido, foto_url, label }) {
@@ -147,20 +160,33 @@ function expandirProximos(eventos, mesesAdelante = 3) {
   return resultado.sort((a, b) => a._fecha - b._fecha);
 }
 
-export default function Eventos() {
+export default function Eventos({ maxItems }) {
+  const { getToken, user: adminUser } = useAuth();
+  const { miembro, getToken: getMiembroToken } = useMemberAuth();
+  const estaLogueado = !!(adminUser || miembro);
+
   const [eventos, setEventos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch(`${API}/api/eventos/publicos`)
+    const headers = {};
+    if (adminUser) headers["Authorization"] = `Bearer ${getToken()}`;
+    else if (miembro) headers["Authorization"] = `Bearer ${getMiembroToken()}`;
+
+    const url = estaLogueado
+      ? `${API}/api/eventos/autenticados`
+      : `${API}/api/eventos/publicos`;
+
+    fetch(url, { headers })
       .then(r => r.json())
       .then(data => setEventos(Array.isArray(data) ? data : []))
       .catch(() => setError("No se pudieron cargar los eventos."))
       .finally(() => setLoading(false));
-  }, []);
+  }, [adminUser, miembro]);
 
   const proximos = expandirProximos(eventos, 3);
+  const mostrar = maxItems ? proximos.slice(0, maxItems) : proximos;
 
   return (
     <section id="eventos" className="bg-white py-16 px-4">
@@ -186,9 +212,9 @@ export default function Eventos() {
         </div>
       )}
 
-      {!loading && !error && proximos.length > 0 && (
+      {!loading && !error && mostrar.length > 0 && (
         <div className="max-w-6xl mx-auto grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {proximos.map(ev => (
+          {mostrar.map(ev => (
             <div
               key={ev._key}
               className="bg-white rounded-2xl shadow-md overflow-hidden border border-gray-100 hover:shadow-lg transition"
@@ -243,7 +269,7 @@ export default function Eventos() {
                 </p>
 
                 {ev.descripcion && (
-                  <p className="text-gray-600 text-sm mb-3">{renderTexto(ev.descripcion)}</p>
+                  <p className="text-gray-600 text-sm mb-3">{renderTexto(ev.descripcion, estaLogueado)}</p>
                 )}
 
                 <div className="space-y-1 text-xs text-gray-500 mt-1">
@@ -266,6 +292,16 @@ export default function Eventos() {
                     <p className="text-xs font-semibold text-amber-700 mb-0.5">📝 Notas</p>
                     <p className="text-xs text-amber-900 whitespace-pre-wrap">{ev.notas}</p>
                   </div>
+                )}
+                {estaLogueado && ev.zoom_link && (
+                  <a
+                    href={ev.zoom_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-xl transition"
+                  >
+                    📹 Conéctate a Zoom
+                  </a>
                 )}
               </div>
             </div>

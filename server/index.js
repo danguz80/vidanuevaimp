@@ -1813,9 +1813,69 @@ app.delete("/api/familias/:id/miembros/:miembro_id", authenticateToken, async (r
 // PCO - EVENTOS
 // =============================================
 
-// GET /api/eventos/publicos — sin auth, para la página pública
+// GET /api/eventos/publicos — sin auth, para la página pública (zoom_link excluido)
 app.get("/api/eventos/publicos", async (req, res) => {
   try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT e.id, e.titulo, e.descripcion, e.imagen_url, e.fecha_inicio, e.fecha_fin,
+             e.lugar, e.tipo, e.recurrencia, e.dia_semana, e.encargado_id,
+             e.coordinador_id, e.predicador_id, e.color, e.notas,
+        enc.nombre AS encargado_nombre, enc.apellido AS encargado_apellido, enc.foto_url AS encargado_foto,
+        c.nombre AS coordinador_nombre, c.apellido AS coordinador_apellido, c.foto_url AS coordinador_foto,
+        p.nombre AS predicador_nombre,  p.apellido AS predicador_apellido,  p.foto_url AS predicador_foto,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'fecha',               oc.fecha,
+              'encargado_id',        oc.encargado_id,
+              'encargado_nombre',    encoc.nombre,
+              'encargado_apellido',  encoc.apellido,
+              'encargado_foto',      encoc.foto_url,
+              'coordinador_id',      oc.coordinador_id,
+              'coordinador_nombre',  cm.nombre,
+              'coordinador_apellido',cm.apellido,
+              'coordinador_foto',    cm.foto_url,
+              'predicador_id',       oc.predicador_id,
+              'predicador_nombre',   pm.nombre,
+              'predicador_apellido', pm.apellido,
+              'predicador_foto',     pm.foto_url,
+              'notas',               oc.notas
+            ) ORDER BY oc.fecha
+          ) FILTER (WHERE oc.id IS NOT NULL),
+          '[]'::json
+        ) AS ocurrencias
+      FROM eventos e
+      LEFT JOIN miembros enc ON enc.id = e.encargado_id
+      LEFT JOIN miembros c   ON c.id   = e.coordinador_id
+      LEFT JOIN miembros p   ON p.id   = e.predicador_id
+      LEFT JOIN evento_ocurrencias oc    ON oc.evento_id  = e.id
+      LEFT JOIN miembros encoc ON encoc.id = oc.encargado_id
+      LEFT JOIN miembros cm    ON cm.id    = oc.coordinador_id
+      LEFT JOIN miembros pm    ON pm.id    = oc.predicador_id
+      GROUP BY e.id, enc.nombre, enc.apellido, enc.foto_url,
+                       c.nombre, c.apellido, c.foto_url,
+                       p.nombre, p.apellido, p.foto_url
+      ORDER BY e.fecha_inicio ASC
+    `);
+    client.release();
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener eventos públicos:", error);
+    res.status(500).json({ error: "Error al obtener eventos" });
+  }
+});
+
+// GET /api/eventos/autenticados — igual al público pero incluye zoom_link (requiere sesión de miembro o admin)
+app.get("/api/eventos/autenticados", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "No autorizado" });
+    const token = authHeader.split(" ")[1];
+    let payload;
+    try { payload = jwt.verify(token, process.env.JWT_SECRET); } catch { return res.status(401).json({ error: "Token inválido" }); }
+    if (!payload) return res.status(401).json({ error: "Token inválido" });
+
     const client = await pool.connect();
     const result = await client.query(`
       SELECT e.*,
@@ -1859,7 +1919,7 @@ app.get("/api/eventos/publicos", async (req, res) => {
     client.release();
     res.json(result.rows);
   } catch (error) {
-    console.error("Error al obtener eventos públicos:", error);
+    console.error("Error al obtener eventos autenticados:", error);
     res.status(500).json({ error: "Error al obtener eventos" });
   }
 });
@@ -1939,16 +1999,16 @@ app.get("/api/eventos/:id", authenticateToken, async (req, res) => {
 
 // POST /api/eventos
 app.post("/api/eventos", authenticateToken, async (req, res) => {
-  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas } = req.body;
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas, zoom_link } = req.body;
   if (!titulo || !fecha_inicio) return res.status(400).json({ error: "Título y fecha de inicio son obligatorios" });
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      `INSERT INTO eventos (titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas, zoom_link)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
        tipo || "especial", recurrencia || "ninguna", dia_semana ?? null,
-       encargado_id || null, coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null]
+       encargado_id || null, coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null, zoom_link || null]
     );
     client.release();
     res.status(201).json(result.rows[0]);
@@ -1960,16 +2020,16 @@ app.post("/api/eventos", authenticateToken, async (req, res) => {
 
 // PUT /api/eventos/:id
 app.put("/api/eventos/:id", authenticateToken, async (req, res) => {
-  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas } = req.body;
+  const { titulo, descripcion, imagen_url, fecha_inicio, fecha_fin, lugar, tipo, recurrencia, dia_semana, encargado_id, coordinador_id, predicador_id, color, notas, zoom_link } = req.body;
   try {
     const client = await pool.connect();
     const result = await client.query(
       `UPDATE eventos SET titulo=$1, descripcion=$2, imagen_url=$3, fecha_inicio=$4, fecha_fin=$5,
-       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, encargado_id=$10, coordinador_id=$11, predicador_id=$12, color=$13, notas=$14
-       WHERE id=$15 RETURNING *`,
+       lugar=$6, tipo=$7, recurrencia=$8, dia_semana=$9, encargado_id=$10, coordinador_id=$11, predicador_id=$12, color=$13, notas=$14, zoom_link=$15
+       WHERE id=$16 RETURNING *`,
       [titulo, descripcion || null, imagen_url || null, fecha_inicio, fecha_fin || null, lugar || null,
        tipo || "especial", recurrencia || "ninguna", dia_semana ?? null,
-       encargado_id || null, coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null, req.params.id]
+       encargado_id || null, coordinador_id || null, predicador_id || null, color || "#3B82F6", notas || null, zoom_link || null, req.params.id]
     );
     client.release();
     if (result.rows.length === 0) return res.status(404).json({ error: "Evento no encontrado" });

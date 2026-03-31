@@ -12,7 +12,7 @@ export default function Home() {
     <>
       <HeroSection />
       <QuienesSomos />
-      <Eventos />
+      <Eventos maxItems={6} />
       <Horarios />
       <Sermones />
       <DonacionSection />
