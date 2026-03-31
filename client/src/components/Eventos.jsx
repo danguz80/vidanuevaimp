@@ -72,20 +72,25 @@ function mergeOc(ev, fecha) {
   const fs = fecha.toLocaleDateString("sv"); // "2026-03-19" usando hora local
   const oc = ev.ocurrencias.find(o => o.fecha && String(o.fecha).slice(0, 10) === fs);
   if (!oc) return ev;
+  // Para las fotos: si la ocurrencia asigna un id, se usa la foto de esa persona
+  // (aunque sea null porque no tiene foto). Solo se hereda la foto base si no se asignó nadie.
+  const tieneEncargadoOc   = oc.encargado_id   !== undefined && oc.encargado_id   !== null;
+  const tieneCoordOc       = oc.coordinador_id !== undefined && oc.coordinador_id !== null;
+  const tienePredOc        = oc.predicador_id  !== undefined && oc.predicador_id  !== null;
   return {
     ...ev,
     encargado_id:         oc.encargado_id        !== undefined ? oc.encargado_id        : ev.encargado_id,
     encargado_nombre:     oc.encargado_nombre    != null      ? oc.encargado_nombre    : ev.encargado_nombre,
     encargado_apellido:   oc.encargado_apellido  != null      ? oc.encargado_apellido  : ev.encargado_apellido,
-    encargado_foto:       oc.encargado_foto      != null      ? oc.encargado_foto      : ev.encargado_foto,
+    encargado_foto:       tieneEncargadoOc ? oc.encargado_foto   : ev.encargado_foto,
     coordinador_id:       oc.coordinador_id      !== undefined ? oc.coordinador_id      : ev.coordinador_id,
     coordinador_nombre:   oc.coordinador_nombre  != null      ? oc.coordinador_nombre  : ev.coordinador_nombre,
     coordinador_apellido: oc.coordinador_apellido != null     ? oc.coordinador_apellido : ev.coordinador_apellido,
-    coordinador_foto:     oc.coordinador_foto    != null      ? oc.coordinador_foto    : ev.coordinador_foto,
+    coordinador_foto:     tieneCoordOc     ? oc.coordinador_foto : ev.coordinador_foto,
     predicador_id:        oc.predicador_id       !== undefined ? oc.predicador_id       : ev.predicador_id,
     predicador_nombre:    oc.predicador_nombre   != null      ? oc.predicador_nombre   : ev.predicador_nombre,
     predicador_apellido:  oc.predicador_apellido != null      ? oc.predicador_apellido  : ev.predicador_apellido,
-    predicador_foto:      oc.predicador_foto     != null      ? oc.predicador_foto     : ev.predicador_foto,
+    predicador_foto:      tienePredOc      ? oc.predicador_foto  : ev.predicador_foto,
     notas:                oc.notas               != null      ? oc.notas                : ev.notas,
   };
 }
@@ -256,17 +261,29 @@ export default function Eventos({ maxItems }) {
                   </span>
                 </div>
 
-                <p className="text-sm text-gray-500 mb-3">
-                  {ev._fecha.toLocaleDateString("es-CL", {
-                    weekday: "long",
-                    year: "numeric",
-                    month: "long",
-                    day: "numeric",
-                  })}
-                  {ev.fecha_inicio && (
-                    <> · {parseLocalDate(ev.fecha_inicio).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}</>
-                  )}
-                </p>
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-gray-500 capitalize">
+                    {ev._fecha.toLocaleDateString("es-CL", {
+                      weekday: "long",
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })}
+                  </p>
+                  {ev.fecha_inicio && (() => {
+                    const hora = parseLocalDate(ev.fecha_inicio);
+                    const h = hora?.getHours();
+                    const m = hora?.getMinutes();
+                    if (hora && !(h === 0 && m === 0)) {
+                      return (
+                        <span className="inline-flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">
+                          🕐 {hora.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
 
                 {ev.descripcion && (
                   <p className="text-gray-600 text-sm mb-3">{renderTexto(ev.descripcion, estaLogueado)}</p>

@@ -53,20 +53,20 @@ export default function Header() {
           <Link to="/contacto" className="text-gray-700 hover:text-blue-600">Contacto</Link>
           <Link to="/donacion" className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Donar</Link>
           
-          {user ? (
-            <>
-              <Link to="/admin" className="bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700">Admin</Link>
-              <button onClick={handleLogout} className="bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700">Salir</button>
-            </>
-          ) : miembro ? (
+          {user && (
+            <Link to="/admin" className="bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700">Admin</Link>
+          )}
+          {miembro ? (
             <>
               <Link to="/portal" className="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">
                 {miembro.nombre}
               </Link>
               <button onClick={handleLogout} className="bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700">Salir</button>
             </>
+          ) : user ? (
+            <button onClick={handleLogout} className="bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700">Salir</button>
           ) : (
-            <Link to="/portal/login" className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Login</Link>
+            <Link to="/portal/login" className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Mi Portal</Link>
           )}
         </nav>
       </div>
@@ -84,20 +84,20 @@ export default function Header() {
           <Link to="/contacto" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Contacto</Link>
           <Link to="/donacion" onClick={() => setMenuOpen(false)} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Donar</Link>
           
-          {user ? (
-            <>
-              <Link to="/admin" onClick={() => setMenuOpen(false)} className="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700">Admin</Link>
-              <button onClick={handleLogout} className="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700">Salir</button>
-            </>
-          ) : miembro ? (
+          {user && (
+            <Link to="/admin" onClick={() => setMenuOpen(false)} className="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700">Admin</Link>
+          )}
+          {miembro ? (
             <>
               <Link to="/portal" onClick={() => setMenuOpen(false)} className="bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700">
                 {miembro.nombre}
               </Link>
               <button onClick={handleLogout} className="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700">Salir</button>
             </>
+          ) : user ? (
+            <button onClick={handleLogout} className="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700">Salir</button>
           ) : (
-            <Link to="/portal/login" onClick={() => setMenuOpen(false)} className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700">Login</Link>
+            <Link to="/portal/login" onClick={() => setMenuOpen(false)} className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700">Mi Portal</Link>
           )}
         </div>
       )}

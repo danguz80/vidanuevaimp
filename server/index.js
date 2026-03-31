@@ -28,7 +28,12 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const { Pool } = pkg;
+const { Pool, types } = pkg;
+
+// TIMESTAMP WITHOUT TIME ZONE (OID 1114) → retorna string ISO sin Z.
+// Evita que pg convierta a Date usando la tz local del servidor,
+// lo que causaría desfase al serializar como UTC en JSON.
+types.setTypeParser(1114, val => val ? val.replace(' ', 'T') : val);
 
 const app = express();
 app.use(
@@ -320,6 +325,140 @@ app.put("/api/miembros/me/acerca-de-mi", authenticateMiembro, async (req, res) =
   } catch (err) {
     console.error("Error acerca_de_mi:", err.message);
     res.status(500).json({ error: "Error al guardar" });
+  }
+});
+
+// GET /api/miembros/me/compromisos — lista plana de compromisos futuros del miembro
+app.get("/api/miembros/me/compromisos", authenticateMiembro, async (req, res) => {
+  const miembroId = req.miembro.id;
+  try {
+    // Eventos base donde es coordinador o predicador (no encargado)
+    const evRes = await pool.query(`
+      SELECT e.id, e.titulo, e.color, e.lugar, e.recurrencia, e.dia_semana,
+             e.fecha_inicio::text AS fecha_inicio, e.fecha_fin::text AS fecha_fin, e.tipo,
+             CASE
+               WHEN e.coordinador_id = $1 THEN 'Coordinador'
+               WHEN e.predicador_id  = $1 THEN 'Predicador'
+             END AS rol_base
+      FROM eventos e
+      WHERE e.coordinador_id = $1 OR e.predicador_id = $1
+      ORDER BY e.fecha_inicio ASC
+    `, [miembroId]);
+
+    // Ocurrencias específicas futuras donde es coordinador o predicador (no encargado)
+    const ocRes = await pool.query(`
+      SELECT oc.evento_id, oc.fecha::text AS fecha,
+             e.titulo, e.color, e.lugar,
+             CASE
+               WHEN oc.coordinador_id = $1 THEN 'Coordinador'
+               WHEN oc.predicador_id  = $1 THEN 'Predicador'
+             END AS rol
+      FROM evento_ocurrencias oc
+      JOIN eventos e ON e.id = oc.evento_id
+      WHERE (oc.coordinador_id = $1 OR oc.predicador_id = $1)
+        AND oc.fecha >= CURRENT_DATE
+      ORDER BY oc.fecha ASC
+    `, [miembroId]);
+
+    // Portería del mes
+    const portRes = await pool.query(`
+      SELECT anio, mes FROM portero_mes WHERE miembro_id = $1 ORDER BY anio ASC, mes ASC
+    `, [miembroId]);
+
+    // Fechas donde el miembro fue explícitamente removido via null-override (reset de mes)
+    // Son filas en evento_ocurrencias donde él era base pero le pusieron coord/pred = NULL
+    const nullOverrideRes = await pool.query(`
+      SELECT oc.evento_id, oc.fecha::text AS fecha
+      FROM evento_ocurrencias oc
+      JOIN eventos e ON e.id = oc.evento_id
+      WHERE (e.coordinador_id = $1 OR e.predicador_id = $1)
+        AND oc.coordinador_id IS NULL
+        AND oc.predicador_id  IS NULL
+        AND oc.fecha >= CURRENT_DATE
+    `, [miembroId]);
+
+    const nullOverrideSet = new Set(nullOverrideRes.rows.map(r => `${r.evento_id}_${r.fecha}`));
+
+    // ── Calcular lista plana de próximos compromisos (próximos 90 días) ──────
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    const limite = new Date(hoy);
+    limite.setDate(limite.getDate() + 90);
+
+    // Usar Map keyed por "eventoId_fecha" para deduplicar (ocurrencia override tiene prioridad)
+    const proximosMap = new Map();
+
+    // Primero ocurrencias específicas (ya filtradas >= hoy en la query)
+    for (const oc of ocRes.rows) {
+      const key = `${oc.evento_id}_${oc.fecha}`;
+      proximosMap.set(key, {
+        evento_id: oc.evento_id,
+        titulo: oc.titulo,
+        fecha: oc.fecha,
+        rol: oc.rol,
+        color: oc.color || '#3B82F6',
+        lugar: oc.lugar || '',
+      });
+    }
+
+    // Luego expandir eventos base recurrentes (sin sobreescribir ocurrencias ya puestas,
+    // y saltando fechas donde el miembro fue removido via null-override)
+    for (const ev of evRes.rows) {
+      const addFecha = (fecha) => {
+        const key = `${ev.id}_${fecha}`;
+        if (proximosMap.has(key)) return;       // ya tiene override con asignación
+        if (nullOverrideSet.has(key)) return;   // fue removido explícitamente (reset)
+        proximosMap.set(key, {
+          evento_id: ev.id,
+          titulo: ev.titulo,
+          fecha,
+          rol: ev.rol_base,
+          color: ev.color || '#3B82F6',
+          lugar: ev.lugar || '',
+        });
+      };
+
+      if (!ev.recurrencia || ev.recurrencia === 'ninguna') {
+        if (ev.fecha_inicio) {
+          const f = new Date(ev.fecha_inicio + 'T00:00:00');
+          if (f >= hoy && f <= limite) addFecha(ev.fecha_inicio.slice(0, 10));
+        }
+      } else if (ev.recurrencia === 'semanal') {
+        const ds = ev.dia_semana ?? (ev.fecha_inicio ? new Date(ev.fecha_inicio + 'T00:00:00').getDay() : 0);
+        let d = new Date(hoy);
+        while (d.getDay() !== ds) d.setDate(d.getDate() + 1);
+        while (d <= limite) {
+          addFecha(d.toISOString().slice(0, 10));
+          d.setDate(d.getDate() + 7);
+        }
+      } else if (ev.recurrencia === 'quincenal') {
+        const ds = ev.dia_semana ?? (ev.fecha_inicio ? new Date(ev.fecha_inicio + 'T00:00:00').getDay() : 0);
+        let d = new Date(hoy);
+        while (d.getDay() !== ds) d.setDate(d.getDate() + 1);
+        let cnt = 0;
+        while (d <= limite) {
+          if (cnt % 2 === 0) addFecha(d.toISOString().slice(0, 10));
+          d.setDate(d.getDate() + 7);
+          cnt++;
+        }
+      } else if (ev.recurrencia === 'mensual' && ev.fecha_inicio) {
+        const dayOfMonth = new Date(ev.fecha_inicio + 'T00:00:00').getDate();
+        let d = new Date(hoy.getFullYear(), hoy.getMonth(), dayOfMonth);
+        if (d < hoy) d = new Date(hoy.getFullYear(), hoy.getMonth() + 1, dayOfMonth);
+        while (d <= limite) {
+          addFecha(d.toISOString().slice(0, 10));
+          d = new Date(d.getFullYear(), d.getMonth() + 1, dayOfMonth);
+        }
+      }
+    }
+
+    const proximos = Array.from(proximosMap.values())
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+    res.json({ proximos, portero: portRes.rows });
+  } catch (err) {
+    console.error("Error GET compromisos:", err.message);
+    res.status(500).json({ error: "Error al obtener compromisos" });
   }
 });
 
@@ -2050,6 +2189,147 @@ app.delete("/api/eventos/:id", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error al eliminar evento:", error);
     res.status(500).json({ error: "Error al eliminar evento" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Portero del Mes
+// ---------------------------------------------------------------------------
+
+// GET /api/portero-mes/:anio/:mes
+app.get("/api/portero-mes/:anio/:mes", authenticateToken, async (req, res) => {
+  const { anio, mes } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT pm.id, pm.anio, pm.mes, pm.miembro_id,
+              m.nombre, m.apellido, m.foto_url
+       FROM portero_mes pm
+       LEFT JOIN miembros m ON m.id = pm.miembro_id
+       WHERE pm.anio = $1 AND pm.mes = $2`,
+      [parseInt(anio), parseInt(mes)]
+    );
+    res.json(result.rows[0] || null);
+  } catch (err) {
+    console.error("Error GET portero-mes:", err.message);
+    res.status(500).json({ error: "Error al obtener portero del mes" });
+  }
+});
+
+// PUT /api/portero-mes/:anio/:mes — upsert
+app.put("/api/portero-mes/:anio/:mes", authenticateToken, async (req, res) => {
+  const { anio, mes } = req.params;
+  const { miembro_id } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO portero_mes (anio, mes, miembro_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (anio, mes) DO UPDATE SET miembro_id = EXCLUDED.miembro_id
+       RETURNING id, anio, mes, miembro_id`,
+      [parseInt(anio), parseInt(mes), miembro_id || null]
+    );
+    // Devolver con datos del miembro
+    const row = result.rows[0];
+    if (row.miembro_id) {
+      const m = await pool.query("SELECT nombre, apellido, foto_url FROM miembros WHERE id=$1", [row.miembro_id]);
+      if (m.rows.length) Object.assign(row, m.rows[0]);
+    }
+    res.json(row);
+  } catch (err) {
+    console.error("Error PUT portero-mes:", err.message);
+    res.status(500).json({ error: "Error al guardar portero del mes" });
+  }
+});
+
+// DELETE /api/calendario/:anio/:mes/asignaciones — borra coordinadores, predicadores y portero del mes
+// Mantiene encargados y notas de ocurrencias.
+app.delete("/api/calendario/:anio/:mes/asignaciones", authenticateToken, async (req, res) => {
+  const anio = parseInt(req.params.anio);
+  const mes  = parseInt(req.params.mes); // 1-based
+  if (!anio || !mes || mes < 1 || mes > 12) return res.status(400).json({ error: "Año/mes inválidos" });
+
+  const toYMD = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+  function getFechasEnMes(ev, anio, mes0) {
+    const primerDia = new Date(anio, mes0, 1);
+    const ultimoDia = new Date(anio, mes0 + 1, 0);
+    const fechas = [];
+    const inicio = ev.fecha_inicio ? new Date(String(ev.fecha_inicio).slice(0,10) + 'T00:00:00') : null;
+    if (ev.tipo === 'recurrente' && ev.recurrencia && ev.recurrencia !== 'ninguna') {
+      switch (ev.recurrencia) {
+        case 'semanal': {
+          const ds = ev.dia_semana ?? (inicio ? inicio.getDay() : 0);
+          let d = new Date(anio, mes0, 1);
+          while (d.getDay() !== ds) d.setDate(d.getDate() + 1);
+          while (d <= ultimoDia) { fechas.push(toYMD(d)); d.setDate(d.getDate() + 7); }
+          break;
+        }
+        case 'quincenal': {
+          const ds = ev.dia_semana ?? (inicio ? inicio.getDay() : 0);
+          let d = new Date(anio, mes0, 1);
+          while (d.getDay() !== ds) d.setDate(d.getDate() + 1);
+          let cnt = 0;
+          while (d <= ultimoDia) { if (cnt % 2 === 0) fechas.push(toYMD(d)); d.setDate(d.getDate() + 7); cnt++; }
+          break;
+        }
+        case 'mensual': {
+          if (inicio) { const f = new Date(anio, mes0, inicio.getDate()); if (f >= primerDia && f <= ultimoDia) fechas.push(toYMD(f)); }
+          break;
+        }
+        case 'anual': {
+          if (inicio && inicio.getMonth() === mes0) fechas.push(toYMD(new Date(anio, mes0, inicio.getDate())));
+          break;
+        }
+      }
+    } else if (inicio && inicio.getFullYear() === anio && inicio.getMonth() === mes0) {
+      fechas.push(toYMD(inicio));
+    }
+    return fechas;
+  }
+
+  try {
+    const mes0 = mes - 1;
+    const fechaInicio = toYMD(new Date(anio, mes0, 1));
+    const fechaFin    = toYMD(new Date(anio, mes0 + 1, 0));
+
+    // 1. Borrar portero del mes
+    await pool.query(`DELETE FROM portero_mes WHERE anio = $1 AND mes = $2`, [anio, mes]);
+
+    // 2. Nullear coord/pred en ocurrencias EXISTENTES del mes (conserva encargado y notas)
+    await pool.query(
+      `UPDATE evento_ocurrencias SET coordinador_id = NULL, predicador_id = NULL
+       WHERE fecha BETWEEN $1 AND $2`,
+      [fechaInicio, fechaFin]
+    );
+
+    // 3. Para eventos que tienen coordinador o predicador en el BASE, crear null-overrides
+    //    por cada fecha del mes para que mergeOc anule el valor heredado del evento base.
+    //    Se preserva el encargado_id del evento base en la inserción.
+    //    IMPORTANTE: NO se borran estas filas - son necesarias para anular el base.
+    const evRes = await pool.query(
+      `SELECT id, tipo, recurrencia, dia_semana, fecha_inicio, encargado_id
+       FROM eventos
+       WHERE coordinador_id IS NOT NULL OR predicador_id IS NOT NULL`
+    );
+
+    for (const ev of evRes.rows) {
+      const fechas = getFechasEnMes(ev, anio, mes0);
+      for (const fecha of fechas) {
+        await pool.query(
+          `INSERT INTO evento_ocurrencias (evento_id, fecha, encargado_id, coordinador_id, predicador_id, notas)
+           VALUES ($1, $2::date, $3, NULL, NULL, NULL)
+           ON CONFLICT (evento_id, fecha) DO UPDATE
+             SET coordinador_id = NULL,
+                 predicador_id  = NULL`,
+          [ev.id, fecha, ev.encargado_id ?? null]
+        );
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error DELETE asignaciones mes:", err.message);
+    res.status(500).json({ error: "Error al resetear asignaciones" });
   }
 });
 

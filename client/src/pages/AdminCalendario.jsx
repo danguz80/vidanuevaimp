@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import AdminNav from "../components/AdminNav";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
@@ -108,20 +110,25 @@ function mergeOc(ev, fecha) {
   const fs = fecha.toLocaleDateString("sv"); // "2026-03-19" usando hora local
   const oc = ev.ocurrencias.find(o => o.fecha && String(o.fecha).slice(0, 10) === fs);
   if (!oc) return ev;
+  // Para las fotos: si la ocurrencia asigna un id, se usa la foto de esa persona
+  // (aunque sea null porque no tiene foto). Solo se hereda la foto base si no se asignó nadie.
+  const tieneEncargadoOc = oc.encargado_id   !== undefined && oc.encargado_id   !== null;
+  const tieneCoordOc     = oc.coordinador_id !== undefined && oc.coordinador_id !== null;
+  const tienePredOc      = oc.predicador_id  !== undefined && oc.predicador_id  !== null;
   return {
     ...ev,
     encargado_id:         oc.encargado_id        !== undefined ? oc.encargado_id        : ev.encargado_id,
     encargado_nombre:     oc.encargado_nombre    != null      ? oc.encargado_nombre    : ev.encargado_nombre,
     encargado_apellido:   oc.encargado_apellido  != null      ? oc.encargado_apellido  : ev.encargado_apellido,
-    encargado_foto:       oc.encargado_foto      != null      ? oc.encargado_foto      : ev.encargado_foto,
+    encargado_foto:       tieneEncargadoOc ? oc.encargado_foto   : ev.encargado_foto,
     coordinador_id:       oc.coordinador_id      !== undefined ? oc.coordinador_id      : ev.coordinador_id,
-    coordinador_nombre:   oc.coordinador_nombre  != null      ? oc.coordinador_nombre  : ev.coordinador_nombre,
-    coordinador_apellido: oc.coordinador_apellido != null     ? oc.coordinador_apellido : ev.coordinador_apellido,
-    coordinador_foto:     oc.coordinador_foto    != null      ? oc.coordinador_foto    : ev.coordinador_foto,
+    coordinador_nombre:   oc.coordinador_id      !== undefined ? (tieneCoordOc ? oc.coordinador_nombre   : null) : ev.coordinador_nombre,
+    coordinador_apellido: oc.coordinador_id      !== undefined ? (tieneCoordOc ? oc.coordinador_apellido : null) : ev.coordinador_apellido,
+    coordinador_foto:     oc.coordinador_id      !== undefined ? (tieneCoordOc ? oc.coordinador_foto     : null) : ev.coordinador_foto,
     predicador_id:        oc.predicador_id       !== undefined ? oc.predicador_id       : ev.predicador_id,
-    predicador_nombre:    oc.predicador_nombre   != null      ? oc.predicador_nombre   : ev.predicador_nombre,
-    predicador_apellido:  oc.predicador_apellido != null      ? oc.predicador_apellido  : ev.predicador_apellido,
-    predicador_foto:      oc.predicador_foto     != null      ? oc.predicador_foto     : ev.predicador_foto,
+    predicador_nombre:    oc.predicador_id       !== undefined ? (tienePredOc  ? oc.predicador_nombre    : null) : ev.predicador_nombre,
+    predicador_apellido:  oc.predicador_id       !== undefined ? (tienePredOc  ? oc.predicador_apellido  : null) : ev.predicador_apellido,
+    predicador_foto:      oc.predicador_id       !== undefined ? (tienePredOc  ? oc.predicador_foto      : null) : ev.predicador_foto,
     notas:                oc.notas               != null      ? oc.notas                : ev.notas,
   };
 }
@@ -198,6 +205,7 @@ const normUrl = (url) => {
 
 export default function AdminCalendario() {
   const { getToken } = useAuth();
+  const calendarRef = useRef(null);
   const [eventos, setEventos] = useState([]);
   const [miembros, setMiembros] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -212,6 +220,14 @@ export default function AdminCalendario() {
   const [vistaEvento, setVistaEvento] = useState(null);
   const [ocForm, setOcForm] = useState({ encargado_id: "", coordinador_id: "", predicador_id: "", notas: "" });
   const [guardandoOc, setGuardandoOc] = useState(false);
+
+  // Portero del mes
+  const [portero, setPortero] = useState(null); // { miembro_id, nombre, apellido, foto_url }
+  const [guardandoPortero, setGuardandoPortero] = useState(false);
+  const [porteroSeleccionado, setPorteroSeleccionado] = useState("");
+
+  // PDF
+  const [generandoPDF, setGenerandoPDF] = useState(false);
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}` });
 
@@ -232,7 +248,38 @@ export default function AdminCalendario() {
     }
   };
 
+  // Cargar portero cada vez que cambia el mes/año
+  const cargarPortero = async (anio, mes) => {
+    try {
+      const res = await fetch(`${API}/api/portero-mes/${anio}/${mes + 1}`, { headers: headers() });
+      const data = await res.json();
+      setPortero(data);
+      setPorteroSeleccionado(data?.miembro_id ? String(data.miembro_id) : "");
+    } catch {
+      setPortero(null);
+      setPorteroSeleccionado("");
+    }
+  };
+
   useEffect(() => { cargar(); }, []);
+  useEffect(() => { cargarPortero(anioActual, mesActual); }, [anioActual, mesActual]);
+
+  const guardarPortero = async (miembro_id) => {
+    setGuardandoPortero(true);
+    try {
+      const res = await fetch(`${API}/api/portero-mes/${anioActual}/${mesActual + 1}`, {
+        method: "PUT",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({ miembro_id: miembro_id || null }),
+      });
+      const data = await res.json();
+      setPortero(data);
+    } catch {
+      alert("Error al guardar portero del mes");
+    } finally {
+      setGuardandoPortero(false);
+    }
+  };
 
   const mesAnterior = () => {
     if (mesActual === 0) { setMesActual(11); setAnioActual(a => a - 1); }
@@ -241,6 +288,405 @@ export default function AdminCalendario() {
   const mesSiguiente = () => {
     if (mesActual === 11) { setMesActual(0); setAnioActual(a => a + 1); }
     else setMesActual(m => m + 1);
+  };
+
+  // --- Generación de PDF ---
+  const generarPDF = async () => {
+    setGenerandoPDF(true);
+    try {
+      // ── 12 colores de cabecera, uno por mes ──────────────────────────────────
+      const COLORES_MES = [
+        [13,  71, 161],  // Enero     — azul profundo
+        [106,  27, 154], // Febrero   — violeta
+        [0,   105,  62], // Marzo     — verde selva
+        [183,  28,  28], // Abril     — rojo (Semana Santa)
+        [230,  81,   0], // Mayo      — naranja
+        [0,   131, 143], // Junio     — cian oscuro
+        [74,   20, 140], // Julio     — morado
+        [0,    77,  64], // Agosto    — verde azulado
+        [27,   94,  32], // Septiembre— verde patria
+        [121,  85,  72], // Octubre   — marrón cálido
+        [21,  101, 192], // Noviembre — azul marino
+        [183,  28,  28], // Diciembre — rojo Navidad
+      ];
+      const [cR, cG, cB] = COLORES_MES[mesActual];
+
+      // ── Feriados de Chile (cálculo dinámico vía algoritmo de Gauss) ──────────
+      const calcularFeriados = (anio) => {
+        const a = anio % 19, b = Math.floor(anio / 100), c = anio % 100;
+        const d = Math.floor(b / 4), e = b % 4;
+        const f = Math.floor((b + 8) / 25), gg = Math.floor((b - f + 1) / 3);
+        const hh = (19 * a + b - d - gg + 15) % 30;
+        const ii = Math.floor(c / 4), k = c % 4;
+        const l  = (32 + 2 * e + 2 * ii - hh - k) % 7;
+        const mm = Math.floor((a + 11 * hh + 22 * l) / 451);
+        const mesP = Math.floor((hh + l - 7 * mm + 114) / 31);
+        const diaP = ((hh + l - 7 * mm + 114) % 31) + 1;
+        const pascua = new Date(anio, mesP - 1, diaP);
+        const add = (base, n) => { const dt = new Date(base); dt.setDate(dt.getDate() + n); return dt; };
+        const k2d = (m, dy) => `${m}-${dy}`;
+        const kD  = (dt)    => k2d(dt.getMonth() + 1, dt.getDate());
+        return {
+          [k2d(1,  1)]:  "Anio Nuevo",
+          [kD(add(pascua, -2))]: "Viernes Santo",
+          [kD(add(pascua, -1))]: "Sabado Santo",
+          [kD(pascua)]:          "Domingo Resurreccion",
+          [k2d(5,  1)]:  "Dia del Trabajo",
+          [k2d(5, 21)]:  "Glorias Navales",
+          [k2d(6, 29)]:  "San Pedro y Pablo",
+          [k2d(7, 16)]:  "Virgen del Carmen",
+          [k2d(8, 15)]:  "Asuncion",
+          [k2d(9, 18)]:  "Independencia",
+          [k2d(9, 19)]:  "Glo. del Ejercito",
+          [k2d(10, 12)]: "Enc. Dos Mundos",
+          [k2d(10, 31)]: "Igl. Evangelicas",
+          [k2d(11,  1)]: "Todos los Santos",
+          [k2d(12,  8)]: "Inmaculada",
+          [k2d(12, 25)]: "Navidad",
+        };
+      };
+      const feriados = calcularFeriados(anioActual);
+
+      // ── Página 900×720mm landscape ───────────────────────────────────────────
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: [900, 720] });
+      const W = 900, H = 720;
+      const margen    = 12;
+      const anchoUtil = W - margen * 2;
+
+      // ── Expandir y agrupar eventos por día ───────────────────────────────────
+      const eventosExpandidosPDF = expandirEventos(eventos, anioActual, mesActual);
+      const eventosPorDiaPDF = {};
+      for (const ev of eventosExpandidosPDF) {
+        const dy = ev._fecha.getDate();
+        if (!eventosPorDiaPDF[dy]) eventosPorDiaPDF[dy] = [];
+        eventosPorDiaPDF[dy].push(ev);
+      }
+      for (const dy in eventosPorDiaPDF) {
+        eventosPorDiaPDF[dy].sort((a, b) => {
+          const tA = a.fecha_inicio ? a.fecha_inicio.slice(11, 16) : "00:00";
+          const tB = b.fecha_inicio ? b.fecha_inicio.slice(11, 16) : "00:00";
+          return tA.localeCompare(tB);
+        });
+      }
+
+      // ── Anchos de columna variables ───────────────────────────────────────────
+      // Lun(0) Mie(2) Sab(5) se angostan si NO tienen ningún evento este mes
+      const totalDias = diasEnMes(anioActual, mesActual);
+      const pDia      = primerDiaMes(anioActual, mesActual);
+      const COLS_EST  = new Set([0, 2, 5]);
+      const colConEv  = Array(7).fill(false);
+      for (let dia = 1; dia <= totalDias; dia++) {
+        if (eventosPorDiaPDF[dia]?.length > 0)
+          colConEv[(pDia + dia - 1) % 7] = true;
+      }
+      // columna estrecha = es "normalmente vacía" y no tiene eventos este mes
+      const colEst    = Array.from({ length: 7 }, (_, i) => COLS_EST.has(i) && !colConEv[i]);
+      const normalW   = anchoUtil / 7;
+      const estrechoW = normalW * 0.45;
+      const numEst    = colEst.filter(Boolean).length;
+      const numNorm   = 7 - numEst;
+      const ahorrado  = numEst * (normalW - estrechoW);
+      const anchoNorm = numNorm > 0 ? normalW + ahorrado / numNorm : normalW;
+      const colWidths = colEst.map(e => e ? estrechoW : anchoNorm);
+      const colX      = colWidths.reduce((acc, w, i) => {
+        acc.push(i === 0 ? margen : acc[i - 1] + colWidths[i - 1]);
+        return acc;
+      }, []);
+
+      // ── Mapa id → prefijo de título (P. / O.) ─────────────────────────────────
+      const tituloPor = {};
+      for (const m of miembros) {
+        const rolesLow = (m.roles || []).map(r => r.toLowerCase());
+        if (rolesLow.includes('pastor'))      tituloPor[m.id] = 'P.';
+        else if (rolesLow.includes('obispo')) tituloPor[m.id] = 'O.';
+      }
+
+      // ── Pre-cargar todas las fotos ────────────────────────────────────────────
+      const fotosCache = {};
+      const fotoUrls   = new Set();
+      if (portero?.foto_url) fotoUrls.add(portero.foto_url);
+      for (const evs of Object.values(eventosPorDiaPDF)) {
+        for (const ev of evs) {
+          if (ev.encargado_foto)   fotoUrls.add(ev.encargado_foto);
+          if (ev.coordinador_foto) fotoUrls.add(ev.coordinador_foto);
+          if (ev.predicador_foto)  fotoUrls.add(ev.predicador_foto);
+        }
+      }
+      await Promise.all([...fotoUrls].map(async (url) => {
+        const data = await cargarImagenBase64(url);
+        if (data) fotosCache[url] = data;
+      }));
+
+      // ── Dimensiones ───────────────────────────────────────────────────────────
+      const altoCabecera   = 44;
+      const altoDiasLabel  = 17;
+      const altoFooter     = 14;
+      const topGrilla      = altoCabecera + altoDiasLabel;
+      const altoDisponible = H - topGrilla - altoFooter - margen;
+      const numFilas       = Math.ceil((pDia + totalDias) / 7);
+      const altoCelda      = altoDisponible / numFilas;
+
+      // ── CABECERA (color del mes) ───────────────────────────────────────────────
+      doc.setFillColor(cR, cG, cB);
+      doc.rect(0, 0, W, altoCabecera, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(36);
+      doc.setFont("helvetica", "bold");
+      doc.text(`CALENDARIO ${MESES[mesActual].toUpperCase()} ${anioActual}`, W / 2, 30, { align: "center" });
+
+      if (portero?.nombre) {
+        const fotoPortero = portero.foto_url ? fotosCache[portero.foto_url] : null;
+        const fotoW = 36;
+        if (fotoPortero) doc.addImage(fotoPortero, "JPEG", W - margen - fotoW, 4, fotoW, fotoW);
+        const xTxt = W - margen - (fotoPortero ? fotoW + 4 : 0);
+        doc.setFontSize(12);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(200, 225, 255);
+        doc.text("Portero del Mes:", xTxt, 16, { align: "right" });
+        doc.setFontSize(19);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(255, 255, 255);
+        doc.text(`${portero.nombre} ${portero.apellido}`, xTxt, 32, { align: "right" });
+      }
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(200, 225, 255);
+      doc.text(`Generado: ${new Date().toLocaleDateString("es-CL")}`, margen, 40);
+
+      // ── ENCABEZADO DÍAS ────────────────────────────────────────────────────────
+      const DIAS_PDF   = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"];
+      const DIAS_CORTO = ["LUN",   "MAR",    "MIE",       "JUE",    "VIE",     "SAB",    "DOM"];
+      DIAS_PDF.forEach((d, i) => {
+        const esDom = i === 6;
+        const cw    = colWidths[i];
+        doc.setFillColor(esDom ? 241 : 229, esDom ? 235 : 237, esDom ? 251 : 255);
+        doc.rect(colX[i], altoCabecera, cw, altoDiasLabel, "F");
+        doc.setDrawColor(200, 210, 225);
+        doc.setLineWidth(0.3);
+        doc.rect(colX[i], altoCabecera, cw, altoDiasLabel);
+        doc.setTextColor(50, 70, 120);
+        doc.setFontSize(colEst[i] ? 11 : 14);
+        doc.setFont("helvetica", "bold");
+        doc.text(
+          colEst[i] ? DIAS_CORTO[i] : d.toUpperCase(),
+          colX[i] + cw / 2,
+          altoCabecera + 12,
+          { align: "center" }
+        );
+      });
+
+      // ── GRILLA — celdas vacías pre-mes ─────────────────────────────────────────
+      doc.setDrawColor(200, 210, 225);
+      doc.setLineWidth(0.3);
+      for (let c = 0; c < pDia; c++) {
+        doc.setFillColor(246, 247, 250);
+        doc.rect(colX[c], topGrilla, colWidths[c], altoCelda, "FD");
+      }
+
+      // ── Constantes de layout (jsPDF, helvetica sin emojis) ────────────────────
+      const PAD    = 3;       // padding horizontal
+      const NR     = 6;       // radio círculo número de día
+      const fotoSz = 10;      // foto de persona (mm)
+      const H_BAR  = 12;      // barra título evento
+      const H_LUG  = 8;       // fila lugar
+      const H_PERS = 10;      // fila persona — foto 10mm + texto 16pt
+      const H_NLIN = 7;       // línea de nota
+      const GAP    = 4;       // separación entre eventos
+      const OY_INI = NR * 2 + 10;  // offset inicial desde top de celda (~22mm, deja espacio al número del día)
+
+      let col = pDia, fila = 0;
+
+      for (let dia = 1; dia <= totalDias; dia++) {
+        const x      = colX[col];
+        const cw     = colWidths[col];
+        const y      = topGrilla + fila * altoCelda;
+        const esHoy    = dia === hoy.getDate() && mesActual === hoy.getMonth() && anioActual === hoy.getFullYear();
+        const esDomCol = col === 6;
+
+        if (esHoy)         doc.setFillColor(219, 234, 254);
+        else if (esDomCol) doc.setFillColor(253, 250, 255);
+        else               doc.setFillColor(255, 255, 255);
+        doc.rect(x, y, cw, altoCelda, "FD");
+
+        // Número del día
+        if (esHoy) {
+          doc.setFillColor(cR, cG, cB);
+          doc.circle(x + cw - NR - 4, y + NR + 3, NR, "F");
+          doc.setTextColor(255, 255, 255);
+        } else {
+          doc.setTextColor(esDomCol ? 150 : 80, esDomCol ? 50 : 80, esDomCol ? 60 : 110);
+        }
+        doc.setFontSize(18);
+        doc.setFont("helvetica", "bold");
+        doc.text(String(dia), x + cw - NR - 4, y + NR + 7.5, { align: "center" });
+
+        // Feriado chileno (texto rojo pequeño, sin tildes ni caracteres especiales)
+        const keyF = `${mesActual + 1}-${dia}`;
+        if (feriados[keyF]) {
+          doc.setFontSize(8);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(180, 20, 20);
+          const maxFW = cw - PAD * 2 - NR * 2 - 8;
+          doc.text(feriados[keyF].toUpperCase(), x + PAD + 1, y + 9, { maxWidth: maxFW > 5 ? maxFW : cw * 0.6 });
+        }
+
+        const evs = eventosPorDiaPDF[dia] || [];
+        let oy = y + OY_INI;
+
+        for (const ev of evs) {
+          // Hora
+          const horaDate = ev.fecha_inicio ? parseLocalDate(ev.fecha_inicio) : null;
+          const hora = (horaDate && !(horaDate.getHours() === 0 && horaDate.getMinutes() === 0))
+            ? horaDate.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })
+            : null;
+
+          // Lugar / Zoom
+          const esZoom =
+            (ev.zoom_link && ev.zoom_link.trim()) ||
+            (ev.descripcion && (ev.descripcion.includes("zoom.us") || ev.descripcion.includes("zoom.com"))) ||
+            (ev.lugar && ev.lugar.toLowerCase().includes("zoom"));
+          const lugarTexto = esZoom ? "Zoom" : (ev.lugar || null);
+
+          // Notas
+          let notaLines = [], altoNotas = 0;
+          if (ev.notas) {
+            doc.setFontSize(12);
+            notaLines = doc.splitTextToSize(ev.notas, cw - PAD * 2 - 4);
+            altoNotas = 4 + Math.min(notaLines.length, 2) * H_NLIN;
+          }
+
+          // Altura total del bloque
+          const altoBloque =
+            H_BAR + 1 +
+            (lugarTexto            ? H_LUG  : 0) +
+            (ev.encargado_nombre   ? H_PERS : 0) +
+            (ev.coordinador_nombre ? H_PERS : 0) +
+            (ev.predicador_nombre  ? H_PERS : 0) +
+            altoNotas + GAP;
+
+          if (oy + altoBloque > y + altoCelda - 1) break;
+
+          // Barra coloreada: título + hora
+          const [r, g, b] = hexToRgb(ev.color || "#3B82F6");
+          doc.setFillColor(r, g, b);
+          doc.roundedRect(x + PAD, oy, cw - PAD * 2, H_BAR, 2, 2, "F");
+          doc.setTextColor(255, 255, 255);
+          if (hora) {
+            doc.setFontSize(11);
+            doc.setFont("helvetica", "normal");
+            const hw = doc.getTextWidth(hora);
+            doc.text(hora, x + cw - PAD - 2.5, oy + 8.5, { align: "right" });
+            doc.setFontSize(14);
+            doc.setFont("helvetica", "bold");
+            doc.text(ev.titulo, x + PAD + 3, oy + 8.5, { maxWidth: cw - PAD * 2 - hw - 7 });
+          } else {
+            doc.setFontSize(14);
+            doc.setFont("helvetica", "bold");
+            doc.text(ev.titulo, x + PAD + 3, oy + 8.5, { maxWidth: cw - PAD * 2 - 5 });
+          }
+
+          let innerY = oy + H_BAR + 1;
+
+          // Lugar
+          if (lugarTexto) {
+            doc.setFontSize(12);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(esZoom ? 30 : 35, esZoom ? 90 : 120, esZoom ? 220 : 35);
+            doc.text(lugarTexto, x + PAD + 2.5, innerY + 6, { maxWidth: cw - PAD * 2 - 4 });
+            innerY += H_LUG;
+          }
+
+          // Personas — nombres en 16pt BOLD: prioridad de legibilidad para 3ra edad
+          const dibujarPersona = (nombre, apellido, fotoUrl, label, lColor, titulo = '') => {
+            if (!nombre) return;
+            const foto = fotoUrl ? fotosCache[fotoUrl] : null;
+            if (foto) doc.addImage(foto, "JPEG", x + PAD + 1, innerY + 0.5, fotoSz, fotoSz);
+            const textX = x + PAD + 1 + (foto ? fotoSz + 2 : 0);
+            // Label (pequeño, en color)
+            doc.setFontSize(10);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(lColor[0], lColor[1], lColor[2]);
+            doc.text(label, textX, innerY + 8);
+            const lw = doc.getTextWidth(label);
+            // Nombre — 16pt bold, negro intenso, con prefijo P./O. si corresponde
+            doc.setFontSize(16);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(15, 15, 50);
+            const nombreCompleto = `${titulo ? titulo + ' ' : ''}${nombre} ${apellido || ''}`.trim();
+            doc.text(
+              nombreCompleto,
+              textX + lw + 1.5,
+              innerY + 8,
+              { maxWidth: cw - (textX - x) - lw - PAD - 3 }
+            );
+            innerY += H_PERS;
+          };
+
+          dibujarPersona(ev.encargado_nombre,   ev.encargado_apellido,   ev.encargado_foto,   "Enc:",   [80, 80, 160],  tituloPor[ev.encargado_id]   || '');
+          dibujarPersona(ev.coordinador_nombre, ev.coordinador_apellido, ev.coordinador_foto, "Coord:", [80, 80, 160],  tituloPor[ev.coordinador_id] || '');
+          dibujarPersona(ev.predicador_nombre,  ev.predicador_apellido,  ev.predicador_foto,  "Pred:",  [110, 50, 140], tituloPor[ev.predicador_id]  || '');
+
+          // Notas (fondo amarillo claro)
+          if (ev.notas && altoNotas > 0) {
+            doc.setFillColor(255, 251, 225);
+            doc.roundedRect(x + PAD, innerY, cw - PAD * 2, altoNotas, 1.5, 1.5, "F");
+            doc.setTextColor(130, 90, 20);
+            doc.setFontSize(12);
+            doc.setFont("helvetica", "italic");
+            notaLines.slice(0, 2).forEach((linea, li) => {
+              doc.text(linea, x + PAD + 3, innerY + H_NLIN + li * H_NLIN);
+            });
+          }
+
+          oy += altoBloque;
+        }
+
+        col++;
+        if (col === 7) { col = 0; fila++; }
+      }
+
+      // ── PIE DE PÁGINA ─────────────────────────────────────────────────────────
+      const yFooter = H - altoFooter;
+      doc.setFillColor(241, 245, 249);
+      doc.rect(0, yFooter, W, altoFooter, "F");
+      doc.setDrawColor(200, 210, 225);
+      doc.setLineWidth(0.3);
+      doc.line(0, yFooter, W, yFooter);
+      doc.setTextColor(140, 155, 180);
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "normal");
+      doc.text("Iglesia Vida Nueva · vidanuevaimp.com", W / 2, yFooter + 10, { align: "center" });
+
+      doc.save(`Calendario_${MESES[mesActual]}_${anioActual}.pdf`);
+    } catch (err) {
+      console.error("Error generando PDF:", err);
+      alert("Error al generar el PDF");
+    } finally {
+      setGenerandoPDF(false);
+    }
+  };
+
+  // Convierte una URL de imagen a base64 para jsPDF
+  const cargarImagenBase64 = (url) => new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d").drawImage(img, 0, 0);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => resolve(null);
+    img.src = url.startsWith("/") ? window.location.origin + url : url;
+  });
+
+  // Convierte hex a [r,g,b]
+  const hexToRgb = (hex) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return [r, g, b];
   };
 
   const abrirNuevo = (diaInicio = null) => {
@@ -373,6 +819,13 @@ export default function AdminCalendario() {
     if (!eventosPorDia[dia]) eventosPorDia[dia] = [];
     eventosPorDia[dia].push(ev);
   }
+  for (const dia in eventosPorDia) {
+    eventosPorDia[dia].sort((a, b) => {
+      const tA = a.fecha_inicio ? a.fecha_inicio.slice(11, 16) : "00:00";
+      const tB = b.fecha_inicio ? b.fecha_inicio.slice(11, 16) : "00:00";
+      return tA.localeCompare(tB);
+    });
+  }
 
   const celdasVacias = Array(primerDia).fill(null);
   const dias = Array.from({ length: totalDias }, (_, i) => i + 1);
@@ -409,15 +862,82 @@ export default function AdminCalendario() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-          {/* Calendario */}
+          {/* Calendarioo */}
           <div className="xl:col-span-3">
             {/* Navegación mes */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <button onClick={mesAnterior} className="p-2 hover:bg-gray-100 rounded-full transition text-xl">‹</button>
               <h2 className="text-xl font-bold text-gray-800">
                 {MESES[mesActual]} {anioActual}
               </h2>
-              <button onClick={mesSiguiente} className="p-2 hover:bg-gray-100 rounded-full transition text-xl">›</button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    if (!confirm(`¿Borrar todas las asignaciones de ${MESES[mesActual]} ${anioActual}?\n\nSe eliminarán coordinadores, predicadores y portero del mes.\nLos encargados y eventos se conservan.`)) return;
+                    try {
+                      const res = await fetch(`${API}/api/calendario/${anioActual}/${mesActual + 1}/asignaciones`, {
+                        method: "DELETE",
+                        headers: headers(),
+                      });
+                      if (!res.ok) throw new Error();
+                      // Recargar eventos y portero
+                      const evRes = await fetch(`${API}/api/eventos`, { headers: headers() });
+                      const evData = await evRes.json();
+                      setEventos(evData);
+                      setPorteroSeleccionado("");
+                      setPortero(null);
+                    } catch {
+                      alert("Error al resetear asignaciones");
+                    }
+                  }}
+                  className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 border border-red-200 px-2.5 py-1 rounded-lg transition font-medium flex items-center gap-1"
+                  title="Borrar coordinadores, predicadores y portero de este mes"
+                >
+                  🗑 Resetear mes
+                </button>
+                <button onClick={mesSiguiente} className="p-2 hover:bg-gray-100 rounded-full transition text-xl">›</button>
+              </div>
+            </div>
+
+            {/* Portero del mes + botón PDF */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-4 bg-white rounded-xl shadow-sm px-4 py-3">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <span className="text-lg">🚪</span>
+                <label className="text-sm font-semibold text-gray-700 whitespace-nowrap">Portero del Mes:</label>
+                {portero?.foto_url ? (
+                  <img src={portero.foto_url} alt="" className="w-7 h-7 rounded-full object-cover border border-gray-200 flex-shrink-0" />
+                ) : portero?.nombre ? (
+                  <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 flex-shrink-0">
+                    {portero.nombre[0]}{portero.apellido?.[0]}
+                  </div>
+                ) : null}
+                <select
+                  value={porteroSeleccionado}
+                  onChange={e => {
+                    setPorteroSeleccionado(e.target.value);
+                    guardarPortero(e.target.value || null);
+                  }}
+                  disabled={guardandoPortero}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 flex-1 min-w-0 max-w-xs disabled:opacity-60"
+                >
+                  <option value="">Sin asignar</option>
+                  {miembros.map(m => (
+                    <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
+                  ))}
+                </select>
+                {guardandoPortero && <span className="text-xs text-gray-400">Guardando...</span>}
+              </div>
+              <button
+                onClick={generarPDF}
+                disabled={generandoPDF}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg transition whitespace-nowrap"
+              >
+                {generandoPDF ? (
+                  <><span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Generando...</>
+                ) : (
+                  <>📄 Descargar PDF</>
+                )}
+              </button>
             </div>
 
             {/* Grilla */}
@@ -575,11 +1095,24 @@ export default function AdminCalendario() {
                 <div className="w-4 h-4 rounded-full mt-1 flex-shrink-0" style={{ background: vistaEvento.color }} />
                 <div>
                   <h3 className="text-xl font-bold text-gray-800">{vistaEvento.titulo}</h3>
-                  <p className="text-sm text-gray-500 mt-0.5">
-                    {vistaEvento._fecha.toLocaleDateString("es-CL", {
-                      weekday: "long", year: "numeric", month: "long", day: "numeric"
-                    })}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                    <p className="text-sm text-gray-500 capitalize">
+                      {vistaEvento._fecha.toLocaleDateString("es-CL", {
+                        weekday: "long", year: "numeric", month: "long", day: "numeric"
+                      })}
+                    </p>
+                    {vistaEvento.fecha_inicio && (() => {
+                      const hora = parseLocalDate(vistaEvento.fecha_inicio);
+                      if (hora && !(hora.getHours() === 0 && hora.getMinutes() === 0)) {
+                        return (
+                          <span className="inline-flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">
+                            🕐 {hora.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
                 </div>
               </div>
               {vistaEvento.descripcion && (

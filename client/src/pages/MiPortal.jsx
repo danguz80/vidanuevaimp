@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X } from "lucide-react";
+import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X, Bell, Star, Mic, DoorOpen } from "lucide-react";
 import { useMemberAuth } from "../context/MemberAuthContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -12,6 +12,172 @@ function calcularEdad(fechaNac) {
   const m = hoy.getMonth() - nac.getMonth();
   if (m < 0 || (m === 0 && hoy.getDate() < nac.getDate())) edad--;
   return edad;
+}
+
+// Parsea un string ISO sin zona (ej. "2026-04-05T10:00:00") como hora local
+function parseLocalDate(str) {
+  if (!str) return null;
+  const s = String(str).replace("T", " ").slice(0, 19);
+  const [fecha, hora] = s.split(" ");
+  const [y, mo, d] = fecha.split("-").map(Number);
+  const [h = 0, mi = 0, se = 0] = (hora || "").split(":").map(Number);
+  return new Date(y, mo - 1, d, h, mi, se);
+}
+
+const MESES_NOMBRE = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+// Expande los eventos base del miembro para un mes dado y devuelve compromisos concretos
+function obtenerCompromisosDelMes(eventos, ocurrencias, anio, mes) {
+  const resultado = [];
+  const primerDia = new Date(anio, mes, 1);
+  const ultimoDia = new Date(anio, mes + 1, 0);
+
+  // Ocurrencias específicas mapeadas por evento_id+fecha para detectar overrides
+  const ocMap = {};
+  for (const oc of (ocurrencias || [])) {
+    const key = `${oc.evento_id}_${String(oc.fecha).slice(0, 10)}`;
+    ocMap[key] = oc;
+  }
+
+  for (const ev of (eventos || [])) {
+    const inicio = parseLocalDate(ev.fecha_inicio);
+    if (!inicio) continue;
+    const agregarFecha = (fecha) => {
+      const key = `${ev.id}_${fecha.toLocaleDateString("sv")}`;
+      // Si existe una ocurrencia específica para ese día, el rol puede cambiar
+      const oc = ocMap[key];
+      resultado.push({
+        id: ev.id,
+        titulo: ev.titulo,
+        fecha,
+        color: ev.color || "#3B82F6",
+        lugar: ev.lugar || "",
+        rol: oc?.rol || ev.rol_base,
+        esOcurrencia: !!oc,
+        keyNot: `${ev.id}_${ev.rol_base}_${anio}_${String(mes + 1).padStart(2, "0")}`,
+      });
+    };
+
+    if (ev.tipo === "recurrente" && ev.recurrencia !== "ninguna") {
+      switch (ev.recurrencia) {
+        case "semanal": {
+          const ds = ev.dia_semana ?? inicio.getDay();
+          let d = new Date(anio, mes, 1);
+          while (d.getDay() !== ds) d.setDate(d.getDate() + 1);
+          while (d <= ultimoDia) { agregarFecha(new Date(d)); d.setDate(d.getDate() + 7); }
+          break;
+        }
+        case "quincenal": {
+          const ds = ev.dia_semana ?? inicio.getDay();
+          let d = new Date(anio, mes, 1);
+          while (d.getDay() !== ds) d.setDate(d.getDate() + 1);
+          let cnt = 0;
+          while (d <= ultimoDia) { if (cnt % 2 === 0) agregarFecha(new Date(d)); d.setDate(d.getDate() + 7); cnt++; }
+          break;
+        }
+        case "mensual": {
+          const fecha = new Date(anio, mes, inicio.getDate());
+          if (fecha >= primerDia && fecha <= ultimoDia) agregarFecha(fecha);
+          break;
+        }
+        case "anual": {
+          if (inicio.getMonth() === mes) agregarFecha(new Date(anio, mes, inicio.getDate()));
+          break;
+        }
+        default: break;
+      }
+    } else {
+      if (inicio.getFullYear() === anio && inicio.getMonth() === mes) agregarFecha(inicio);
+    }
+  }
+
+  // También agregar ocurrencias específicas de eventos donde el miembro NO es el base
+  for (const oc of (ocurrencias || [])) {
+    const fecha = parseLocalDate(oc.fecha);
+    if (!fecha || fecha.getFullYear() !== anio || fecha.getMonth() !== mes) continue;
+    // Si ya fue procesada como override de un evento base, no duplicar
+    const estaEnEventosBase = (eventos || []).some(e => e.id === oc.evento_id);
+    if (!estaEnEventosBase) {
+      resultado.push({
+        id: oc.evento_id,
+        titulo: oc.titulo,
+        fecha,
+        color: oc.color || "#3B82F6",
+        lugar: oc.lugar || "",
+        rol: oc.rol,
+        esOcurrencia: true,
+        keyNot: `oc_${oc.evento_id}_${String(oc.fecha).slice(0, 10)}`,
+      });
+    }
+  }
+
+  resultado.sort((a, b) => a.fecha - b.fecha);
+  return resultado;
+}
+
+const ROL_CONFIG = {
+  Encargado:    { icon: Star,     bg: "bg-amber-50",  border: "border-amber-200",  text: "text-amber-700",  dot: "bg-amber-400"  },
+  Coordinador:  { icon: Star,     bg: "bg-blue-50",   border: "border-blue-200",   text: "text-blue-700",   dot: "bg-blue-400"   },
+  Predicador:   { icon: Mic,      bg: "bg-purple-50", border: "border-purple-200", text: "text-purple-700", dot: "bg-purple-400" },
+  Portero:      { icon: DoorOpen, bg: "bg-green-50",  border: "border-green-200",  text: "text-green-700",  dot: "bg-green-400"  },
+};
+
+// Modal de notificación de servicios asignados
+function ModalServicio({ compromisos, porteroMeses, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+        <div className="bg-indigo-600 px-5 py-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+            <Bell size={18} className="text-white" />
+          </div>
+          <div>
+            <p className="text-white font-bold text-base leading-tight">Tienes servicios asignados</p>
+            <p className="text-indigo-200 text-xs mt-0.5">La iglesia cuenta contigo</p>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-2.5 max-h-72 overflow-y-auto">
+          {porteroMeses.map(({ anio, mes }) => {
+            const cfg = ROL_CONFIG["Portero"];
+            return (
+              <div key={`p_${anio}_${mes}`} className={`flex items-center gap-3 rounded-xl border ${cfg.bg} ${cfg.border} px-3 py-2.5`}>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
+                <div className="min-w-0">
+                  <p className={`text-xs font-bold ${cfg.text}`}>Portero del Mes</p>
+                  <p className="text-sm font-semibold text-gray-800 truncate">
+                    {MESES_NOMBRE[mes - 1]} {anio}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+          {compromisos.map((c, i) => {
+            const cfg = ROL_CONFIG[c.rol] || ROL_CONFIG["Encargado"];
+            return (
+              <div key={i} className={`flex items-center gap-3 rounded-xl border ${cfg.bg} ${cfg.border} px-3 py-2.5`}>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
+                <div className="min-w-0">
+                  <p className={`text-xs font-bold ${cfg.text}`}>{c.rol}</p>
+                  <p className="text-sm font-semibold text-gray-800 truncate">{c.titulo}</p>
+                  <p className="text-xs text-gray-500 capitalize">
+                    {c.fecha.toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "long" })}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="px-5 pb-5 pt-2">
+          <button
+            onClick={onClose}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl py-2.5 text-sm transition"
+          >
+            Entendido
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CambiarPasswordModal({ onClose, getToken }) {
@@ -105,6 +271,11 @@ export default function MiPortal() {
   const [showCambiarPwd, setShowCambiarPwd] = useState(false);
   const navigate = useNavigate();
 
+  // Compromisos
+  const [compromisos, setCompromisos] = useState({ proximos: [], portero: [] });
+  const [cargandoCompromisos, setCargandoCompromisos] = useState(true);
+  const [modalServicio, setModalServicio] = useState(false);
+
   // Foto
   const fileInputRef = useRef(null);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
@@ -122,6 +293,32 @@ export default function MiPortal() {
       .then(r => r.json())
       .then(d => { setPerfil(d); setTextoAcerca(d.acerca_de_mi || ""); setLoading(false); })
       .catch(() => setLoading(false));
+
+    // Cargar compromisos
+    fetch("/api/miembros/me/compromisos", { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => {
+        if (!r.ok) { console.error("Compromisos HTTP error:", r.status); return null; }
+        return r.json();
+      })
+      .then(data => {
+        if (!data) { setCargandoCompromisos(false); return; }
+        setCompromisos(data);
+        setCargandoCompromisos(false);
+        // ── Lógica de notificación: mostrar modal si hay compromisos nuevos no vistos ──
+        const notKeys = new Set();
+        for (const c of (data.proximos || [])) {
+          notKeys.add(`oc_${c.evento_id}_${c.fecha}_${c.rol}`);
+        }
+        for (const { anio, mes } of (data.portero || [])) {
+          notKeys.add(`portero_${anio}_${mes}`);
+        }
+        if (notKeys.size === 0) return;
+        const storageKey = `compromisos_vistos_${miembro.id}`;
+        const vistos = new Set(JSON.parse(localStorage.getItem(storageKey) || "[]"));
+        const hayNuevos = [...notKeys].some(k => !vistos.has(k));
+        if (hayNuevos) setModalServicio(true);
+      })
+      .catch(err => { console.error("Error fetch compromisos:", err); setCargandoCompromisos(false); });
   }, [miembro]);
 
   const cambiarFoto = (file) => {
@@ -168,6 +365,19 @@ export default function MiPortal() {
       setEditandoAcerca(false);
     } catch { setErrorAcerca("Error de conexión"); }
     finally { setGuardandoAcerca(false); }
+  };
+
+  const cerrarModalServicio = () => {
+    setModalServicio(false);
+    const notKeys = new Set();
+    for (const c of (compromisos.proximos || [])) {
+      notKeys.add(`oc_${c.evento_id}_${c.fecha}_${c.rol}`);
+    }
+    for (const { anio, mes } of (compromisos.portero || [])) {
+      notKeys.add(`portero_${anio}_${mes}`);
+    }
+    const storageKey = `compromisos_vistos_${miembro.id}`;
+    localStorage.setItem(storageKey, JSON.stringify([...notKeys]));
   };
 
   const handleLogout = () => { logout(); adminLogout(); navigate("/portal/login"); };
@@ -266,8 +476,7 @@ export default function MiPortal() {
         {/* Acerca de mí */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Acerca de mí</h2>
-            {!editandoAcerca && (
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Acerca de mí</h2>            {!editandoAcerca && (
               <button
                 onClick={() => { setTextoAcerca(perfil?.acerca_de_mi || ""); setEditandoAcerca(true); setErrorAcerca(""); }}
                 className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium transition"
@@ -315,6 +524,75 @@ export default function MiPortal() {
             <p className="text-sm text-gray-400 italic">Aún no has escrito nada. ¡Preséntate a la congregación!</p>
           )}
         </div>
+
+        {/* ── Mis servicios ────────────────────────────────────────── */}
+        {(() => {
+          const hoy = new Date();
+          hoy.setHours(0, 0, 0, 0);
+          const porteroProximos = (compromisos.portero || []).filter(({ anio, mes }) => {
+            const fp = new Date(anio, mes - 1, 1);
+            return fp >= new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+          });
+          const eventosLista = (compromisos.proximos || []).map(c => ({
+            ...c,
+            fecha: new Date(c.fecha + 'T00:00:00'),
+          }));
+          const total = porteroProximos.length + eventosLista.length;
+          return (
+            <div className="bg-white rounded-2xl shadow-sm p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                  <Bell size={14} className="text-indigo-400" /> Mis servicios
+                </h2>
+                {total > 0 && (
+                  <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-0.5 rounded-full">{total}</span>
+                )}
+              </div>
+              {cargandoCompromisos ? (
+                <p className="text-sm text-gray-400">Cargando servicios...</p>
+              ) : total === 0 ? (
+                <p className="text-sm text-gray-400 italic">No tienes servicios asignados próximamente.</p>
+              ) : (
+                <div className="space-y-2">
+                  {porteroProximos.map(({ anio, mes }) => {
+                    const cfg = ROL_CONFIG["Portero"];
+                    const IconoRol = cfg.icon;
+                    return (
+                      <div key={`p_${anio}_${mes}`} className={`flex items-center gap-3 rounded-xl border ${cfg.bg} ${cfg.border} px-3 py-2.5`}>
+                        <IconoRol size={16} className={cfg.text} />
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-xs font-bold ${cfg.text}`}>Portero del Mes</p>
+                          <p className="text-sm font-semibold text-gray-800">{MESES_NOMBRE[mes - 1]} {anio}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {eventosLista.map((c, i) => {
+                    const cfg = ROL_CONFIG[c.rol] || ROL_CONFIG["Encargado"];
+                    const IconoRol = cfg.icon;
+                    return (
+                      <div key={i} className={`flex items-center gap-3 rounded-xl border ${cfg.bg} ${cfg.border} px-3 py-2.5`}>
+                        <IconoRol size={16} className={cfg.text} />
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-xs font-bold ${cfg.text}`}>{c.rol}</p>
+                          <p className="text-sm font-semibold text-gray-800 truncate">{c.titulo}</p>
+                          <p className="text-xs text-gray-500 capitalize">
+                            {c.fecha.toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "long" })}
+                            {c.lugar ? ` · ${c.lugar}` : ""}
+                          </p>
+                        </div>
+                        <span
+                          className="w-3 h-3 rounded-full shrink-0"
+                          style={{ backgroundColor: c.color }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Datos personales */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
@@ -379,6 +657,25 @@ export default function MiPortal() {
       {showCambiarPwd && (
         <CambiarPasswordModal onClose={() => setShowCambiarPwd(false)} getToken={getToken} />
       )}
+
+      {modalServicio && (() => {
+        const hoy = new Date();
+        hoy.setHours(0, 0, 0, 0);
+        const porteroProximos = (compromisos.portero || []).filter(({ anio, mes }) =>
+          new Date(anio, mes - 1, 1) >= new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+        );
+        const eventosLista = (compromisos.proximos || []).map(c => ({
+          ...c,
+          fecha: new Date(c.fecha + 'T00:00:00'),
+        }));
+        return (
+          <ModalServicio
+            compromisos={eventosLista}
+            porteroMeses={porteroProximos}
+            onClose={cerrarModalServicio}
+          />
+        );
+      })()}
     </div>
   );
 }
