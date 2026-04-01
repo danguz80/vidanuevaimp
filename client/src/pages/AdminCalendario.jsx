@@ -1085,12 +1085,12 @@ export default function AdminCalendario() {
 
       {/* Modal detalle evento */}
       {vistaEvento && !modalAbierto && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden">
             {vistaEvento.imagen_url && (
-              <img src={normUrl(vistaEvento.imagen_url)} alt={vistaEvento.titulo} className="w-full h-40 object-cover rounded-t-2xl" />
+              <img src={normUrl(vistaEvento.imagen_url)} alt={vistaEvento.titulo} className="w-full h-40 object-cover rounded-t-2xl shrink-0" />
             )}
-            <div className="p-6">
+            <div className="p-6 overflow-y-auto flex-1">
               <div className="flex items-start gap-3 mb-4">
                 <div className="w-4 h-4 rounded-full mt-1 flex-shrink-0" style={{ background: vistaEvento.color }} />
                 <div>
@@ -1233,26 +1233,26 @@ export default function AdminCalendario() {
                     : "📅 Evento especial"}
                 </span>
               </p>
-              <div className="flex gap-3 mt-5">
-                <button
-                  onClick={() => abrirEditar(vistaEvento)}
-                  className="flex-1 bg-amber-100 hover:bg-amber-200 text-amber-700 font-semibold py-2 rounded-lg transition text-sm"
-                >
-                  Editar
-                </button>
-                <button
-                  onClick={() => eliminar(vistaEvento.id)}
-                  className="flex-1 bg-red-100 hover:bg-red-200 text-red-600 font-semibold py-2 rounded-lg transition text-sm"
-                >
-                  Eliminar
-                </button>
-                <button
-                  onClick={() => setVistaEvento(null)}
-                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold py-2 rounded-lg transition text-sm"
-                >
-                  Cerrar
-                </button>
-              </div>
+            </div>
+            <div className="flex gap-3 p-4 border-t bg-gray-50 rounded-b-2xl shrink-0">
+              <button
+                onClick={() => abrirEditar(vistaEvento)}
+                className="flex-1 bg-amber-100 hover:bg-amber-200 text-amber-700 font-semibold py-2.5 rounded-lg transition text-sm"
+              >
+                Editar
+              </button>
+              <button
+                onClick={() => eliminar(vistaEvento.id)}
+                className="flex-1 bg-red-100 hover:bg-red-200 text-red-600 font-semibold py-2.5 rounded-lg transition text-sm"
+              >
+                Eliminar
+              </button>
+              <button
+                onClick={() => setVistaEvento(null)}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold py-2.5 rounded-lg transition text-sm"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
         </div>
@@ -1260,16 +1260,16 @@ export default function AdminCalendario() {
 
       {/* Modal crear/editar evento */}
       {modalAbierto && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl my-8">
-            <div className="flex justify-between items-center p-6 border-b">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-xl max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b shrink-0">
               <h2 className="text-xl font-bold text-gray-800">
                 {editando ? "Editar Evento" : "Nuevo Evento"}
               </h2>
               <button onClick={cerrarModal} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
               {/* Título */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Título *</label>
@@ -1515,14 +1515,14 @@ export default function AdminCalendario() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
-              <button onClick={cerrarModal} className="px-5 py-2 text-gray-600 hover:text-gray-800 font-medium transition">
+            <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl shrink-0">
+              <button onClick={cerrarModal} className="flex-1 border border-gray-300 text-gray-600 hover:bg-gray-100 font-medium py-2.5 rounded-lg transition text-sm">
                 Cancelar
               </button>
               <button
                 onClick={guardar}
                 disabled={guardando}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg transition disabled:opacity-50"
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50 text-sm"
               >
                 {guardando ? "Guardando..." : editando ? "Guardar Cambios" : "Crear Evento"}
               </button>

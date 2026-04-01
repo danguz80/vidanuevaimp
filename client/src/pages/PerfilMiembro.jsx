@@ -345,8 +345,8 @@ export default function PerfilMiembro() {
 
       {/* Modal editar */}
       {modalEditar && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-xl max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b">
               <h2 className="text-lg font-bold text-gray-800">Editar miembro</h2>
               <button onClick={() => setModalEditar(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
@@ -441,13 +441,13 @@ export default function PerfilMiembro() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
+            <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl shrink-0">
               <button onClick={() => setModalEditar(false)}
-                className="px-5 py-2 text-gray-600 hover:text-gray-800 font-medium text-sm">
+                className="flex-1 border border-gray-300 text-gray-600 hover:bg-gray-100 font-medium text-sm rounded-lg py-2.5">
                 Cancelar
               </button>
               <button onClick={guardar} disabled={guardando}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm disabled:opacity-50">
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm disabled:opacity-50">
                 {guardando ? "Guardando..." : "Guardar cambios"}
               </button>
             </div>

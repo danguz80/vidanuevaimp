@@ -127,9 +127,9 @@ const ROL_CONFIG = {
 // Modal de notificación de servicios asignados
 function ModalServicio({ compromisos, porteroMeses, onClose }) {
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-        <div className="bg-indigo-600 px-5 py-4 flex items-center gap-3">
+    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-sm max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="bg-indigo-600 px-5 py-4 flex items-center gap-3 shrink-0">
           <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
             <Bell size={18} className="text-white" />
           </div>
@@ -138,7 +138,7 @@ function ModalServicio({ compromisos, porteroMeses, onClose }) {
             <p className="text-indigo-200 text-xs mt-0.5">La iglesia cuenta contigo</p>
           </div>
         </div>
-        <div className="px-5 py-4 space-y-2.5 max-h-72 overflow-y-auto">
+        <div className="px-5 py-4 space-y-2.5 overflow-y-auto flex-1">
           {porteroMeses.map(({ anio, mes }) => {
             const cfg = ROL_CONFIG["Portero"];
             return (
@@ -169,10 +169,10 @@ function ModalServicio({ compromisos, porteroMeses, onClose }) {
             );
           })}
         </div>
-        <div className="px-5 pb-5 pt-2">
+        <div className="px-5 pb-6 pt-3 shrink-0">
           <button
             onClick={onClose}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl py-2.5 text-sm transition"
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl py-3 text-sm transition"
           >
             Entendido
           </button>
@@ -213,48 +213,55 @@ function CambiarPasswordModal({ onClose, getToken }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
-        <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-          <Lock size={18} /> Cambiar contraseña
-        </h2>
-        {success ? (
-          <p className="text-green-600 text-center py-4">✅ Contraseña actualizada</p>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
-            <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">Contraseña actual</label>
-              <div className="relative">
-                <input type={showActual ? "text" : "password"} value={actual} onChange={e => setActual(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-9 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" required />
-                <button type="button" onClick={() => setShowActual(!showActual)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400" tabIndex={-1}>
-                  {showActual ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full sm:max-w-sm max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
+          <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+            <Lock size={18} /> Cambiar contraseña
+          </h2>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+        <div className="overflow-y-auto flex-1 px-6 py-4">
+          {success ? (
+            <p className="text-green-600 text-center py-4">✅ Contraseña actualizada</p>
+          ) : (
+            <form id="pwd-form" onSubmit={handleSubmit} className="space-y-4">
+              {error && <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Contraseña actual</label>
+                <div className="relative">
+                  <input type={showActual ? "text" : "password"} value={actual} onChange={e => setActual(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-9 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" required />
+                  <button type="button" onClick={() => setShowActual(!showActual)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400" tabIndex={-1}>
+                    {showActual ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">Nueva contraseña</label>
-              <div className="relative">
-                <input type={showNueva ? "text" : "password"} value={nueva} onChange={e => setNueva(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-9 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" required />
-                <button type="button" onClick={() => setShowNueva(!showNueva)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400" tabIndex={-1}>
-                  {showNueva ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Nueva contraseña</label>
+                <div className="relative">
+                  <input type={showNueva ? "text" : "password"} value={nueva} onChange={e => setNueva(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-9 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" required />
+                  <button type="button" onClick={() => setShowNueva(!showNueva)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400" tabIndex={-1}>
+                    {showNueva ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">Confirmar contraseña</label>
-              <input type="password" value={confirmar} onChange={e => setConfirmar(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" required />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 rounded-lg py-2 text-sm hover:bg-gray-50">Cancelar</button>
-              <button type="submit" disabled={loading} className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg py-2 text-sm font-medium">
-                {loading ? "Guardando..." : "Guardar"}
-              </button>
-            </div>
-          </form>
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Confirmar contraseña</label>
+                <input type="password" value={confirmar} onChange={e => setConfirmar(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" required />
+              </div>
+            </form>
+          )}
+        </div>
+        {!success && (
+          <div className="flex gap-2 px-6 py-4 border-t bg-gray-50 shrink-0">
+            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 rounded-lg py-2.5 text-sm hover:bg-gray-100">Cancelar</button>
+            <button type="submit" form="pwd-form" disabled={loading} className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg py-2.5 text-sm font-medium">
+              {loading ? "Guardando..." : "Guardar"}
+            </button>
+          </div>
         )}
       </div>
     </div>

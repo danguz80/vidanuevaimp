@@ -466,16 +466,16 @@ export default function AdminMiembros() {
 
       {/* Modal */}
       {modalAbierto && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8">
-            <div className="flex justify-between items-center p-6 border-b">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b shrink-0">
               <h2 className="text-xl font-bold text-gray-800">
                 {editando ? "Editar Miembro" : "Nuevo Miembro"}
               </h2>
               <button onClick={cerrarModal} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
             </div>
 
-            <div className="p-6 space-y-5">
+            <div className="p-6 space-y-5 overflow-y-auto flex-1">
               {/* Foto */}
               <div className="flex flex-col items-center gap-3">
                 {form.foto_url && !form.foto_url.startsWith("data:") ? (
@@ -627,18 +627,17 @@ export default function AdminMiembros() {
               </div>
             </div>
 
-            {/* Footer modal */}
-            <div className="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
+            <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl shrink-0">
               <button
                 onClick={cerrarModal}
-                className="px-5 py-2 text-gray-600 hover:text-gray-800 font-medium transition"
+                className="flex-1 border border-gray-300 text-gray-600 hover:bg-gray-100 font-medium py-2.5 rounded-lg transition text-sm"
               >
                 Cancelar
               </button>
               <button
                 onClick={guardar}
                 disabled={guardando}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg transition disabled:opacity-50"
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50 text-sm"
               >
                 {guardando ? "Guardando..." : editando ? "Guardar Cambios" : "Crear Miembro"}
               </button>
@@ -648,9 +647,9 @@ export default function AdminMiembros() {
       )}
       {/* Modal familia */}
       {modalFamilia && miembroFamiliaActual && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8">
-            <div className="flex justify-between items-center p-6 border-b">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-gray-800">
                   Familia de {miembroFamiliaActual.nombre} {miembroFamiliaActual.apellido}
@@ -660,7 +659,7 @@ export default function AdminMiembros() {
               <button onClick={cerrarModalFamilia} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
             </div>
 
-            <div className="p-6 space-y-6">
+            <div className="p-6 space-y-6 overflow-y-auto flex-1">
               {cargandoFamilia ? (
                 <p className="text-center text-gray-400 py-8">Cargando...</p>
               ) : (
@@ -770,8 +769,8 @@ export default function AdminMiembros() {
               )}
             </div>
 
-            <div className="flex justify-end px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
-              <button onClick={cerrarModalFamilia} className="px-5 py-2 text-gray-600 hover:text-gray-800 font-medium">
+            <div className="flex justify-end px-6 py-4 border-t bg-gray-50 rounded-b-2xl shrink-0">
+              <button onClick={cerrarModalFamilia} className="w-full sm:w-auto border border-gray-300 text-gray-600 hover:bg-gray-100 font-medium px-6 py-2.5 rounded-lg">
                 Cerrar
               </button>
             </div>
