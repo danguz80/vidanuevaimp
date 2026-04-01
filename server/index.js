@@ -328,6 +328,80 @@ app.put("/api/miembros/me/acerca-de-mi", authenticateMiembro, async (req, res) =
   }
 });
 
+// ── Disponibilidad / Bloqueo de fechas ─────────────────────────────────────
+
+// GET /api/miembros/me/disponibilidad — periodos bloqueados del miembro autenticado
+app.get("/api/miembros/me/disponibilidad", authenticateMiembro, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, fecha_inicio::date AS fecha_inicio, fecha_fin::date AS fecha_fin, motivo
+       FROM disponibilidad_bloqueada
+       WHERE miembro_id = $1
+       ORDER BY fecha_inicio ASC`,
+      [req.miembro.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error GET disponibilidad:", err.message);
+    res.status(500).json({ error: "Error al obtener disponibilidad" });
+  }
+});
+
+// POST /api/miembros/me/disponibilidad — bloquear un periodo
+app.post("/api/miembros/me/disponibilidad", authenticateMiembro, async (req, res) => {
+  const { fecha_inicio, fecha_fin, motivo } = req.body;
+  if (!fecha_inicio) return res.status(400).json({ error: "La fecha de inicio es requerida" });
+  const fin = fecha_fin || fecha_inicio; // si no hay fin, es un solo día
+  if (fin < fecha_inicio) return res.status(400).json({ error: "La fecha fin no puede ser anterior al inicio" });
+  try {
+    const result = await pool.query(
+      `INSERT INTO disponibilidad_bloqueada (miembro_id, fecha_inicio, fecha_fin, motivo)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, fecha_inicio::date AS fecha_inicio, fecha_fin::date AS fecha_fin, motivo`,
+      [req.miembro.id, fecha_inicio, fin, motivo?.trim() || null]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("Error POST disponibilidad:", err.message);
+    res.status(500).json({ error: "Error al guardar periodo" });
+  }
+});
+
+// DELETE /api/miembros/me/disponibilidad/:id — eliminar un periodo (solo el propio)
+app.delete("/api/miembros/me/disponibilidad/:id", authenticateMiembro, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "DELETE FROM disponibilidad_bloqueada WHERE id = $1 AND miembro_id = $2 RETURNING id",
+      [req.params.id, req.miembro.id]
+    );
+    if (result.rows.length === 0)
+      return res.status(404).json({ error: "Periodo no encontrado" });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error DELETE disponibilidad:", err.message);
+    res.status(500).json({ error: "Error al eliminar periodo" });
+  }
+});
+
+// GET /api/miembros/disponibilidad-bloqueada?fecha=YYYY-MM-DD
+// Devuelve IDs de miembros NO disponibles en la fecha indicada (para admin)
+app.get("/api/miembros/disponibilidad-bloqueada", authenticateToken, async (req, res) => {
+  const { fecha } = req.query;
+  if (!fecha) return res.status(400).json({ error: "Se requiere ?fecha=YYYY-MM-DD" });
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT miembro_id
+       FROM disponibilidad_bloqueada
+       WHERE $1::date BETWEEN fecha_inicio AND fecha_fin`,
+      [fecha]
+    );
+    res.json(result.rows.map(r => r.miembro_id));
+  } catch (err) {
+    console.error("Error disponibilidad-bloqueada:", err.message);
+    res.status(500).json({ error: "Error al consultar disponibilidad" });
+  }
+});
+
 // GET /api/miembros/me/compromisos — lista plana de compromisos futuros del miembro
 app.get("/api/miembros/me/compromisos", authenticateMiembro, async (req, res) => {
   const miembroId = req.miembro.id;
@@ -933,6 +1007,77 @@ app.delete("/api/hero/:id", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error al eliminar slide:", error.message);
     res.status(500).json({ error: "Error al eliminar slide" });
+  }
+});
+
+// --- API obtener IDs de eventos en el Hero ---
+app.get("/api/hero/eventos-ids", authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query(
+      "SELECT evento_id FROM hero_slides WHERE evento_id IS NOT NULL"
+    );
+    client.release();
+    res.json(result.rows.map(r => r.evento_id));
+  } catch (err) {
+    console.error("Error al obtener hero evento ids:", err.message);
+    res.status(500).json({ error: "Error al obtener ids" });
+  }
+});
+
+// --- API agregar evento al Hero (crea slide automáticamente) ---
+app.post("/api/hero/from-evento/:id", authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    const existing = await client.query(
+      "SELECT id FROM hero_slides WHERE evento_id = $1", [id]
+    );
+    if (existing.rows.length > 0)
+      return res.status(409).json({ error: "El evento ya está en el Hero" });
+
+    const ev = await client.query("SELECT * FROM eventos WHERE id = $1", [id]);
+    if (ev.rows.length === 0)
+      return res.status(404).json({ error: "Evento no encontrado" });
+    const evento = ev.rows[0];
+
+    const fechaStr = evento.fecha_inicio
+      ? new Date(evento.fecha_inicio).toLocaleDateString("es-CL", {
+          weekday: "long", day: "numeric", month: "long"
+        })
+      : "";
+    const subtitle = [fechaStr, evento.lugar].filter(Boolean).join(" · ");
+
+    const result = await client.query(
+      `INSERT INTO hero_slides
+         (image_url, title, subtitle, title_effect, subtitle_effect,
+          font_size_title, font_size_subtitle, color_title, color_subtitle,
+          slide_duration, evento_id)
+       VALUES ($1,$2,$3,'fade-right','fade-left','text-3xl','text-xl','#ffffff','#ffffff',5000,$4)
+       RETURNING id`,
+      [evento.imagen_url || "", evento.titulo, subtitle, id]
+    );
+    res.status(201).json({ id: result.rows[0].id });
+  } catch (err) {
+    console.error("Error al agregar evento al Hero:", err.message);
+    res.status(500).json({ error: "Error al agregar al Hero" });
+  } finally {
+    client.release();
+  }
+});
+
+// --- API quitar evento del Hero ---
+app.delete("/api/hero/from-evento/:id", authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query("DELETE FROM hero_slides WHERE evento_id = $1", [id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error al quitar evento del Hero:", err.message);
+    res.status(500).json({ error: "Error al quitar del Hero" });
+  } finally {
+    client.release();
   }
 });
 
@@ -1580,6 +1725,46 @@ app.get("/api/miembros", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error al obtener miembros:", error);
     res.status(500).json({ error: "Error al obtener miembros" });
+  }
+});
+
+// GET /api/miembros/directorio — lista pública para miembros del portal
+app.get("/api/miembros/directorio", authenticateMiembro, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT m.id, m.nombre, m.apellido, m.foto_url, m.estado,
+              COALESCE(json_agg(mr.rol) FILTER (WHERE mr.rol IS NOT NULL), '[]') AS roles
+       FROM miembros m
+       LEFT JOIN miembro_roles mr ON mr.miembro_id = m.id
+       WHERE m.estado != 'inactivo'
+       GROUP BY m.id
+       ORDER BY m.apellido, m.nombre`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error GET /api/miembros/directorio:", err.message);
+    res.status(500).json({ error: "Error al obtener directorio" });
+  }
+});
+
+// GET /api/miembros/:id/publico — perfil público para miembros del portal
+app.get("/api/miembros/:id/publico", authenticateMiembro, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT m.id, m.nombre, m.apellido, m.foto_url, m.email, m.celular,
+              m.fecha_nacimiento, m.direccion, m.estado, m.acerca_de_mi,
+              COALESCE(json_agg(mr.rol) FILTER (WHERE mr.rol IS NOT NULL), '[]') AS roles
+       FROM miembros m
+       LEFT JOIN miembro_roles mr ON mr.miembro_id = m.id
+       WHERE m.id = $1
+       GROUP BY m.id`,
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Miembro no encontrado" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error GET /api/miembros/:id/publico:", err.message);
+    res.status(500).json({ error: "Error al obtener perfil" });
   }
 });
 
@@ -2403,8 +2588,333 @@ async function initFamiliasTables() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// MÚSICA — OneDrive / Microsoft Graph API
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Cache del access token en memoria
+let _odToken = null;
+let _odTokenExpiry = 0;
+
+async function getOneDriveToken() {
+  if (_odToken && Date.now() < _odTokenExpiry - 60_000) return _odToken;
+
+  const r = await pool.query(
+    "SELECT valor FROM configuracion WHERE clave = 'onedrive_refresh_token'"
+  );
+  if (!r.rows.length)
+    throw new Error("OneDrive no configurado. Ve a Admin → Música para conectar.");
+
+  const params = new URLSearchParams({
+    client_id:     process.env.ONEDRIVE_CLIENT_ID,
+    client_secret: process.env.ONEDRIVE_CLIENT_SECRET,
+    refresh_token: r.rows[0].valor,
+    grant_type:    "refresh_token",
+    scope:         "https://graph.microsoft.com/.default offline_access",
+  });
+
+  const res = await fetch(
+    `https://login.microsoftonline.com/${process.env.ONEDRIVE_TENANT_ID}/oauth2/v2.0/token`,
+    { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params }
+  );
+  const data = await res.json();
+  if (data.error) throw new Error(data.error_description || data.error);
+
+  // Guardar nuevo refresh_token si fue rotado
+  if (data.refresh_token) {
+    await pool.query(
+      `INSERT INTO configuracion (clave, valor) VALUES ('onedrive_refresh_token', $1)
+       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()`,
+      [data.refresh_token]
+    );
+  }
+  _odToken = data.access_token;
+  _odTokenExpiry = Date.now() + data.expires_in * 1000;
+  return _odToken;
+}
+
+// GET /api/musica/auth-url — genera URL OAuth para conectar OneDrive (admin)
+app.get("/api/musica/auth-url", authenticateToken, (req, res) => {
+  const redirectUri = `${process.env.BACKEND_URL || "https://iglesia-backend.onrender.com"}/api/musica/auth/callback`;
+  const url =
+    `https://login.microsoftonline.com/${process.env.ONEDRIVE_TENANT_ID}/oauth2/v2.0/authorize?` +
+    new URLSearchParams({
+      client_id:     process.env.ONEDRIVE_CLIENT_ID,
+      response_type: "code",
+      redirect_uri:  redirectUri,
+      scope:         "Files.Read.All offline_access",
+      response_mode: "query",
+    });
+  res.json({ url });
+});
+
+// GET /api/musica/auth/callback — recibe code OAuth y almacena refresh_token
+app.get("/api/musica/auth/callback", async (req, res) => {
+  const { code, error, error_description } = req.query;
+  if (error) return res.status(400).send(`<h2>Error: ${error_description || error}</h2>`);
+  if (!code) return res.status(400).send("<h2>Código de autorización no recibido</h2>");
+
+  const redirectUri = `${process.env.BACKEND_URL || "https://iglesia-backend.onrender.com"}/api/musica/auth/callback`;
+  try {
+    const params = new URLSearchParams({
+      client_id:     process.env.ONEDRIVE_CLIENT_ID,
+      client_secret: process.env.ONEDRIVE_CLIENT_SECRET,
+      code,
+      grant_type:    "authorization_code",
+      redirect_uri:  redirectUri,
+      scope:         "Files.Read.All offline_access",
+    });
+    const tokenRes = await fetch(
+      `https://login.microsoftonline.com/${process.env.ONEDRIVE_TENANT_ID}/oauth2/v2.0/token`,
+      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params }
+    );
+    const data = await tokenRes.json();
+    if (data.error) return res.status(400).send(`<h2>Error: ${data.error_description}</h2>`);
+
+    await pool.query(
+      `INSERT INTO configuracion (clave, valor) VALUES ('onedrive_refresh_token', $1)
+       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()`,
+      [data.refresh_token]
+    );
+    _odToken = null; _odTokenExpiry = 0; // limpiar caché
+
+    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;padding:2rem;text-align:center;max-width:400px;margin:auto">
+      <h2 style="color:#16a34a">✅ OneDrive conectado correctamente</h2>
+      <p style="color:#6b7280">Puedes cerrar esta ventana y volver al panel de administración.</p>
+    </body></html>`);
+  } catch (err) {
+    console.error("Error callback OneDrive:", err);
+    res.status(500).send("<h2>Error de conexión</h2>");
+  }
+});
+
+// GET /api/musica/estado — estado de conexión (admin)
+app.get("/api/musica/estado", authenticateToken, async (req, res) => {
+  try {
+    const r = await pool.query("SELECT clave FROM configuracion WHERE clave = 'onedrive_refresh_token'");
+    res.json({ configurado: r.rows.length > 0 });
+  } catch { res.json({ configurado: false }); }
+});
+
+// GET /api/musica/carpetas — subcarpetas de la carpeta raíz de música
+app.get("/api/musica/carpetas", authenticateMiembro, async (req, res) => {
+  try {
+    const token = await getOneDriveToken();
+    const folder = encodeURIComponent(process.env.ONEDRIVE_FOLDER || "Musica Iglesia");
+    const r = await fetch(
+      `https://graph.microsoft.com/v1.0/me/drive/root:/${folder}:/children?$select=id,name,folder,lastModifiedDateTime&$orderby=name`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await r.json();
+    if (data.error) return res.status(502).json({ error: data.error.message });
+    res.json((data.value || []).filter(i => i.folder));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/musica/canciones/:folderId — archivos de audio en una carpeta
+app.get("/api/musica/canciones/:folderId", authenticateMiembro, async (req, res) => {
+  try {
+    const token = await getOneDriveToken();
+    const r = await fetch(
+      `https://graph.microsoft.com/v1.0/me/drive/items/${req.params.folderId}/children?$select=id,name,audio,size,file&$top=200&$orderby=name`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await r.json();
+    if (data.error) return res.status(502).json({ error: data.error.message });
+    const canciones = (data.value || []).filter(
+      f => !f.folder && (f.audio || /\.(mp3|wav|flac|m4a|aac|ogg|wma)$/i.test(f.name))
+    );
+    res.json(canciones);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/musica/stream/:fileId — URL temporal de descarga directa desde OneDrive
+app.get("/api/musica/stream/:fileId", authenticateMiembro, async (req, res) => {
+  try {
+    const token = await getOneDriveToken();
+    const r = await fetch(
+      `https://graph.microsoft.com/v1.0/me/drive/items/${req.params.fileId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await r.json();
+    if (data.error) return res.status(502).json({ error: data.error.message });
+    const url = data["@microsoft.graph.downloadUrl"];
+    if (!url) return res.status(404).json({ error: "URL de descarga no disponible" });
+    res.json({ url, name: data.name, audio: data.audio || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Playlists ──────────────────────────────────────────────────────────────
+
+app.get("/api/musica/playlists", authenticateMiembro, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT p.id, p.nombre, p.created_at, COUNT(pc.id)::int AS total
+       FROM playlists p
+       LEFT JOIN playlist_canciones pc ON pc.playlist_id = p.id
+       WHERE p.miembro_id = $1
+       GROUP BY p.id ORDER BY p.created_at DESC`,
+      [req.miembro.id]
+    );
+    res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/musica/playlists", authenticateMiembro, async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre?.trim()) return res.status(400).json({ error: "Nombre requerido" });
+  try {
+    const r = await pool.query(
+      "INSERT INTO playlists (miembro_id, nombre) VALUES ($1, $2) RETURNING *",
+      [req.miembro.id, nombre.trim()]
+    );
+    res.json({ ...r.rows[0], total: 0 });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/musica/playlists/:id", authenticateMiembro, async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre?.trim()) return res.status(400).json({ error: "Nombre requerido" });
+  try {
+    const r = await pool.query(
+      "UPDATE playlists SET nombre = $1 WHERE id = $2 AND miembro_id = $3 RETURNING *",
+      [nombre.trim(), req.params.id, req.miembro.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: "No encontrada" });
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/musica/playlists/:id", authenticateMiembro, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM playlists WHERE id = $1 AND miembro_id = $2", [req.params.id, req.miembro.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/api/musica/playlists/:id/canciones", authenticateMiembro, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT pc.* FROM playlist_canciones pc
+       JOIN playlists p ON p.id = pc.playlist_id
+       WHERE pc.playlist_id = $1 AND p.miembro_id = $2
+       ORDER BY pc.orden, pc.id`,
+      [req.params.id, req.miembro.id]
+    );
+    res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/musica/playlists/:id/canciones", authenticateMiembro, async (req, res) => {
+  const { file_id, titulo, duracion_ms } = req.body;
+  if (!file_id || !titulo) return res.status(400).json({ error: "file_id y titulo son requeridos" });
+  try {
+    const pl = await pool.query(
+      "SELECT id FROM playlists WHERE id = $1 AND miembro_id = $2",
+      [req.params.id, req.miembro.id]
+    );
+    if (!pl.rows.length) return res.status(403).json({ error: "No autorizado" });
+    const exists = await pool.query(
+      "SELECT id FROM playlist_canciones WHERE playlist_id = $1 AND file_id = $2",
+      [req.params.id, file_id]
+    );
+    if (exists.rows.length) return res.status(409).json({ error: "Ya está en la playlist" });
+    const maxR = await pool.query(
+      "SELECT COALESCE(MAX(orden), -1) + 1 AS next FROM playlist_canciones WHERE playlist_id = $1",
+      [req.params.id]
+    );
+    const r = await pool.query(
+      "INSERT INTO playlist_canciones (playlist_id, file_id, titulo, duracion_ms, orden) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      [req.params.id, file_id, titulo, duracion_ms || null, maxR.rows[0].next]
+    );
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/musica/playlists/:id/canciones/:cancionId", authenticateMiembro, async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM playlist_canciones WHERE id = $1 AND playlist_id = $2
+       AND (SELECT miembro_id FROM playlists WHERE id = $2) = $3`,
+      [req.params.cancionId, req.params.id, req.miembro.id]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.listen(PORT, async () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   await initFamiliasTables();
+  // Migración: columna evento_id en hero_slides
+  try {
+    await pool.query(
+      "ALTER TABLE hero_slides ADD COLUMN IF NOT EXISTS evento_id INTEGER REFERENCES eventos(id) ON DELETE SET NULL"
+    );
+    console.log("[DB] Columna evento_id en hero_slides lista.");
+  } catch (err) {
+    console.error("[DB] Error al migrar hero_slides:", err.message);
+  }
+  // Migración: tabla disponibilidad_bloqueada
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS disponibilidad_bloqueada (
+        id           SERIAL PRIMARY KEY,
+        miembro_id   INTEGER NOT NULL REFERENCES miembros(id) ON DELETE CASCADE,
+        fecha_inicio DATE    NOT NULL,
+        fecha_fin    DATE    NOT NULL,
+        motivo       TEXT,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS idx_disp_miembro ON disponibilidad_bloqueada(miembro_id)"
+    );
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS idx_disp_fechas ON disponibilidad_bloqueada(fecha_inicio, fecha_fin)"
+    );
+    console.log("[DB] Tabla disponibilidad_bloqueada lista.");
+  } catch (err) {
+    console.error("[DB] Error al migrar disponibilidad_bloqueada:", err.message);
+  }
+  // Migraciones: música (configuracion, playlists, playlist_canciones)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS configuracion (
+        clave      TEXT PRIMARY KEY,
+        valor      TEXT NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS playlists (
+        id         SERIAL PRIMARY KEY,
+        miembro_id INTEGER NOT NULL REFERENCES miembros(id) ON DELETE CASCADE,
+        nombre     TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS playlist_canciones (
+        id          SERIAL PRIMARY KEY,
+        playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+        file_id     TEXT NOT NULL,
+        titulo      TEXT NOT NULL,
+        duracion_ms INTEGER,
+        orden       INTEGER NOT NULL DEFAULT 0,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_playlist_miembro ON playlists(miembro_id)");
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_playlist_canciones ON playlist_canciones(playlist_id)");
+    console.log("[DB] Tablas de música listas.");
+  } catch (err) {
+    console.error("[DB] Error al migrar tablas música:", err.message);
+  }
 });
 

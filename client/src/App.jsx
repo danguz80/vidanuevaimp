@@ -35,6 +35,10 @@ import GaleriaFotos from "./pages/GaleriaFotos";
 import ProgresoFondos from "./pages/ProgresoFondos";
 import LoginMiembro from "./pages/LoginMiembro";
 import MiPortal from "./pages/MiPortal";
+import DirectorioMiembros from "./pages/DirectorioMiembros";
+import PerfilPublicoMiembro from "./pages/PerfilPublicoMiembro";
+import BibliotecaMusica from "./pages/BibliotecaMusica";
+import AdminMusica from "./pages/AdminMusica";
 
 export default function App() {
   return (
@@ -70,10 +74,14 @@ export default function App() {
               <Route path="/admin/miembros" element={<ProtectedRoute><AdminMiembros /></ProtectedRoute>} />
               <Route path="/admin/miembros/:id" element={<ProtectedRoute><PerfilMiembro /></ProtectedRoute>} />
               <Route path="/admin/calendario" element={<ProtectedRoute><AdminCalendario /></ProtectedRoute>} />
+              <Route path="/admin/musica" element={<ProtectedRoute><AdminMusica /></ProtectedRoute>} />
 
               {/* Portal de miembros */}
               <Route path="/portal/login" element={<LoginMiembro />} />
               <Route path="/portal" element={<MiPortal />} />
+              <Route path="/portal/directorio" element={<DirectorioMiembros />} />
+              <Route path="/portal/miembros/:id" element={<PerfilPublicoMiembro />} />
+              <Route path="/portal/musica" element={<BibliotecaMusica />} />
               
               <Route path="*" element={<NotFound />} />
             </Routes>

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
-import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X, Bell, Star, Mic, DoorOpen } from "lucide-react";
+import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X, Bell, Star, Mic, DoorOpen, CalendarOff, Plus, Trash2, Users, Music } from "lucide-react";
 import { useMemberAuth } from "../context/MemberAuthContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -296,6 +296,14 @@ export default function MiPortal() {
   const [guardandoAcerca, setGuardandoAcerca] = useState(false);
   const [errorAcerca, setErrorAcerca] = useState("");
 
+  // Disponibilidad / Mi Horario
+  const [bloqueos, setBloqueos] = useState([]);
+  const [cargandoBloqueos, setCargandoBloqueos] = useState(true);
+  const [nuevoBloqueo, setNuevoBloqueo] = useState({ fecha_inicio: "", fecha_fin: "", motivo: "" });
+  const [guardandoBloqueo, setGuardandoBloqueo] = useState(false);
+  const [errorBloqueo, setErrorBloqueo] = useState("");
+  const [mostrarFormBloqueo, setMostrarFormBloqueo] = useState(false);
+
   useEffect(() => {
     if (!miembro) { navigate("/portal/login"); return; }
     fetch(`${API_URL}/api/miembros/me`, { headers: { Authorization: `Bearer ${getToken()}` } })
@@ -328,6 +336,12 @@ export default function MiPortal() {
         if (hayNuevos) setModalServicio(true);
       })
       .catch(err => { console.error("Error fetch compromisos:", err); setCargandoCompromisos(false); });
+
+    // Cargar bloqueos de disponibilidad
+    fetch(`${API_URL}/api/miembros/me/disponibilidad`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.json())
+      .then(d => { setBloqueos(Array.isArray(d) ? d : []); setCargandoBloqueos(false); })
+      .catch(() => setCargandoBloqueos(false));
   }, [miembro]);
 
   const cambiarFoto = (file) => {
@@ -355,8 +369,40 @@ export default function MiPortal() {
     reader.readAsDataURL(file);
   };
 
-  const guardarAcerca = async () => {
-    setErrorAcerca("");
+  const guardarBloqueo = async () => {
+    setErrorBloqueo("");
+    if (!nuevoBloqueo.fecha_inicio) { setErrorBloqueo("La fecha de inicio es requerida"); return; }
+    if (nuevoBloqueo.fecha_fin && nuevoBloqueo.fecha_fin < nuevoBloqueo.fecha_inicio) {
+      setErrorBloqueo("La fecha fin no puede ser anterior al inicio");
+      return;
+    }
+    setGuardandoBloqueo(true);
+    try {
+      const res = await fetch(`${API_URL}/api/miembros/me/disponibilidad`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify(nuevoBloqueo),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErrorBloqueo(data.error || "Error al guardar"); return; }
+      setBloqueos(prev => [...prev, data].sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio)));
+      setNuevoBloqueo({ fecha_inicio: "", fecha_fin: "", motivo: "" });
+      setMostrarFormBloqueo(false);
+    } catch { setErrorBloqueo("Error de conexión"); }
+    finally { setGuardandoBloqueo(false); }
+  };
+
+  const eliminarBloqueo = async (id) => {
+    try {
+      await fetch(`${API_URL}/api/miembros/me/disponibilidad/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      setBloqueos(prev => prev.filter(b => b.id !== id));
+    } catch { /* silencioso */ }
+  };
+
+  const guardarAcerca = async () => {    setErrorAcerca("");
     if (contarPalabras(textoAcerca) > 100) {
       setErrorAcerca("Máximo 100 palabras");
       return;
@@ -637,10 +683,125 @@ export default function MiPortal() {
           </div>
         </div>
 
+        {/* ── Mi Horario ─────────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+              <CalendarOff size={14} className="text-rose-400" /> Mi Horario
+            </h2>
+            <button
+              onClick={() => { setMostrarFormBloqueo(v => !v); setErrorBloqueo(""); }}
+              className="flex items-center gap-1 text-xs text-rose-600 hover:text-rose-800 font-medium transition"
+            >
+              <Plus size={13} /> Bloquear fechas
+            </button>
+          </div>
+
+          {mostrarFormBloqueo && (
+            <div className="mb-4 bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-3">
+              <p className="text-xs text-rose-700 font-medium">Indica el período en que no estarás disponible</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Desde *</label>
+                  <input
+                    type="date"
+                    value={nuevoBloqueo.fecha_inicio}
+                    onChange={e => setNuevoBloqueo(p => ({ ...p, fecha_inicio: e.target.value }))}
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-rose-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Hasta <span className="text-gray-400">(opcional)</span></label>
+                  <input
+                    type="date"
+                    value={nuevoBloqueo.fecha_fin}
+                    min={nuevoBloqueo.fecha_inicio}
+                    onChange={e => setNuevoBloqueo(p => ({ ...p, fecha_fin: e.target.value }))}
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-rose-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Motivo <span className="text-gray-400">(opcional)</span></label>
+                <input
+                  type="text"
+                  value={nuevoBloqueo.motivo}
+                  onChange={e => setNuevoBloqueo(p => ({ ...p, motivo: e.target.value }))}
+                  placeholder="Viaje, vacaciones, compromiso familiar..."
+                  className="w-full border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-rose-400 focus:outline-none"
+                />
+              </div>
+              {errorBloqueo && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{errorBloqueo}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setMostrarFormBloqueo(false); setErrorBloqueo(""); setNuevoBloqueo({ fecha_inicio: "", fecha_fin: "", motivo: "" }); }}
+                  className="flex-1 border border-gray-300 text-gray-600 text-xs rounded-lg py-2 hover:bg-gray-50 transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={guardarBloqueo}
+                  disabled={guardandoBloqueo}
+                  className="flex-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg py-2 transition disabled:opacity-50"
+                >
+                  {guardandoBloqueo ? "Guardando..." : "Guardar"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {cargandoBloqueos ? (
+            <p className="text-sm text-gray-400">Cargando...</p>
+          ) : bloqueos.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No tienes fechas bloqueadas. Estás disponible para todos los servicios.</p>
+          ) : (
+            <div className="space-y-2">
+              {bloqueos.map(b => {
+                const inicio = new Date(b.fecha_inicio.slice(0, 10) + "T12:00:00");
+                const fin    = new Date(b.fecha_fin.slice(0, 10)   + "T12:00:00");
+                const esMismoDia = b.fecha_inicio === b.fecha_fin;
+                const fmt = (d) => d.toLocaleDateString("es-CL", { day: "numeric", month: "short", year: "numeric" });
+                return (
+                  <div key={b.id} className="flex items-start gap-3 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2.5">
+                    <CalendarOff size={15} className="text-rose-400 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-rose-800">
+                        {esMismoDia ? fmt(inicio) : `${fmt(inicio)} — ${fmt(fin)}`}
+                      </p>
+                      {b.motivo && <p className="text-xs text-rose-600 truncate">{b.motivo}</p>}
+                    </div>
+                    <button
+                      onClick={() => eliminarBloqueo(b.id)}
+                      className="text-rose-300 hover:text-rose-600 transition shrink-0"
+                      title="Eliminar"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Acciones */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Configuración</h2>
           <div className="space-y-3">
+            <button
+              onClick={() => navigate("/portal/directorio")}
+              className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-900 font-medium transition"
+            >
+              <Users size={16} /> Directorio de miembros
+            </button>
+            <button
+              onClick={() => navigate("/portal/musica")}
+              className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-900 font-medium transition"
+            >
+              <Music size={16} /> Biblioteca de música
+            </button>
             <button
               onClick={() => setShowCambiarPwd(true)}
               className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-900 font-medium transition"

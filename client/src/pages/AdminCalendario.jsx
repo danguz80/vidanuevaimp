@@ -229,18 +229,28 @@ export default function AdminCalendario() {
   // PDF
   const [generandoPDF, setGenerandoPDF] = useState(false);
 
+  // Hero
+  const [heroEventoIds, setHeroEventoIds] = useState(new Set());
+  const [togglingHero, setTogglingHero] = useState(null); // id del evento en proceso
+
+  // Disponibilidad bloqueada
+  const [bloqueadosPorFecha, setBloqueadosPorFecha] = useState(new Set()); // IDs de miembros no disponibles
+
   const headers = () => ({ Authorization: `Bearer ${getToken()}` });
 
   const cargar = async () => {
     try {
-      const [resEv, resMem] = await Promise.all([
+      const [resEv, resMem, resHero] = await Promise.all([
         fetch(`${API}/api/eventos`, { headers: headers() }),
         fetch(`${API}/api/miembros`, { headers: headers() }),
+        fetch(`${API}/api/hero/eventos-ids`, { headers: headers() }),
       ]);
       const ev = await resEv.json();
       const mem = await resMem.json();
+      const heroIds = await resHero.json();
       setEventos(Array.isArray(ev) ? ev : []);
       setMiembros(Array.isArray(mem) ? mem : []);
+      setHeroEventoIds(new Set(Array.isArray(heroIds) ? heroIds : []));
     } catch (e) {
       console.error(e);
     } finally {
@@ -263,6 +273,55 @@ export default function AdminCalendario() {
 
   useEffect(() => { cargar(); }, []);
   useEffect(() => { cargarPortero(anioActual, mesActual); }, [anioActual, mesActual]);
+
+  const agregarAlHero = async (ev) => {
+    setTogglingHero(ev.id);
+    try {
+      const res = await fetch(`${API}/api/hero/from-evento/${ev.id}`, {
+        method: "POST", headers: headers(),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Error al agregar al Hero");
+        return;
+      }
+      setHeroEventoIds(prev => new Set([...prev, ev.id]));
+    } catch {
+      alert("Error de conexión");
+    } finally {
+      setTogglingHero(null);
+    }
+  };
+
+  const quitarDelHero = async (ev) => {
+    setTogglingHero(ev.id);
+    try {
+      const res = await fetch(`${API}/api/hero/from-evento/${ev.id}`, {
+        method: "DELETE", headers: headers(),
+      });
+      if (!res.ok) { alert("Error al quitar del Hero"); return; }
+      setHeroEventoIds(prev => { const s = new Set(prev); s.delete(ev.id); return s; });
+    } catch {
+      alert("Error de conexión");
+    } finally {
+      setTogglingHero(null);
+    }
+  };
+
+  const cargarBloqueados = async (fecha) => {
+    if (!fecha) { setBloqueadosPorFecha(new Set()); return; }
+    try {
+      const fechaSolo = fecha.slice(0, 10);
+      const res = await fetch(
+        `${API}/api/miembros/disponibilidad-bloqueada?fecha=${fechaSolo}`,
+        { headers: headers() }
+      );
+      const ids = await res.json();
+      setBloqueadosPorFecha(new Set(Array.isArray(ids) ? ids : []));
+    } catch {
+      setBloqueadosPorFecha(new Set());
+    }
+  };
 
   const guardarPortero = async (miembro_id) => {
     setGuardandoPortero(true);
@@ -696,6 +755,9 @@ export default function AdminCalendario() {
       : new Date();
     const iso = toLocalISOString(fechaBase);
     setForm({ ...FORM_INICIAL, fecha_inicio: iso });
+    // Cargar no disponibles para la fecha seleccionada
+    const fechaStr = toLocalDateStr(fechaBase);
+    cargarBloqueados(fechaStr);
     setModalAbierto(true);
   };
 
@@ -719,6 +781,7 @@ export default function AdminCalendario() {
       color: ev.color || "#3B82F6",
       zoom_link: ev.zoom_link || "",
     });
+    if (ev.fecha_inicio) cargarBloqueados(ev.fecha_inicio.slice(0, 10));
     setModalAbierto(true);
   };
 
@@ -737,8 +800,16 @@ export default function AdminCalendario() {
         predicador_id:  vistaEvento.predicador_id  ? String(vistaEvento.predicador_id)  : "",
         notas:          vistaEvento.notas || "",
       });
+      // Cargar bloqueados para la ocurrencia seleccionada
+      if (vistaEvento._fecha) cargarBloqueados(toLocalDateStr(vistaEvento._fecha));
     }
+    if (!vistaEvento) setBloqueadosPorFecha(new Set());
   }, [vistaEvento]);
+
+  // Actualizar bloqueados cuando cambia la fecha en el modal de crear/editar
+  useEffect(() => {
+    if (modalAbierto && form.fecha_inicio) cargarBloqueados(form.fecha_inicio.slice(0, 10));
+  }, [form.fecha_inicio, modalAbierto]);
 
   const guardarOcurrencia = async () => {
     if (!vistaEvento || !vistaEvento._fecha) return;
@@ -1075,6 +1146,25 @@ export default function AdminCalendario() {
                     <span className={`mt-1 inline-block text-xs px-2 py-0.5 rounded-full ${ev.tipo === "recurrente" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
                       {ev.tipo === "recurrente" ? `🔁 ${ev.recurrencia}` : "📅 especial"}
                     </span>
+                    <div className="mt-2">
+                      {heroEventoIds.has(ev.id) ? (
+                        <button
+                          onClick={e => { e.stopPropagation(); quitarDelHero(ev); }}
+                          disabled={togglingHero === ev.id}
+                          className="text-xs text-orange-600 hover:text-orange-800 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-full transition font-medium disabled:opacity-50"
+                        >
+                          {togglingHero === ev.id ? "..." : "✕ Quitar del Hero"}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={e => { e.stopPropagation(); agregarAlHero(ev); }}
+                          disabled={togglingHero === ev.id}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-full transition font-medium disabled:opacity-50"
+                        >
+                          {togglingHero === ev.id ? "..." : "✦ Agregar al Hero"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1161,9 +1251,10 @@ export default function AdminCalendario() {
                       }`}
                     >
                       <option value="">Sin asignar</option>
-                      {miembros.map(m => (
-                        <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-                      ))}
+                      {miembros.map(m => {
+                        const bl = bloqueadosPorFecha.has(m.id);
+                        return <option key={m.id} value={m.id} disabled={bl}>{bl ? `✕ ${m.nombre} ${m.apellido} — no disponible` : `${m.nombre} ${m.apellido}`}</option>;
+                      })}
                     </select>
                   </div>
                   <p className="text-center text-xs text-gray-400 mb-2">— o separar en —</p>
@@ -1181,9 +1272,10 @@ export default function AdminCalendario() {
                         }`}
                       >
                         <option value="">Sin asignar</option>
-                        {miembros.map(m => (
-                          <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-                        ))}
+                        {miembros.map(m => {
+                          const bl = bloqueadosPorFecha.has(m.id);
+                          return <option key={m.id} value={m.id} disabled={bl}>{bl ? `✕ ${m.nombre} ${m.apellido} — no disponible` : `${m.nombre} ${m.apellido}`}</option>;
+                        })}
                       </select>
                     </div>
                     <div>
@@ -1199,9 +1291,10 @@ export default function AdminCalendario() {
                         }`}
                       >
                         <option value="">Sin asignar</option>
-                        {miembros.map(m => (
-                          <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-                        ))}
+                        {miembros.map(m => {
+                          const bl = bloqueadosPorFecha.has(m.id);
+                          return <option key={m.id} value={m.id} disabled={bl}>{bl ? `✕ ${m.nombre} ${m.apellido} — no disponible` : `${m.nombre} ${m.apellido}`}</option>;
+                        })}
                       </select>
                     </div>
                   </div>
@@ -1234,25 +1327,44 @@ export default function AdminCalendario() {
                 </span>
               </p>
             </div>
-            <div className="flex gap-3 p-4 border-t bg-gray-50 rounded-b-2xl shrink-0">
-              <button
-                onClick={() => abrirEditar(vistaEvento)}
-                className="flex-1 bg-amber-100 hover:bg-amber-200 text-amber-700 font-semibold py-2.5 rounded-lg transition text-sm"
-              >
-                Editar
-              </button>
-              <button
-                onClick={() => eliminar(vistaEvento.id)}
-                className="flex-1 bg-red-100 hover:bg-red-200 text-red-600 font-semibold py-2.5 rounded-lg transition text-sm"
-              >
-                Eliminar
-              </button>
-              <button
-                onClick={() => setVistaEvento(null)}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold py-2.5 rounded-lg transition text-sm"
-              >
-                Cerrar
-              </button>
+            <div className="p-4 border-t bg-gray-50 rounded-b-2xl shrink-0 space-y-2">
+              {heroEventoIds.has(vistaEvento.id) ? (
+                <button
+                  onClick={() => quitarDelHero(vistaEvento)}
+                  disabled={togglingHero === vistaEvento.id}
+                  className="w-full bg-orange-100 hover:bg-orange-200 text-orange-700 font-semibold py-2.5 rounded-lg transition text-sm disabled:opacity-50"
+                >
+                  {togglingHero === vistaEvento.id ? "Procesando..." : "✕ Quitar del HeroSection"}
+                </button>
+              ) : (
+                <button
+                  onClick={() => agregarAlHero(vistaEvento)}
+                  disabled={togglingHero === vistaEvento.id}
+                  className="w-full bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-semibold py-2.5 rounded-lg transition text-sm disabled:opacity-50"
+                >
+                  {togglingHero === vistaEvento.id ? "Procesando..." : "✦ Agregar al HeroSection"}
+                </button>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => abrirEditar(vistaEvento)}
+                  className="flex-1 bg-amber-100 hover:bg-amber-200 text-amber-700 font-semibold py-2.5 rounded-lg transition text-sm"
+                >
+                  Editar
+                </button>
+                <button
+                  onClick={() => eliminar(vistaEvento.id)}
+                  className="flex-1 bg-red-100 hover:bg-red-200 text-red-600 font-semibold py-2.5 rounded-lg transition text-sm"
+                >
+                  Eliminar
+                </button>
+                <button
+                  onClick={() => setVistaEvento(null)}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold py-2.5 rounded-lg transition text-sm"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1392,9 +1504,10 @@ export default function AdminCalendario() {
                     }`}
                   >
                     <option value="">Sin asignar</option>
-                    {miembros.map(m => (
-                      <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-                    ))}
+                    {miembros.map(m => {
+                      const bl = bloqueadosPorFecha.has(m.id);
+                      return <option key={m.id} value={m.id} disabled={bl}>{bl ? `✕ ${m.nombre} ${m.apellido} — no disponible` : `${m.nombre} ${m.apellido}`}</option>;
+                    })}
                   </select>
                 </div>
                 <p className="text-center text-xs text-gray-400">— o separar en —</p>
@@ -1412,9 +1525,10 @@ export default function AdminCalendario() {
                       }`}
                     >
                       <option value="">Sin asignar</option>
-                      {miembros.map(m => (
-                        <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-                      ))}
+                      {miembros.map(m => {
+                        const bl = bloqueadosPorFecha.has(m.id);
+                        return <option key={m.id} value={m.id} disabled={bl}>{bl ? `✕ ${m.nombre} ${m.apellido} — no disponible` : `${m.nombre} ${m.apellido}`}</option>;
+                      })}
                     </select>
                   </div>
                   <div>
@@ -1430,9 +1544,10 @@ export default function AdminCalendario() {
                       }`}
                     >
                       <option value="">Sin asignar</option>
-                      {miembros.map(m => (
-                        <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-                      ))}
+                      {miembros.map(m => {
+                        const bl = bloqueadosPorFecha.has(m.id);
+                        return <option key={m.id} value={m.id} disabled={bl}>{bl ? `✕ ${m.nombre} ${m.apellido} — no disponible` : `${m.nombre} ${m.apellido}`}</option>;
+                      })}
                     </select>
                   </div>
                 </div>
