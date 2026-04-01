@@ -29,6 +29,8 @@ export default function BibliotecaMusica() {
   // ── Datos ──
   const [carpetas, setCarpetas] = useState([]);
   const [carpetaActiva, setCarpetaActiva] = useState(null);
+  const [subcarpetas, setSubcarpetas] = useState([]);
+  const [subcarpetaActiva, setSubcarpetaActiva] = useState(null);
   const [canciones, setCanciones] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [playlistActiva, setPlaylistActiva] = useState(null);
@@ -106,13 +108,38 @@ export default function BibliotecaMusica() {
       const data = await r.json();
       if (data.error) { setErrorConexion(data.error); return; }
       setCarpetas(data);
-      if (data.length > 0) cargarCanciones(data[0]);
+      if (data.length > 0) await seleccionarCarpeta(data[0]);
     } catch { setErrorConexion("Error de conexión con el servidor"); }
     finally   { setLoadingCarpetas(false); }
   };
 
-  const cargarCanciones = async (carpeta) => {
+  const seleccionarCarpeta = async (carpeta) => {
     setCarpetaActiva(carpeta);
+    setSubcarpetas([]);
+    setSubcarpetaActiva(null);
+    setCanciones([]);
+    setLoadingCanciones(true);
+    try {
+      // Buscar subcarpetas dentro de esta carpeta
+      const r = await fetch(`${API_URL}/api/musica/carpetas?folderId=${encodeURIComponent(carpeta.id)}`, { headers: hdrs() });
+      const subs = await r.json();
+      if (Array.isArray(subs) && subs.length > 0) {
+        setSubcarpetas(subs);
+        // Auto-cargar canciones de la primera subcarpeta
+        await cargarCanciones(subs[0]);
+      } else {
+        // No hay subcarpetas: cargar directamente las canciones
+        await cargarCanciones(carpeta);
+      }
+    } catch {
+      await cargarCanciones(carpeta);
+    } finally {
+      setLoadingCanciones(false);
+    }
+  };
+
+  const cargarCanciones = async (carpeta) => {
+    setSubcarpetaActiva(carpeta);
     setLoadingCanciones(true);
     try {
       const r = await fetch(
@@ -304,7 +331,7 @@ export default function BibliotecaMusica() {
                   {carpetas.map(c => (
                     <button
                       key={c.id}
-                      onClick={() => cargarCanciones(c)}
+                      onClick={() => seleccionarCarpeta(c)}
                       className={`px-3 py-1.5 rounded-full text-sm font-medium transition ${
                         carpetaActiva?.id === c.id
                           ? "bg-indigo-600 text-white"
@@ -315,6 +342,25 @@ export default function BibliotecaMusica() {
                     </button>
                   ))}
                 </div>
+
+                {/* ── Chips de subcarpetas (segundo nivel) ── */}
+                {subcarpetas.length > 0 && (
+                  <div className="flex gap-2 flex-wrap mb-4 pl-2 border-l-2 border-indigo-200">
+                    {subcarpetas.map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => cargarCanciones(s)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                          subcarpetaActiva?.id === s.id
+                            ? "bg-indigo-500 text-white"
+                            : "bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100"
+                        }`}
+                      >
+                        {s.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* ── Lista de canciones ── */}
                 {loadingCanciones ? (

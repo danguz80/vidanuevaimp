@@ -2637,13 +2637,16 @@ app.get("/api/musica/estado", authenticateToken, async (req, res) => {
   } catch { res.json({ configurado: false }); }
 });
 
-// GET /api/musica/carpetas — subcarpetas de la carpeta raíz de Drive
+// GET /api/musica/carpetas — subcarpetas de la carpeta raíz de Drive (o de una carpeta específica si se pasa ?folderId=X)
 app.get("/api/musica/carpetas", authenticateMiembro, async (req, res) => {
   try {
-    const r = await pool.query("SELECT valor FROM configuracion WHERE clave = 'google_drive_folder_id'");
-    if (!r.rows.length)
-      return res.status(503).json({ error: "Música no configurada. Contacta al administrador." });
-    const folderId = r.rows[0].valor;
+    let folderId = req.query.folderId;
+    if (!folderId) {
+      const r = await pool.query("SELECT valor FROM configuracion WHERE clave = 'google_drive_folder_id'");
+      if (!r.rows.length)
+        return res.status(503).json({ error: "Música no configurada. Contacta al administrador." });
+      folderId = r.rows[0].valor;
+    }
     const data = await driveList({
       q: `'${folderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
       fields: "files(id,name)",
