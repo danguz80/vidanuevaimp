@@ -7,6 +7,17 @@
   NODE_VERSION = "20"
   CI = "false"
 
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin-allow-popups"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://iglesia-backend.onrender.com/api/:splat"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
