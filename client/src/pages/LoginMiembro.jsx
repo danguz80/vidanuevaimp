@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import { GoogleLogin } from "@react-oauth/google";
+
+const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 import { useMemberAuth } from "../context/MemberAuthContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -28,7 +30,7 @@ export default function LoginMiembro() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/miembros/login", {
+      const res = await fetch(`${API_URL}/api/miembros/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -50,7 +52,7 @@ export default function LoginMiembro() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/miembros/auth/google", {
+      const res = await fetch(`${API_URL}/api/miembros/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credential: credentialResponse.credential }),

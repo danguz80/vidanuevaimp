@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
+
+const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X, Bell, Star, Mic, DoorOpen } from "lucide-react";
 import { useMemberAuth } from "../context/MemberAuthContext";
 import { useAuth } from "../context/AuthContext";
@@ -197,7 +199,7 @@ function CambiarPasswordModal({ onClose, getToken }) {
     if (nueva.length < 6) { setError("Mínimo 6 caracteres"); return; }
     setLoading(true);
     try {
-      const res = await fetch("/api/miembros/me/password", {
+      const res = await fetch(`${API_URL}/api/miembros/me/password`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({ passwordActual: actual, passwordNuevo: nueva }),
@@ -289,13 +291,13 @@ export default function MiPortal() {
 
   useEffect(() => {
     if (!miembro) { navigate("/portal/login"); return; }
-    fetch("/api/miembros/me", { headers: { Authorization: `Bearer ${getToken()}` } })
+    fetch(`${API_URL}/api/miembros/me`, { headers: { Authorization: `Bearer ${getToken()}` } })
       .then(r => r.json())
       .then(d => { setPerfil(d); setTextoAcerca(d.acerca_de_mi || ""); setLoading(false); })
       .catch(() => setLoading(false));
 
     // Cargar compromisos
-    fetch("/api/miembros/me/compromisos", { headers: { Authorization: `Bearer ${getToken()}` } })
+    fetch(`${API_URL}/api/miembros/me/compromisos`, { headers: { Authorization: `Bearer ${getToken()}` } })
       .then(r => {
         if (!r.ok) { console.error("Compromisos HTTP error:", r.status); return null; }
         return r.json();
@@ -332,7 +334,7 @@ export default function MiPortal() {
     reader.onload = async (e) => {
       setSubiendoFoto(true);
       try {
-        const res = await fetch("/api/miembros/me/foto-perfil", {
+        const res = await fetch(`${API_URL}/api/miembros/me/foto-perfil`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
           body: JSON.stringify({ imagen_base64: e.target.result }),
@@ -354,7 +356,7 @@ export default function MiPortal() {
     }
     setGuardandoAcerca(true);
     try {
-      const res = await fetch("/api/miembros/me/acerca-de-mi", {
+      const res = await fetch(`${API_URL}/api/miembros/me/acerca-de-mi`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({ acerca_de_mi: textoAcerca }),
