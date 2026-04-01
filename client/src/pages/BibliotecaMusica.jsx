@@ -115,7 +115,10 @@ export default function BibliotecaMusica() {
     setCarpetaActiva(carpeta);
     setLoadingCanciones(true);
     try {
-      const r = await fetch(`${API_URL}/api/musica/canciones/${carpeta.id}`, { headers: hdrs() });
+      const r = await fetch(
+        `${API_URL}/api/musica/canciones?folderId=${encodeURIComponent(carpeta.id)}`,
+        { headers: hdrs() }
+      );
       const data = await r.json();
       setCanciones(Array.isArray(data) ? data : []);
     } catch { setCanciones([]); }
@@ -168,11 +171,11 @@ export default function BibliotecaMusica() {
   const agregarAPlaylist = async (playlistId, cancion) => {
     setAddingPl(playlistId);
     try {
-      const titulo = cancion.audio?.title || sinExtension(cancion.name || "");
+      const titulo = sinExtension(cancion.name || "");
       await fetch(`${API_URL}/api/musica/playlists/${playlistId}/canciones`, {
         method: "POST",
         headers: { ...hdrs(), "Content-Type": "application/json" },
-        body: JSON.stringify({ file_id: cancion.id, titulo, duracion_ms: cancion.audio?.duration }),
+        body: JSON.stringify({ file_id: cancion.id, titulo }),
       });
       cargarPlaylists();
       if (playlistActiva?.id === playlistId) cargarCancionesPlaylist(playlistActiva);
@@ -192,35 +195,34 @@ export default function BibliotecaMusica() {
 
   // ── Player ──
   const reproducirItem = async (item, cola, idx) => {
-    const fileId = item.fileId || item.id;
+    const fileId = item.fileId || item.file_id || item.id;
     setLoadingStream(true);
     try {
+      // Fetch con auth header → Blob URL para el elemento <audio>
       const r = await fetch(`${API_URL}/api/musica/stream/${fileId}`, { headers: hdrs() });
-      const { url, audio: meta } = await r.json();
+      if (!r.ok) { console.error("Error stream:", r.status); return; }
+      const blob = await r.blob();
+      const blobUrl = URL.createObjectURL(blob);
       const audio = audioRef.current;
-      audio.src = url;
+      // Revocar blob anterior si existe
+      if (audio._blobUrl) URL.revokeObjectURL(audio._blobUrl);
+      audio._blobUrl = blobUrl;
+      audio.src = blobUrl;
       audio.volume = volumen;
       await audio.play();
       colaRef.current = cola;
       idxRef.current  = idx;
       setCancionActual({
         fileId,
-        titulo:  meta?.title  || item.titulo || sinExtension(item.name || ""),
-        artista: meta?.artist || item.artista || null,
+        titulo:  item.titulo || sinExtension(item.name || ""),
+        artista: null,
       });
     } catch (e) { console.error("Error al reproducir:", e); }
     finally   { setLoadingStream(false); }
   };
 
-  // Wrapper para canciones de biblioteca (OneDrive items)
-  const reproducirCancion = (cancion, cola, idx) => {
-    reproducirItem({ fileId: cancion.id, name: cancion.name, audio: cancion.audio }, cola, idx);
-  };
-
-  // Wrapper para canciones de playlist (DB rows)
-  const reproducirDePlaylist = (c, lista, idx) => {
-    reproducirItem({ fileId: c.file_id, titulo: c.titulo }, lista, idx);
-  };
+  const reproducirCancion = (cancion, cola, idx) => reproducirItem(cancion, cola, idx);
+  const reproducirDePlaylist = (c, lista, idx) => reproducirItem(c, lista, idx);
 
   const togglePlay = () => {
     const audio = audioRef.current;
@@ -243,10 +245,8 @@ export default function BibliotecaMusica() {
 
   if (!miembro) return null;
 
-  // Cola para biblioteca: mapear a { fileId, name, audio }
-  const colaLibreria = canciones.map(c => ({ fileId: c.id, name: c.name, audio: c.audio }));
-  // Cola para playlist: mapear a { fileId, titulo }
-  const colaPlaylist = cancionesPlaylist.map(c => ({ fileId: c.file_id, titulo: c.titulo }));
+  const colaLibreria = canciones;
+  const colaPlaylist = cancionesPlaylist;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-32">
@@ -295,7 +295,7 @@ export default function BibliotecaMusica() {
               <div className="text-center py-16 text-gray-400 space-y-2">
                 <Music size={40} className="mx-auto opacity-30" />
                 <p className="text-sm font-medium">{errorConexion}</p>
-                <p className="text-xs">Contacta al administrador para configurar OneDrive.</p>
+                <p className="text-xs">Contacta al administrador para configurar Google Drive.</p>
               </div>
             ) : (
               <>

@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { label: "Sermones",   path: "/admin/videos",     color: "green" },
   { label: "Hero",       path: "/admin/hero",       color: "purple" },
   { label: "Fondos",     path: "/admin/fondos",     color: "yellow" },
+  { label: "Música",     path: "/admin/musica",     color: "rose" },
 ];
 
 const COLOR_MAP = {
@@ -18,6 +19,7 @@ const COLOR_MAP = {
   green:  { base: "bg-green-600 hover:bg-green-700",   active: "bg-green-800" },
   purple: { base: "bg-purple-600 hover:bg-purple-700", active: "bg-purple-800" },
   yellow: { base: "bg-yellow-600 hover:bg-yellow-700", active: "bg-yellow-800" },
+  rose:   { base: "bg-rose-600 hover:bg-rose-700",     active: "bg-rose-800" },
 };
 
 export default function AdminNav() {

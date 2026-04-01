@@ -4,12 +4,12 @@ const { Pool } = pkg;
 import dotenv from 'dotenv';
 dotenv.config();
 
+// pg lee automáticamente PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE del entorno.
+// Render PostgreSQL requiere SSL en conexiones externas.
 const pool = new Pool({
-  host: 'localhost',
-  port: 5433,
-  user: 'danielguzmansagredo', // asegúrate que sea tu usuario de mac
-  password: '', // déjalo vacío si no tienes contraseña
-  database: 'iglesia',
+  ssl: process.env.PGHOST && !process.env.PGHOST.includes('localhost')
+    ? { rejectUnauthorized: false }
+    : false,
 });
 
 export default pool;

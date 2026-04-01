@@ -2589,165 +2589,107 @@ async function initFamiliasTables() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MÚSICA — OneDrive / Microsoft Graph API
+// MÚSICA — Google Drive API (API key pública, sin OAuth)
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Cache del access token en memoria
-let _odToken = null;
-let _odTokenExpiry = 0;
+const DRIVE_API = "https://www.googleapis.com/drive/v3";
 
-async function getOneDriveToken() {
-  if (_odToken && Date.now() < _odTokenExpiry - 60_000) return _odToken;
-
-  const r = await pool.query(
-    "SELECT valor FROM configuracion WHERE clave = 'onedrive_refresh_token'"
-  );
-  if (!r.rows.length)
-    throw new Error("OneDrive no configurado. Ve a Admin → Música para conectar.");
-
-  const params = new URLSearchParams({
-    client_id:     process.env.ONEDRIVE_CLIENT_ID,
-    client_secret: process.env.ONEDRIVE_CLIENT_SECRET,
-    refresh_token: r.rows[0].valor,
-    grant_type:    "refresh_token",
-    scope:         "https://graph.microsoft.com/.default offline_access",
-  });
-
-  const res = await fetch(
-    `https://login.microsoftonline.com/${process.env.ONEDRIVE_TENANT_ID}/oauth2/v2.0/token`,
-    { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params }
-  );
-  const data = await res.json();
-  if (data.error) throw new Error(data.error_description || data.error);
-
-  // Guardar nuevo refresh_token si fue rotado
-  if (data.refresh_token) {
-    await pool.query(
-      `INSERT INTO configuracion (clave, valor) VALUES ('onedrive_refresh_token', $1)
-       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()`,
-      [data.refresh_token]
-    );
-  }
-  _odToken = data.access_token;
-  _odTokenExpiry = Date.now() + data.expires_in * 1000;
-  return _odToken;
+// Extrae el folder ID de una URL de Drive o lo devuelve tal cual si ya es un ID
+function extractFolderId(input) {
+  const m = input.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : input.trim();
 }
 
-// GET /api/musica/auth-url — genera URL OAuth para conectar OneDrive (admin)
-app.get("/api/musica/auth-url", authenticateToken, (req, res) => {
-  const redirectUri = `${process.env.BACKEND_URL || "https://iglesia-backend.onrender.com"}/api/musica/auth/callback`;
-  const url =
-    `https://login.microsoftonline.com/${process.env.ONEDRIVE_TENANT_ID}/oauth2/v2.0/authorize?` +
-    new URLSearchParams({
-      client_id:     process.env.ONEDRIVE_CLIENT_ID,
-      response_type: "code",
-      redirect_uri:  redirectUri,
-      scope:         "Files.Read.All offline_access",
-      response_mode: "query",
-    });
-  res.json({ url });
-});
-
-// GET /api/musica/auth/callback — recibe code OAuth y almacena refresh_token
-app.get("/api/musica/auth/callback", async (req, res) => {
-  const { code, error, error_description } = req.query;
-  if (error) return res.status(400).send(`<h2>Error: ${error_description || error}</h2>`);
-  if (!code) return res.status(400).send("<h2>Código de autorización no recibido</h2>");
-
-  const redirectUri = `${process.env.BACKEND_URL || "https://iglesia-backend.onrender.com"}/api/musica/auth/callback`;
-  try {
-    const params = new URLSearchParams({
-      client_id:     process.env.ONEDRIVE_CLIENT_ID,
-      client_secret: process.env.ONEDRIVE_CLIENT_SECRET,
-      code,
-      grant_type:    "authorization_code",
-      redirect_uri:  redirectUri,
-      scope:         "Files.Read.All offline_access",
-    });
-    const tokenRes = await fetch(
-      `https://login.microsoftonline.com/${process.env.ONEDRIVE_TENANT_ID}/oauth2/v2.0/token`,
-      { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params }
-    );
-    const data = await tokenRes.json();
-    if (data.error) return res.status(400).send(`<h2>Error: ${data.error_description}</h2>`);
-
-    await pool.query(
-      `INSERT INTO configuracion (clave, valor) VALUES ('onedrive_refresh_token', $1)
-       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()`,
-      [data.refresh_token]
-    );
-    _odToken = null; _odTokenExpiry = 0; // limpiar caché
-
-    res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;padding:2rem;text-align:center;max-width:400px;margin:auto">
-      <h2 style="color:#16a34a">✅ OneDrive conectado correctamente</h2>
-      <p style="color:#6b7280">Puedes cerrar esta ventana y volver al panel de administración.</p>
-    </body></html>`);
-  } catch (err) {
-    console.error("Error callback OneDrive:", err);
-    res.status(500).send("<h2>Error de conexión</h2>");
+async function driveList(params) {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_API_KEY no configurada en el servidor");
+  const qs = new URLSearchParams({ ...params, key: apiKey }).toString();
+  const res = await fetch(`${DRIVE_API}/files?${qs}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Drive API error ${res.status}`);
   }
+  return res.json();
+}
+
+// POST /api/musica/configurar — admin guarda el folder ID o URL de Google Drive
+app.post("/api/musica/configurar", authenticateToken, async (req, res) => {
+  const { share_url } = req.body;
+  if (!share_url?.trim()) return res.status(400).json({ error: "URL o ID requerido" });
+  const folderId = extractFolderId(share_url);
+  try {
+    await pool.query(
+      `INSERT INTO configuracion (clave, valor) VALUES ('google_drive_folder_id', $1)
+       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()`,
+      [folderId]
+    );
+    // Limpiar clave anterior de OneDrive si existe
+    await pool.query("DELETE FROM configuracion WHERE clave = 'onedrive_share_url'");
+    res.json({ ok: true, folderId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/musica/estado — estado de conexión (admin)
+// GET /api/musica/estado
 app.get("/api/musica/estado", authenticateToken, async (req, res) => {
   try {
-    const r = await pool.query("SELECT clave FROM configuracion WHERE clave = 'onedrive_refresh_token'");
-    res.json({ configurado: r.rows.length > 0 });
+    const r = await pool.query("SELECT valor FROM configuracion WHERE clave = 'google_drive_folder_id'");
+    res.json({ configurado: r.rows.length > 0, folderId: r.rows[0]?.valor || null });
   } catch { res.json({ configurado: false }); }
 });
 
-// GET /api/musica/carpetas — subcarpetas de la carpeta raíz de música
+// GET /api/musica/carpetas — subcarpetas de la carpeta raíz de Drive
 app.get("/api/musica/carpetas", authenticateMiembro, async (req, res) => {
   try {
-    const token = await getOneDriveToken();
-    const folder = encodeURIComponent(process.env.ONEDRIVE_FOLDER || "Musica Iglesia");
-    const r = await fetch(
-      `https://graph.microsoft.com/v1.0/me/drive/root:/${folder}:/children?$select=id,name,folder,lastModifiedDateTime&$orderby=name`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    const data = await r.json();
-    if (data.error) return res.status(502).json({ error: data.error.message });
-    res.json((data.value || []).filter(i => i.folder));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const r = await pool.query("SELECT valor FROM configuracion WHERE clave = 'google_drive_folder_id'");
+    if (!r.rows.length)
+      return res.status(503).json({ error: "Música no configurada. Contacta al administrador." });
+    const folderId = r.rows[0].valor;
+    const data = await driveList({
+      q: `'${folderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: "files(id,name)",
+      orderBy: "name",
+      pageSize: "100",
+    });
+    res.json(data.files || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/musica/canciones/:folderId — archivos de audio en una carpeta
-app.get("/api/musica/canciones/:folderId", authenticateMiembro, async (req, res) => {
+// GET /api/musica/canciones?folderId=XXX — archivos de audio en una subcarpeta
+app.get("/api/musica/canciones", authenticateMiembro, async (req, res) => {
+  const { folderId } = req.query;
+  if (!folderId) return res.status(400).json({ error: "Parámetro 'folderId' requerido" });
   try {
-    const token = await getOneDriveToken();
-    const r = await fetch(
-      `https://graph.microsoft.com/v1.0/me/drive/items/${req.params.folderId}/children?$select=id,name,audio,size,file&$top=200&$orderby=name`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    const data = await r.json();
-    if (data.error) return res.status(502).json({ error: data.error.message });
-    const canciones = (data.value || []).filter(
-      f => !f.folder && (f.audio || /\.(mp3|wav|flac|m4a|aac|ogg|wma)$/i.test(f.name))
+    const data = await driveList({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: "files(id,name,mimeType,size)",
+      orderBy: "name",
+      pageSize: "200",
+    });
+    const canciones = (data.files || []).filter(
+      f => f.mimeType?.startsWith("audio/") || /\.(mp3|wav|flac|m4a|aac|ogg|wma)$/i.test(f.name)
     );
     res.json(canciones);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/musica/stream/:fileId — URL temporal de descarga directa desde OneDrive
+// GET /api/musica/stream/:fileId — proxy de audio desde Google Drive (resuelve CORS)
 app.get("/api/musica/stream/:fileId", authenticateMiembro, async (req, res) => {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "GOOGLE_API_KEY no configurada" });
   try {
-    const token = await getOneDriveToken();
-    const r = await fetch(
-      `https://graph.microsoft.com/v1.0/me/drive/items/${req.params.fileId}`,
-      { headers: { Authorization: `Bearer ${token}` } }
+    const driveRes = await fetch(
+      `${DRIVE_API}/files/${req.params.fileId}?alt=media&key=${apiKey}`,
+      { headers: req.headers.range ? { Range: req.headers.range } : {} }
     );
-    const data = await r.json();
-    if (data.error) return res.status(502).json({ error: data.error.message });
-    const url = data["@microsoft.graph.downloadUrl"];
-    if (!url) return res.status(404).json({ error: "URL de descarga no disponible" });
-    res.json({ url, name: data.name, audio: data.audio || null });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    if (!driveRes.ok) return res.status(driveRes.status).json({ error: "No se pudo obtener el audio" });
+    res.status(driveRes.status);
+    ["content-type", "content-length", "content-range", "accept-ranges"].forEach(h => {
+      const v = driveRes.headers.get(h);
+      if (v) res.setHeader(h, v);
+    });
+    const { Readable } = await import("node:stream");
+    Readable.fromWeb(driveRes.body).pipe(res);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Playlists ──────────────────────────────────────────────────────────────
@@ -2812,7 +2754,7 @@ app.get("/api/musica/playlists/:id/canciones", authenticateMiembro, async (req, 
 });
 
 app.post("/api/musica/playlists/:id/canciones", authenticateMiembro, async (req, res) => {
-  const { file_id, titulo, duracion_ms } = req.body;
+  const { file_id, titulo, duracion_ms, carpeta } = req.body;
   if (!file_id || !titulo) return res.status(400).json({ error: "file_id y titulo son requeridos" });
   try {
     const pl = await pool.query(
@@ -2830,8 +2772,8 @@ app.post("/api/musica/playlists/:id/canciones", authenticateMiembro, async (req,
       [req.params.id]
     );
     const r = await pool.query(
-      "INSERT INTO playlist_canciones (playlist_id, file_id, titulo, duracion_ms, orden) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-      [req.params.id, file_id, titulo, duracion_ms || null, maxR.rows[0].next]
+      "INSERT INTO playlist_canciones (playlist_id, file_id, titulo, duracion_ms, orden, carpeta) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+      [req.params.id, file_id, titulo, duracion_ms || null, maxR.rows[0].next, carpeta || null]
     );
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2912,6 +2854,10 @@ app.listen(PORT, async () => {
     `);
     await pool.query("CREATE INDEX IF NOT EXISTS idx_playlist_miembro ON playlists(miembro_id)");
     await pool.query("CREATE INDEX IF NOT EXISTS idx_playlist_canciones ON playlist_canciones(playlist_id)");
+    // Migración: columna carpeta en playlist_canciones (para reproducción con enlace público)
+    await pool.query(
+      "ALTER TABLE playlist_canciones ADD COLUMN IF NOT EXISTS carpeta TEXT"
+    );
     console.log("[DB] Tablas de música listas.");
   } catch (err) {
     console.error("[DB] Error al migrar tablas música:", err.message);
