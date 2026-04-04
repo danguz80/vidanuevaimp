@@ -501,7 +501,7 @@ export default function AdminCalendario() {
         doc.setFontSize(12);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(200, 225, 255);
-        doc.text("Portero del Mes:", xTxt, 16, { align: "right" });
+        doc.text("Portero/a del Mes:", xTxt, 16, { align: "right" });
         doc.setFontSize(19);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(255, 255, 255);
