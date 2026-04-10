@@ -39,6 +39,7 @@ import DirectorioMiembros from "./pages/DirectorioMiembros";
 import PerfilPublicoMiembro from "./pages/PerfilPublicoMiembro";
 import BibliotecaMusica from "./pages/BibliotecaMusica";
 import AdminMusica from "./pages/AdminMusica";
+import AdminSecretaria from "./pages/AdminSecretaria";
 
 export default function App() {
   return (
@@ -75,6 +76,7 @@ export default function App() {
               <Route path="/admin/miembros/:id" element={<ProtectedRoute><PerfilMiembro /></ProtectedRoute>} />
               <Route path="/admin/calendario" element={<ProtectedRoute><AdminCalendario /></ProtectedRoute>} />
               <Route path="/admin/musica" element={<ProtectedRoute><AdminMusica /></ProtectedRoute>} />
+              <Route path="/admin/secretaria" element={<ProtectedRoute><AdminSecretaria /></ProtectedRoute>} />
 
               {/* Portal de miembros */}
               <Route path="/portal/login" element={<LoginMiembro />} />

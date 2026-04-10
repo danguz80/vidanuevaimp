@@ -5,6 +5,7 @@ const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const API_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
@@ -19,16 +20,29 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  const fetchRoles = async (token) => {
+    try {
+      const response = await axios.get(`${API_URL}/api/auth/mis-roles`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setRoles(response.data.roles || []);
+    } catch {
+      setRoles([]);
+    }
+  };
+
   const verifyToken = async (token) => {
     try {
       const response = await axios.get(`${API_URL}/api/auth/verify`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setUser(response.data.user);
+      await fetchRoles(token);
     } catch (error) {
       console.error("Token inválido:", error);
       localStorage.removeItem("token");
       setUser(null);
+      setRoles([]);
     } finally {
       setLoading(false);
     }
@@ -44,6 +58,7 @@ export const AuthProvider = ({ children }) => {
       const { token, username: userName } = response.data;
       localStorage.setItem("token", token);
       setUser({ username: userName });
+      await fetchRoles(token);
       return { success: true };
     } catch (error) {
       console.error("Error en login:", error);
@@ -57,6 +72,7 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem("token");
     setUser(null);
+    setRoles([]);
   };
 
   const loginWithToken = async (token) => {
@@ -69,7 +85,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loginWithToken, loading, getToken }}>
+    <AuthContext.Provider value={{ user, roles, login, logout, loginWithToken, loading, getToken }}>
       {children}
     </AuthContext.Provider>
   );

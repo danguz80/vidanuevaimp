@@ -12,6 +12,10 @@ const NAV_ITEMS = [
   { label: "Música",     path: "/admin/musica",     color: "rose" },
 ];
 
+const NAV_ITEM_SECRETARIA = { label: "Secretaría", path: "/admin/secretaria", color: "cyan" };
+
+const ROLES_SECRETARIA = ["admin", "Pastor", "Obispo", "Secretario"];
+
 const COLOR_MAP = {
   indigo: { base: "bg-indigo-600 hover:bg-indigo-700", active: "bg-indigo-800" },
   teal:   { base: "bg-teal-600 hover:bg-teal-700",     active: "bg-teal-800" },
@@ -20,12 +24,19 @@ const COLOR_MAP = {
   purple: { base: "bg-purple-600 hover:bg-purple-700", active: "bg-purple-800" },
   yellow: { base: "bg-yellow-600 hover:bg-yellow-700", active: "bg-yellow-800" },
   rose:   { base: "bg-rose-600 hover:bg-rose-700",     active: "bg-rose-800" },
+  cyan:   { base: "bg-cyan-600 hover:bg-cyan-700",     active: "bg-cyan-800" },
 };
 
 export default function AdminNav() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, roles, logout } = useAuth();
+
+  const puedeVerSecretaria = roles.some(r => ROLES_SECRETARIA.includes(r));
+
+  const visibleItems = puedeVerSecretaria
+    ? [...NAV_ITEMS, NAV_ITEM_SECRETARIA]
+    : NAV_ITEMS;
 
   const handleLogout = () => {
     logout();
@@ -44,7 +55,7 @@ export default function AdminNav() {
 
       {/* Botones de sección */}
       <nav className="flex flex-wrap gap-2">
-        {NAV_ITEMS.map(item => {
+        {visibleItems.map(item => {
           const isActive = location.pathname === item.path;
           const colors = COLOR_MAP[item.color];
           return (

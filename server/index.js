@@ -122,6 +122,42 @@ app.get("/api/auth/verify", authenticateToken, (req, res) => {
   res.json({ valid: true, user: req.user });
 });
 
+// GET /api/auth/mis-roles — roles del admin logueado
+app.get("/api/auth/mis-roles", authenticateToken, async (req, res) => {
+  const { id } = req.user;
+  try {
+    const miembroCheck = await pool.query("SELECT id FROM miembros WHERE id = $1", [id]);
+    if (miembroCheck.rows.length > 0) {
+      const rolesRes = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [id]);
+      const roles = rolesRes.rows.map(r => r.rol);
+      if (roles.length === 0) roles.push("admin");
+      return res.json({ roles });
+    }
+    return res.json({ roles: ["admin"] });
+  } catch (err) {
+    console.error("Error mis-roles:", err.message);
+    res.status(500).json({ error: "Error al obtener roles" });
+  }
+});
+
+// Middleware de acceso a secretaría (admin, Pastor, Obispo, Secretario)
+const requireSecretariaAccess = async (req, res, next) => {
+  const { id } = req.user;
+  try {
+    const miembroCheck = await pool.query("SELECT id FROM miembros WHERE id = $1", [id]);
+    if (miembroCheck.rows.length === 0) return next(); // usuario sistema → acceso total
+    const rolesRes = await pool.query(
+      "SELECT rol FROM miembro_roles WHERE miembro_id = $1 AND rol = ANY($2::text[])",
+      [id, ["admin", "Pastor", "Obispo", "Secretario"]]
+    );
+    if (rolesRes.rows.length > 0) return next();
+    return res.status(403).json({ error: "No tienes permiso para acceder a esta sección" });
+  } catch (err) {
+    console.error("Error requireSecretariaAccess:", err.message);
+    res.status(500).json({ error: "Error de autorización" });
+  }
+};
+
 // ──────────────────────────────────────────────
 // AUTH MIEMBROS (portal de miembros)
 // ──────────────────────────────────────────────
@@ -2793,6 +2829,245 @@ app.delete("/api/musica/playlists/:id/canciones/:cancionId", authenticateMiembro
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ──────────────────────────────────────────────
+// SECRETARÍA
+// ──────────────────────────────────────────────
+
+// POST /api/secretaria/eventos — crear evento
+app.post("/api/secretaria/eventos", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { tipo, nombre_evento, fecha, descripcion } = req.body;
+  if (!tipo || !fecha) return res.status(400).json({ error: "Tipo y fecha son requeridos" });
+  try {
+    const result = await pool.query(
+      `INSERT INTO secretaria_eventos (tipo, nombre_evento, fecha, descripcion, creado_por)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [tipo, nombre_evento || null, fecha, descripcion || null, req.user.username]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error crear secretaria_evento:", err.message);
+    res.status(500).json({ error: "Error al crear evento" });
+  }
+});
+
+// GET /api/secretaria/eventos?desde=&hasta= — listar por rango de fecha
+app.get("/api/secretaria/eventos", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { desde, hasta } = req.query;
+  try {
+    let query = "SELECT * FROM secretaria_eventos";
+    const params = [];
+    if (desde && hasta) {
+      query += " WHERE fecha BETWEEN $1 AND $2";
+      params.push(desde, hasta);
+    } else if (desde) {
+      query += " WHERE fecha >= $1";
+      params.push(desde);
+    } else if (hasta) {
+      query += " WHERE fecha <= $1";
+      params.push(hasta);
+    }
+    query += " ORDER BY fecha DESC, created_at DESC";
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error listar secretaria_eventos:", err.message);
+    res.status(500).json({ error: "Error al obtener eventos" });
+  }
+});
+
+// PUT /api/secretaria/eventos/:id — actualizar evento
+app.put("/api/secretaria/eventos/:id", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { id } = req.params;
+  const { tipo, nombre_evento, fecha, descripcion } = req.body;
+  if (!tipo || !fecha) return res.status(400).json({ error: "Tipo y fecha son requeridos" });
+  try {
+    const result = await pool.query(
+      `UPDATE secretaria_eventos
+       SET tipo=$1, nombre_evento=$2, fecha=$3, descripcion=$4, updated_at=NOW()
+       WHERE id=$5 RETURNING *`,
+      [tipo, nombre_evento || null, fecha, descripcion || null, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Evento no encontrado" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error actualizar secretaria_evento:", err.message);
+    res.status(500).json({ error: "Error al actualizar evento" });
+  }
+});
+
+// DELETE /api/secretaria/eventos/:id
+app.delete("/api/secretaria/eventos/:id", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await pool.query("DELETE FROM secretaria_eventos WHERE id=$1", [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error eliminar secretaria_evento:", err.message);
+    res.status(500).json({ error: "Error al eliminar evento" });
+  }
+});
+
+// POST /api/secretaria/asistencia — crear sesión de asistencia
+app.post("/api/secretaria/asistencia", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { fecha, tipo_evento, nombre_evento, registros } = req.body;
+  if (!fecha || !tipo_evento) return res.status(400).json({ error: "Fecha y tipo de evento requeridos" });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const sesionResult = await client.query(
+      `INSERT INTO secretaria_asistencia (fecha, tipo_evento, nombre_evento, creado_por)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [fecha, tipo_evento, nombre_evento || null, req.user.username]
+    );
+    const sesion = sesionResult.rows[0];
+    if (Array.isArray(registros) && registros.length > 0) {
+      for (const r of registros) {
+        await client.query(
+          `INSERT INTO secretaria_asistencia_registros
+             (asistencia_id, miembro_id, nombre_visitante, registrar_como_miembro, presente)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            sesion.id,
+            r.miembro_id || null,
+            r.nombre_visitante || null,
+            r.registrar_como_miembro || false,
+            r.presente !== undefined ? r.presente : true,
+          ]
+        );
+      }
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true, sesion });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Error crear asistencia:", err.message);
+    res.status(500).json({ error: "Error al guardar asistencia" });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/secretaria/asistencia?desde=&hasta= — listar sesiones
+app.get("/api/secretaria/asistencia", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { desde, hasta } = req.query;
+  try {
+    let query = "SELECT * FROM secretaria_asistencia";
+    const params = [];
+    if (desde && hasta) {
+      query += " WHERE fecha BETWEEN $1 AND $2";
+      params.push(desde, hasta);
+    }
+    query += " ORDER BY fecha DESC, created_at DESC";
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error listar asistencia:", err.message);
+    res.status(500).json({ error: "Error al obtener registros" });
+  }
+});
+
+// GET /api/secretaria/asistencia/:id — sesión con sus registros
+app.get("/api/secretaria/asistencia/:id", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const sesionResult = await pool.query("SELECT * FROM secretaria_asistencia WHERE id=$1", [id]);
+    if (sesionResult.rows.length === 0) return res.status(404).json({ error: "Sesión no encontrada" });
+    const registrosResult = await pool.query(
+      `SELECT r.*, m.nombre, m.apellido, m.foto_url
+       FROM secretaria_asistencia_registros r
+       LEFT JOIN miembros m ON m.id = r.miembro_id
+       WHERE r.asistencia_id = $1
+       ORDER BY m.apellido, m.nombre`,
+      [id]
+    );
+    res.json({ ...sesionResult.rows[0], registros: registrosResult.rows });
+  } catch (err) {
+    console.error("Error get asistencia:", err.message);
+    res.status(500).json({ error: "Error al obtener sesión" });
+  }
+});
+
+// PUT /api/secretaria/asistencia/:id — actualizar sesión de asistencia
+app.put("/api/secretaria/asistencia/:id", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { id } = req.params;
+  const { fecha, tipo_evento, nombre_evento, registros } = req.body;
+  if (!fecha || !tipo_evento) return res.status(400).json({ error: "Fecha y tipo de evento requeridos" });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE secretaria_asistencia SET fecha=$1, tipo_evento=$2, nombre_evento=$3 WHERE id=$4`,
+      [fecha, tipo_evento, nombre_evento || null, id]
+    );
+    await client.query("DELETE FROM secretaria_asistencia_registros WHERE asistencia_id=$1", [id]);
+    if (Array.isArray(registros) && registros.length > 0) {
+      for (const r of registros) {
+        await client.query(
+          `INSERT INTO secretaria_asistencia_registros
+             (asistencia_id, miembro_id, nombre_visitante, registrar_como_miembro, presente)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            id,
+            r.miembro_id || null,
+            r.nombre_visitante || null,
+            r.registrar_como_miembro || false,
+            r.presente !== undefined ? r.presente : true,
+          ]
+        );
+      }
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Error actualizar asistencia:", err.message);
+    res.status(500).json({ error: "Error al actualizar asistencia" });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/secretaria/bitacora?desde=&hasta= — eventos + asistencias con registros (para PDF)
+app.get("/api/secretaria/bitacora", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { desde, hasta } = req.query;
+  if (!desde || !hasta) return res.status(400).json({ error: "Parámetros desde y hasta son requeridos" });
+  try {
+    const eventosResult = await pool.query(
+      `SELECT * FROM secretaria_eventos WHERE fecha BETWEEN $1 AND $2 ORDER BY fecha, created_at`,
+      [desde, hasta]
+    );
+    const sesionesResult = await pool.query(
+      `SELECT * FROM secretaria_asistencia WHERE fecha BETWEEN $1 AND $2 ORDER BY fecha, created_at`,
+      [desde, hasta]
+    );
+    let registrosResult = { rows: [] };
+    if (sesionesResult.rows.length > 0) {
+      const ids = sesionesResult.rows.map(s => s.id);
+      registrosResult = await pool.query(
+        `SELECT r.*, m.nombre, m.apellido
+         FROM secretaria_asistencia_registros r
+         LEFT JOIN miembros m ON m.id = r.miembro_id
+         WHERE r.asistencia_id = ANY($1::int[])
+         ORDER BY r.asistencia_id, m.apellido NULLS LAST, m.nombre`,
+        [ids]
+      );
+    }
+    const registrosPorSesion = {};
+    registrosResult.rows.forEach(r => {
+      if (!registrosPorSesion[r.asistencia_id]) registrosPorSesion[r.asistencia_id] = [];
+      registrosPorSesion[r.asistencia_id].push(r);
+    });
+    const asistencias = sesionesResult.rows.map(s => ({
+      ...s,
+      registros: registrosPorSesion[s.id] || [],
+    }));
+    res.json({ eventos: eventosResult.rows, asistencias });
+  } catch (err) {
+    console.error("Error bitácora:", err.message);
+    res.status(500).json({ error: "Error al obtener bitácora" });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   await initFamiliasTables();
@@ -2864,6 +3139,57 @@ app.listen(PORT, async () => {
     console.log("[DB] Tablas de música listas.");
   } catch (err) {
     console.error("[DB] Error al migrar tablas música:", err.message);
+  }
+  // Migración: tablas secretaría
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS secretaria_eventos (
+        id            SERIAL PRIMARY KEY,
+        tipo          TEXT    NOT NULL,
+        nombre_evento TEXT,
+        fecha         DATE    NOT NULL,
+        descripcion   TEXT,
+        creado_por    TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS idx_sec_eventos_fecha ON secretaria_eventos(fecha)"
+    );
+    await pool.query(
+      "ALTER TABLE secretaria_eventos ADD COLUMN IF NOT EXISTS nombre_evento TEXT"
+    );
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS secretaria_asistencia (
+        id            SERIAL PRIMARY KEY,
+        fecha         DATE    NOT NULL,
+        tipo_evento   TEXT    NOT NULL,
+        nombre_evento TEXT,
+        creado_por    TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS idx_sec_asist_fecha ON secretaria_asistencia(fecha)"
+    );
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS secretaria_asistencia_registros (
+        id                     SERIAL PRIMARY KEY,
+        asistencia_id          INTEGER NOT NULL REFERENCES secretaria_asistencia(id) ON DELETE CASCADE,
+        miembro_id             INTEGER REFERENCES miembros(id) ON DELETE SET NULL,
+        nombre_visitante       TEXT,
+        registrar_como_miembro BOOLEAN DEFAULT FALSE,
+        presente               BOOLEAN DEFAULT TRUE,
+        created_at             TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS idx_sec_asist_reg ON secretaria_asistencia_registros(asistencia_id)"
+    );
+    console.log("[DB] Tablas secretaría listas.");
+  } catch (err) {
+    console.error("[DB] Error al migrar tablas secretaría:", err.message);
   }
 });
 
