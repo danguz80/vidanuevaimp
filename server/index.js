@@ -2907,6 +2907,55 @@ app.delete("/api/secretaria/eventos/:id", authenticateToken, requireSecretariaAc
   }
 });
 
+// GET /api/secretaria/eventos/:id — detalle de evento + asistencias vinculadas (misma fecha y tipo)
+app.get("/api/secretaria/eventos/:id", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const eventoResult = await pool.query(
+      "SELECT * FROM secretaria_eventos WHERE id = $1",
+      [id]
+    );
+    if (eventoResult.rows.length === 0)
+      return res.status(404).json({ error: "Evento no encontrado" });
+
+    const evento = eventoResult.rows[0];
+
+    // Asistencias con misma fecha y mismo tipo de evento
+    const sesionesResult = await pool.query(
+      `SELECT * FROM secretaria_asistencia
+       WHERE fecha = $1 AND tipo_evento = $2
+       ORDER BY created_at`,
+      [evento.fecha, evento.tipo]
+    );
+
+    const asistencias = [];
+    if (sesionesResult.rows.length > 0) {
+      const ids = sesionesResult.rows.map(s => s.id);
+      const registrosResult = await pool.query(
+        `SELECT r.asistencia_id, r.presente, r.nombre_visitante, m.nombre, m.apellido
+         FROM secretaria_asistencia_registros r
+         LEFT JOIN miembros m ON m.id = r.miembro_id
+         WHERE r.asistencia_id = ANY($1::int[])
+         ORDER BY r.presente DESC, m.apellido NULLS LAST, m.nombre`,
+        [ids]
+      );
+      const regPorSesion = {};
+      registrosResult.rows.forEach(r => {
+        if (!regPorSesion[r.asistencia_id]) regPorSesion[r.asistencia_id] = [];
+        regPorSesion[r.asistencia_id].push(r);
+      });
+      sesionesResult.rows.forEach(s => {
+        asistencias.push({ ...s, registros: regPorSesion[s.id] || [] });
+      });
+    }
+
+    res.json({ ...evento, asistencias });
+  } catch (err) {
+    console.error("Error get evento detalle:", err.message);
+    res.status(500).json({ error: "Error al obtener evento" });
+  }
+});
+
 // POST /api/secretaria/asistencia — crear sesión de asistencia
 app.post("/api/secretaria/asistencia", authenticateToken, requireSecretariaAccess, async (req, res) => {
   const { fecha, tipo_evento, nombre_evento, registros } = req.body;

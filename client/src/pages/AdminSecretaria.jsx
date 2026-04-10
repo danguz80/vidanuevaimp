@@ -9,7 +9,13 @@ const API = import.meta.env.VITE_BACKEND_URL;
 const ROLES_SECRETARIA = ["admin", "Pastor", "Obispo", "Secretario"];
 
 const TIPOS_EVENTO = [
-  { value: "bitacora_culto",  label: "Bitácora de culto" },
+  { value: "culto_domingo",   label: "Culto Domingo" },
+  { value: "culto_jueves",    label: "Culto Jueves" },
+  { value: "estudio_biblico", label: "Estudio bíblico" },
+  { value: "dorcas",          label: "Dorcas" },
+  { value: "cadena_oracion",  label: "Cadena Oración" },
+  { value: "esc_dominical",   label: "Esc. Dominical" },
+
   { value: "cumpleanos",      label: "Cumpleaños" },
   { value: "presentaciones",  label: "Presentaciones" },
   { value: "defunciones",     label: "Defunciones" },
@@ -289,7 +295,8 @@ function VerEventos({ getToken }) {
   const [eventos, setEventos] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [buscado, setBuscado] = useState(false);
-  const [eventoDetalle, setEventoDetalle] = useState(null); // null = vista tabla
+  const [eventoDetalle, setEventoDetalle] = useState(null);
+  const [cargandoDetalle, setCargandoDetalle] = useState(false);
 
   const buscar = useCallback(async (picker) => {
     const [anio, mes] = (picker || mesPicker).split("-");
@@ -314,6 +321,22 @@ function VerEventos({ getToken }) {
 
   useEffect(() => { buscar(mesActual); }, []); // eslint-disable-line
 
+  const abrirDetalle = async (ev) => {
+    setCargandoDetalle(true);
+    setEventoDetalle({ ...ev, asistencias: null }); // muestra skeleton
+    try {
+      const res = await fetch(`${API}/api/secretaria/eventos/${ev.id}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      setEventoDetalle(data);
+    } catch {
+      setEventoDetalle({ ...ev, asistencias: [] });
+    } finally {
+      setCargandoDetalle(false);
+    }
+  };
+
   const labelTipoEv = (ev) => {
     const base = labelEvento(ev.tipo);
     return ev.tipo === "evento_especial" && ev.nombre_evento
@@ -326,6 +349,10 @@ function VerEventos({ getToken }) {
 
   // ── Vista detalle ──────────────────────────────────────────────────────────
   if (eventoDetalle) {
+    const totalAsistencias = eventoDetalle.asistencias
+      ? eventoDetalle.asistencias.reduce((acc, s) => acc + (s.registros || []).filter(r => r.presente).length, 0)
+      : 0;
+
     return (
       <div className="bg-white rounded-xl shadow p-6 space-y-5">
         <button
@@ -335,6 +362,7 @@ function VerEventos({ getToken }) {
           ← Atrás
         </button>
 
+        {/* Cabecera evento */}
         <div className="border-b pb-4 space-y-1">
           <h2 className="text-2xl font-bold text-gray-900">{labelTipoEv(eventoDetalle)}</h2>
           <p className="text-sm text-gray-500">
@@ -347,12 +375,12 @@ function VerEventos({ getToken }) {
           )}
           {eventoDetalle.updated_at && eventoDetalle.updated_at !== eventoDetalle.created_at && (
             <p className="text-xs text-gray-400">
-              Última modificación:{" "}
-              {new Date(eventoDetalle.updated_at).toLocaleString("es-CL")}
+              Última modificación: {new Date(eventoDetalle.updated_at).toLocaleString("es-CL")}
             </p>
           )}
         </div>
 
+        {/* Descripción */}
         <div>
           <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-2">
             Descripción
@@ -366,14 +394,100 @@ function VerEventos({ getToken }) {
           )}
         </div>
 
-        <div className="flex gap-3 pt-2">
-          <button
-            onClick={() => setEventoDetalle(null)}
-            className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-5 py-2 rounded-lg transition"
-          >
-            ← Volver a la lista
-          </button>
+        {/* Asistencia vinculada */}
+        <div className="border-t pt-5">
+          <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">
+            Asistencia vinculada
+          </h3>
+
+          {cargandoDetalle ? (
+            <div className="flex items-center gap-2 text-gray-400 text-sm">
+              <span className="animate-spin inline-block w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full" />
+              Cargando asistencia...
+            </div>
+          ) : !eventoDetalle.asistencias || eventoDetalle.asistencias.length === 0 ? (
+            <p className="text-gray-400 text-sm italic">
+              No hay registros de asistencia vinculados a este evento.
+            </p>
+          ) : (
+            eventoDetalle.asistencias.map((sesion) => {
+              const sortApellido = (a, b) =>
+                (a.apellido || a.nombre_visitante || "").localeCompare(b.apellido || b.nombre_visitante || "", "es");
+              const presentes  = (sesion.registros || []).filter(r => r.presente).sort(sortApellido);
+              const ausentes   = (sesion.registros || []).filter(r => !r.presente).sort(sortApellido);
+              const visitantes = presentes.filter(r => !r.nombre);
+
+              const nombrePersona = (r) =>
+                r.nombre && r.apellido
+                  ? `${r.nombre} ${r.apellido}`
+                  : r.nombre_visitante || "(Sin nombre)";
+
+              return (
+                <div key={sesion.id} className="mb-5">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-medium text-gray-700">
+                      {formatFecha(sesion.fecha)}
+                      {sesion.nombre_evento && (
+                        <span className="ml-1 text-gray-500">— {sesion.nombre_evento}</span>
+                      )}
+                    </p>
+                    <span className="text-sm bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">
+                      {presentes.length} presente{presentes.length !== 1 ? "s" : ""}
+                      {" / "}
+                      {(sesion.registros || []).length} total
+                    </span>
+                  </div>
+
+                  {/* Presentes */}
+                  {presentes.length > 0 && (
+                    <div className="mb-2">
+                      <p className="text-xs text-green-600 font-semibold uppercase tracking-wide mb-1">
+                        Presentes ({presentes.length})
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5">
+                        {presentes.map((r, i) => (
+                          <p key={i} className="text-sm text-gray-800">
+                            {nombrePersona(r)}
+                            {!r.nombre && (
+                              <span className="ml-1 text-xs text-blue-500">(visitante)</span>
+                            )}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ausentes */}
+                  {ausentes.length > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide mb-1">
+                        Ausentes ({ausentes.length})
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5">
+                        {ausentes.map((r, i) => (
+                          <p key={i} className="text-sm text-gray-400">{nombrePersona(r)}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {visitantes.length > 0 && (
+                    <p className="text-xs text-gray-400 mt-1 italic">
+                      * Incluye {visitantes.length} visitante(s) externo(s)
+                    </p>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
+
+        <button
+          onClick={() => setEventoDetalle(null)}
+          className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-5 py-2 rounded-lg transition"
+        >
+          ← Volver a la lista
+        </button>
       </div>
     );
   }
@@ -421,14 +535,14 @@ function VerEventos({ getToken }) {
                 {eventos.map((ev, idx) => (
                   <tr
                     key={ev.id}
-                    onClick={() => setEventoDetalle(ev)}
+                    onClick={() => abrirDetalle(ev)}
                     className={`cursor-pointer transition-colors ${
                       idx % 2 === 0 ? "bg-white" : "bg-gray-50"
                     } hover:bg-cyan-50`}
                   >
                     <td className="px-3 py-2 text-gray-400">{idx + 1}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{formatFecha(ev.fecha)}</td>
-                    <td className="px-3 py-2 font-medium text-cyan-700 underline-offset-2 hover:underline">
+                    <td className="px-3 py-2 font-medium text-cyan-700 hover:underline underline-offset-2">
                       {labelTipoEv(ev)}
                     </td>
                     <td className="px-3 py-2 text-gray-600 max-w-xs">
