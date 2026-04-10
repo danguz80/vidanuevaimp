@@ -123,6 +123,11 @@ export default function PerfilMiembro() {
       notas: miembro.notas || "",
       acerca_de_mi: miembro.acerca_de_mi || "",
       roles: miembro.roles || [],
+      bautizado: miembro.bautizado || false,
+      declaracion_fe: miembro.declaracion_fe || false,
+      estado_civil: miembro.estado_civil || "",
+      separado: miembro.separado || false,
+      nivel_discipulado: miembro.nivel_discipulado || null,
     });
     setModalEditar(true);
   };
@@ -292,6 +297,41 @@ export default function PerfilMiembro() {
                 <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{miembro.acerca_de_mi}</p>
               </div>
             )}
+
+            {/* Datos espirituales */}
+            {(miembro.bautizado || miembro.declaracion_fe || miembro.estado_civil || miembro.nivel_discipulado) && (
+              <div className="sm:col-span-2 bg-sky-50 border border-sky-100 rounded-xl px-4 py-3">
+                <p className="text-xs font-semibold text-sky-600 mb-2 uppercase tracking-wide">Datos espirituales</p>
+                <div className="flex flex-wrap gap-2">
+                  {miembro.bautizado && (
+                    <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
+                      💧 Bautizado/a
+                    </span>
+                  )}
+                  {miembro.declaracion_fe && (
+                    <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-semibold">
+                      ✝️ Declaración de Fe
+                    </span>
+                  )}
+                  {miembro.estado_civil && (
+                    <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-semibold">
+                      {miembro.estado_civil === "casado" && miembro.separado
+                        ? "💍 Casado/a (Separado/a)"
+                        : miembro.estado_civil === "soltero"    ? "🙂 Soltero/a"
+                        : miembro.estado_civil === "casado"     ? "💍 Casado/a"
+                        : miembro.estado_civil === "viudo"      ? "🕊️ Viudo/a"
+                        : miembro.estado_civil === "divorciado" ? "📄 Divorciado/a"
+                        : miembro.estado_civil}
+                    </span>
+                  )}
+                  {miembro.nivel_discipulado && (
+                    <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold">
+                      ⭐ Nivel {miembro.nivel_discipulado} — {["Fundamentos", "Crecimiento", "Servicio", "Liderazgo"][miembro.nivel_discipulado - 1]}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Familia */}
@@ -438,6 +478,116 @@ export default function PerfilMiembro() {
                 <textarea rows={3} value={form.acerca_de_mi} onChange={e => setForm(p => ({ ...p, acerca_de_mi: e.target.value }))}
                   className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none"
                   placeholder="De dónde es, cuántos años en la iglesia, a qué se dedica, saludo..." />
+              </div>
+
+              {/* Bautizado / Declaración de Fe */}
+              <div className="flex flex-wrap gap-6">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.bautizado}
+                    onChange={e => setForm(p => ({ ...p, bautizado: e.target.checked }))}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  <span className="text-sm font-semibold text-gray-700">Bautizado/a</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.declaracion_fe}
+                    onChange={e => setForm(p => ({ ...p, declaracion_fe: e.target.checked }))}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  <span className="text-sm font-semibold text-gray-700">Declaración de Fe</span>
+                </label>
+              </div>
+
+              {/* Estado civil */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Estado civil</label>
+                <div className="flex flex-wrap gap-4">
+                  {[
+                    { value: "soltero",    label: "Soltero/a" },
+                    { value: "casado",     label: "Casado/a" },
+                    { value: "viudo",      label: "Viudo/a" },
+                    { value: "divorciado", label: "Divorciado/a" },
+                  ].map(({ value, label }) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="radio"
+                        name="estado_civil_perfil"
+                        value={value}
+                        checked={form.estado_civil === value}
+                        onChange={() => setForm(p => ({
+                          ...p,
+                          estado_civil: value,
+                          separado: value === "casado" ? p.separado : false,
+                        }))}
+                        className="accent-blue-600"
+                      />
+                      <span className="text-sm text-gray-700">{label}</span>
+                    </label>
+                  ))}
+                  {form.estado_civil && (
+                    <button
+                      type="button"
+                      onClick={() => setForm(p => ({ ...p, estado_civil: "", separado: false }))}
+                      className="text-xs text-gray-400 underline"
+                    >
+                      Limpiar
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Separado/a (solo si Casado/a) */}
+              {form.estado_civil === "casado" && (
+                <div className="ml-2">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.separado}
+                      onChange={e => setForm(p => ({ ...p, separado: e.target.checked }))}
+                      className="w-4 h-4 rounded accent-blue-600"
+                    />
+                    <span className="text-sm text-gray-700">Separado/a</span>
+                    <span className="text-xs text-gray-400">(casado/a pero separado/a)</span>
+                  </label>
+                </div>
+              )}
+
+              {/* Nivel de Discipulado */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Nivel de Discipulado</label>
+                <div className="flex flex-wrap gap-3">
+                  {[
+                    { value: 1, label: "Nivel 1 — Fundamentos" },
+                    { value: 2, label: "Nivel 2 — Crecimiento" },
+                    { value: 3, label: "Nivel 3 — Servicio" },
+                    { value: 4, label: "Nivel 4 — Liderazgo" },
+                  ].map(({ value, label }) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="radio"
+                        name="nivel_discipulado_perfil"
+                        value={value}
+                        checked={form.nivel_discipulado === value}
+                        onChange={() => setForm(p => ({ ...p, nivel_discipulado: value }))}
+                        className="accent-blue-600"
+                      />
+                      <span className="text-sm text-gray-700">{label}</span>
+                    </label>
+                  ))}
+                </div>
+                {form.nivel_discipulado && (
+                  <button
+                    type="button"
+                    onClick={() => setForm(p => ({ ...p, nivel_discipulado: null }))}
+                    className="mt-1 text-xs text-gray-400 hover:text-red-500 underline"
+                  >
+                    Limpiar selección
+                  </button>
+                )}
               </div>
             </div>
 

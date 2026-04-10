@@ -389,6 +389,71 @@ function VerEventos({ getToken }) {
           )}
         </div>
 
+        {/* Personas del evento (defunciones, bautizos, matrimonios, etc.) */}
+        {(() => {
+          const anots = eventoDetalle.anotaciones || [];
+          if (anots.length === 0) return null;
+          const ICONS = {
+            defuncion:      { icon: "🕊️", label: "Fallecido/a",      color: "bg-gray-100 border-gray-200 text-gray-700" },
+            cumpleanos:     { icon: "🎂", label: "Festejado/a",       color: "bg-yellow-50 border-yellow-100 text-yellow-800" },
+            bautizo:        { icon: "💧", label: "Bautizado/a",       color: "bg-blue-50 border-blue-100 text-blue-800" },
+            presentacion:   { icon: "👶", label: "Presentado/a",      color: "bg-sky-50 border-sky-100 text-sky-800" },
+            matrimonio:     { icon: "💍", label: "Contrayente",       color: "bg-rose-50 border-rose-100 text-rose-800" },
+            declaracion_fe: { icon: "✝️", label: "Declaración de Fe", color: "bg-emerald-50 border-emerald-100 text-emerald-800" },
+          };
+          // Agrupar por tipo
+          const porTipo = {};
+          anots.forEach(a => {
+            if (!porTipo[a.tipo]) porTipo[a.tipo] = [];
+            porTipo[a.tipo].push(a);
+          });
+          const fmtFechaOcurr = (a) => {
+            const f = a.fecha_ocurrencia || a.fecha;
+            if (!f) return "";
+            const d = new Date(String(f).split("T")[0] + "T12:00:00");
+            if (isNaN(d)) return "";
+            return d.toLocaleDateString("es-CL", { day: "numeric", month: "long", year: "numeric" });
+          };
+          return (
+            <div className="border-t pt-5 space-y-3">
+              <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">
+                Personas registradas en este evento
+              </h3>
+              {Object.entries(porTipo).map(([tipo, lista]) => {
+                const cfg = ICONS[tipo] || { icon: "📌", label: tipo, color: "bg-gray-50 border-gray-200 text-gray-700" };
+                return (
+                  <div key={tipo}>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                      {cfg.icon} {cfg.label}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {lista.map((a, i) => {
+                        const nombre = a.miembro_nombre
+                          ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim()
+                          : a.nombre_libre;
+                        return (
+                          <div key={i} className={`flex items-center gap-2 border rounded-xl px-3 py-2 ${cfg.color}`}>
+                            {a.foto_url
+                              ? <img src={a.foto_url} alt="" className="w-8 h-8 rounded-full object-cover" />
+                              : <div className="w-8 h-8 rounded-full bg-white/60 flex items-center justify-center text-sm font-bold">{nombre?.[0] || "?"}</div>
+                            }
+                            <div>
+                              <p className="text-sm font-semibold">{nombre}</p>
+                              {(a.fecha_ocurrencia || (tipo === "defuncion" || tipo === "cumpleanos")) && (
+                                <p className="text-xs opacity-70">{fmtFechaOcurr(a)}</p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
         {/* Asistencia vinculada */}
         <div className="border-t pt-5">
           <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">
@@ -561,6 +626,205 @@ function VerEventos({ getToken }) {
   );
 }
 
+// Mapa de tipo de evento → tipo de anotación + etiqueta para el input
+const TIPOS_CON_PERSONA = {
+  cumpleanos:    { tipoAnot: "cumpleanos",  label: "Festejado/a" },
+  presentaciones:{ tipoAnot: "presentacion",label: "Presentado/a" },
+  bautizos:      { tipoAnot: "bautizo",     label: "Bautizado/a" },
+  defunciones:   { tipoAnot: "defuncion",   label: "Fallecido/a" },
+  matrimonios:   { tipoAnot: "matrimonio",  label: null }, // 2 personas
+};
+
+// ─── Sub-componente: Selector de persona(s) para eventos específicos ─────────
+function PersonaEventoSelector({ tipoEvento, personas, setPersonas, getToken, miembros, setMiembros }) {
+  const cfg = TIPOS_CON_PERSONA[tipoEvento];
+  if (!cfg) return null;
+
+  // Solo defunciones y cumpleaños necesitan fecha propia
+  const necesitaFecha = tipoEvento === "defunciones" || tipoEvento === "cumpleanos";
+
+  const slots = tipoEvento === "matrimonios" ? ["Cónyuge 1", "Cónyuge 2"] : [cfg.label];
+  const [busqueda, setBusqueda]           = useState(slots.map(() => ""));
+  const [sugerencias, setSugerencias]     = useState(slots.map(() => []));
+  const [fechas, setFechas]               = useState(() => slots.map((_, idx) => personas.find(p => p.idx === idx)?.fecha_ocurrencia || ""));
+  const [crearIdx, setCrearIdx]           = useState(null); // índice del slot con mini-form abierto
+  const [nuevoNombre, setNuevoNombre]     = useState("");
+  const [nuevoApellido, setNuevoApellido] = useState("");
+  const [creando, setCreando]             = useState(false);
+
+  // Sincronizar fechas cuando personas cambian desde fetch async
+  useEffect(() => {
+    setFechas(slots.map((_, idx) => personas.find(p => p.idx === idx)?.fecha_ocurrencia || ""));
+  }, [personas.length]); // eslint-disable-line
+
+  const buscar = (idx, texto) => {
+    const next = [...busqueda]; next[idx] = texto; setBusqueda(next);
+    if (!texto.trim()) { const s = [...sugerencias]; s[idx] = []; setSugerencias(s); return; }
+    const q = texto.toLowerCase();
+    const found = miembros.filter(m => `${m.nombre} ${m.apellido}`.toLowerCase().includes(q)).slice(0, 6);
+    const s = [...sugerencias]; s[idx] = found; setSugerencias(s);
+  };
+
+  const seleccionar = (idx, m) => {
+    // No duplicar
+    if (personas.some(p => p.idx === idx && p.miembro_id === m.id)) return;
+    const filtered = personas.filter(p => p.idx !== idx);
+    setPersonas([...filtered, { idx, tipoAnot: cfg.tipoAnot, miembro_id: m.id, nombre: `${m.nombre} ${m.apellido}`, foto_url: m.foto_url, fecha_ocurrencia: fechas[idx] || null }]);
+    const b = [...busqueda]; b[idx] = ""; setBusqueda(b);
+    const s = [...sugerencias]; s[idx] = []; setSugerencias(s);
+  };
+
+  const agregarLibre = (idx) => {
+    const texto = busqueda[idx].trim();
+    if (!texto) return;
+    const filtered = personas.filter(p => p.idx !== idx);
+    setPersonas([...filtered, { idx, tipoAnot: cfg.tipoAnot, miembro_id: null, nombre: texto, fecha_ocurrencia: fechas[idx] || null }]);
+    const b = [...busqueda]; b[idx] = ""; setBusqueda(b);
+    const s = [...sugerencias]; s[idx] = []; setSugerencias(s);
+  };
+
+  const crearMiembro = async (idx) => {
+    if (!nuevoNombre.trim() || !nuevoApellido.trim()) return;
+    setCreando(true);
+    try {
+      const res = await fetch(`${API}/api/miembros`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ nombre: nuevoNombre.trim(), apellido: nuevoApellido.trim(), estado: "activo" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error al crear miembro");
+      setMiembros(prev => [...prev, data]);
+      const filtered = personas.filter(p => p.idx !== idx);
+      setPersonas([...filtered, { idx, tipoAnot: cfg.tipoAnot, miembro_id: data.id, nombre: `${data.nombre} ${data.apellido}`, foto_url: null, fecha_ocurrencia: fechas[idx] || null }]);
+      setCrearIdx(null); setNuevoNombre(""); setNuevoApellido("");
+    } catch (e) { alert(e.message); }
+    finally { setCreando(false); }
+  };
+
+  const quitar = (idx) => {
+    setPersonas(personas.filter(p => p.idx !== idx));
+    const f = [...fechas]; f[idx] = ""; setFechas(f);
+  };
+
+  const setFecha = (idx, val) => {
+    const f = [...fechas]; f[idx] = val; setFechas(f);
+    // Si ya hay una persona en ese slot, actualizar su fecha_ocurrencia
+    setPersonas(prev => prev.map(p => p.idx === idx ? { ...p, fecha_ocurrencia: val || null } : p));
+  };
+
+  return (
+    <div className="border border-rose-100 rounded-xl p-4 space-y-4 bg-rose-50/30">
+      <p className="text-sm font-semibold text-rose-700">
+        {tipoEvento === "matrimonios" ? "Contrayentes" : cfg.label}
+      </p>
+
+      {slots.map((slotLabel, idx) => {
+        const persona = personas.find(p => p.idx === idx);
+        return (
+          <div key={idx} className="space-y-2">
+            <p className="text-xs font-medium text-gray-500">{slotLabel}</p>
+
+            {persona ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 bg-rose-100 text-rose-800 text-sm px-3 py-1.5 rounded-full w-fit">
+                  {persona.foto_url && <img src={persona.foto_url} alt="" className="w-5 h-5 rounded-full object-cover" />}
+                  {persona.nombre}
+                  {!persona.miembro_id && <span className="text-xs text-rose-400 italic ml-1">(no registrado)</span>}
+                  <button onClick={() => quitar(idx)} className="ml-1 text-rose-400 hover:text-red-600 font-bold">×</button>
+                </div>
+                {necesitaFecha && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500">
+                      {tipoEvento === "defunciones" ? "Fecha de fallecimiento:" : "Fecha del cumpleaños:"}
+                    </label>
+                    <input
+                      type="date"
+                      value={fechas[idx]}
+                      onChange={e => setFecha(idx, e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400"
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {necesitaFecha && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500 whitespace-nowrap">
+                      {tipoEvento === "defunciones" ? "Fecha de fallecimiento:" : "Fecha del cumpleaños:"}
+                    </label>
+                    <input
+                      type="date"
+                      value={fechas[idx]}
+                      onChange={e => setFecha(idx, e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400"
+                    />
+                  </div>
+                )}
+                <div className="relative">
+                <input
+                  type="text"
+                  value={busqueda[idx]}
+                  onChange={e => buscar(idx, e.target.value)}
+                  placeholder="Buscar miembro..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                />
+                {sugerencias[idx].length > 0 && (
+                  <ul className="absolute z-10 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-40 overflow-y-auto">
+                    {sugerencias[idx].map(m => (
+                      <li key={m.id} onClick={() => seleccionar(idx, m)}
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-rose-50 cursor-pointer text-sm">
+                        {m.foto_url
+                          ? <img src={m.foto_url} alt="" className="w-6 h-6 rounded-full object-cover" />
+                          : <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-500">{m.nombre[0]}</div>
+                        }
+                        {m.nombre} {m.apellido}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {busqueda[idx].trim() && sugerencias[idx].length === 0 && crearIdx !== idx && (
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => agregarLibre(idx)}
+                      className="text-xs text-yellow-700 underline">
+                      ＋ Guardar "{busqueda[idx].trim()}" sin registrar
+                    </button>
+                    <button type="button" onClick={() => { setCrearIdx(idx); setNuevoNombre(busqueda[idx].trim().split(" ")[0]); setNuevoApellido(busqueda[idx].trim().split(" ").slice(1).join(" ")); }}
+                      className="text-xs text-blue-700 underline">
+                      ➕ Crear como nuevo miembro
+                    </button>
+                  </div>
+                )}
+                {crearIdx === idx && (
+                  <div className="mt-2 border border-blue-200 rounded-lg p-3 bg-blue-50 space-y-2">
+                    <p className="text-xs font-semibold text-blue-700">Nuevo miembro</p>
+                    <div className="flex gap-2">
+                      <input value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)}
+                        placeholder="Nombre" className="flex-1 border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                      <input value={nuevoApellido} onChange={e => setNuevoApellido(e.target.value)}
+                        placeholder="Apellido" className="flex-1 border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" disabled={creando} onClick={() => crearMiembro(idx)}
+                        className="text-xs bg-blue-600 text-white px-3 py-1 rounded disabled:opacity-50">
+                        {creando ? "Creando..." : "Crear"}
+                      </button>
+                      <button type="button" onClick={() => { setCrearIdx(null); setNuevoNombre(""); setNuevoApellido(""); }}
+                        className="text-xs text-gray-500 underline">Cancelar</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Sub-componente: Selector de anotaciones (cumpleaños, presentaciones, declaración de fe) ──
 function AnotacionesSelector({ anotaciones, setAnotaciones, getToken, miembros }) {
   const TIPOS_ANOT = [
@@ -698,22 +962,24 @@ function IngresoEvento({ getToken }) {
   const [horaFin, setHoraFin] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [anotaciones, setAnotaciones] = useState([]);
+  const [personas, setPersonas] = useState([]);
   const [miembros, setMiembros] = useState([]);
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState(null);
 
   const hoy = new Date().toISOString().split("T")[0];
   const mostrarAnotaciones = tipo === "culto_jueves" || tipo === "culto_domingo";
+  const mostrarPersona = !!TIPOS_CON_PERSONA[tipo];
 
-  // Cargar miembros cuando se selecciona un culto
+  // Cargar miembros cuando se selecciona culto o evento con persona
   useEffect(() => {
-    if (!mostrarAnotaciones) { setAnotaciones([]); return; }
+    if (!mostrarAnotaciones && !mostrarPersona) { setAnotaciones([]); setPersonas([]); return; }
     if (miembros.length > 0) return;
     fetch(`${API}/api/miembros`, { headers: { Authorization: `Bearer ${getToken()}` } })
       .then(r => r.json())
       .then(data => setMiembros(Array.isArray(data) ? data.filter(m => m.estado === "activo") : []))
       .catch(() => {});
-  }, [mostrarAnotaciones, getToken]); // eslint-disable-line
+  }, [mostrarAnotaciones, mostrarPersona, getToken]); // eslint-disable-line
 
   const guardar = async () => {
     if (!tipo || !fecha) {
@@ -746,8 +1012,12 @@ function IngresoEvento({ getToken }) {
       if (!res.ok) throw new Error(data.error || "Error al guardar");
 
       // Guardar anotaciones vinculadas al evento creado
-      if (anotaciones.length > 0) {
-        await Promise.all(anotaciones.map(a =>
+      const todasAnotaciones = [
+        ...anotaciones,
+        ...personas.map(p => ({ tipo: p.tipoAnot, miembro_id: p.miembro_id, nombre: p.nombre, fecha_ocurrencia: p.fecha_ocurrencia || null })),
+      ];
+      if (todasAnotaciones.length > 0) {
+        await Promise.all(todasAnotaciones.map(a =>
           fetch(`${API}/api/secretaria/anotaciones`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
@@ -757,6 +1027,7 @@ function IngresoEvento({ getToken }) {
               tipo: a.tipo,
               miembro_id: a.miembro_id || null,
               nombre_libre: a.miembro_id ? null : a.nombre,
+              fecha_ocurrencia: a.fecha_ocurrencia || null,
             }),
           })
         ));
@@ -770,6 +1041,7 @@ function IngresoEvento({ getToken }) {
       setHoraFin("");
       setDescripcion("");
       setAnotaciones([]);
+      setPersonas([]);
     } catch (e) {
       setMensaje({ tipo: "error", texto: e.message });
     } finally {
@@ -851,6 +1123,17 @@ function IngresoEvento({ getToken }) {
         />
       </div>
 
+      {mostrarPersona && (
+        <PersonaEventoSelector
+          tipoEvento={tipo}
+          personas={personas}
+          setPersonas={setPersonas}
+          getToken={getToken}
+          miembros={miembros}
+          setMiembros={setMiembros}
+        />
+      )}
+
       {mostrarAnotaciones && (
         <AnotacionesSelector
           anotaciones={anotaciones}
@@ -893,6 +1176,8 @@ function ModificarEvento({ getToken }) {
   const [buscado, setBuscado] = useState(false);
   const [anotaciones, setAnotaciones] = useState([]);
   const [anotacionesOriginales, setAnotacionesOriginales] = useState([]);
+  const [personas, setPersonas] = useState([]);
+  const [personasOriginales, setPersonasOriginales] = useState([]);
   const [miembros, setMiembros] = useState([]);
 
   const buscar = async () => {
@@ -927,6 +1212,8 @@ function ModificarEvento({ getToken }) {
     setMensaje(null);
     setAnotaciones([]);
     setAnotacionesOriginales([]);
+    setPersonas([]);
+    setPersonasOriginales([]);
     // Cargar anotaciones y miembros si es culto
     if (ev.tipo === "culto_domingo" || ev.tipo === "culto_jueves") {
       fetch(`${API}/api/secretaria/anotaciones/evento/${ev.id}`, {
@@ -946,6 +1233,37 @@ function ModificarEvento({ getToken }) {
             }));
             setAnotaciones(mapped);
             setAnotacionesOriginales(mapped);
+          }
+        })
+        .catch(() => {});
+      if (miembros.length === 0) {
+        fetch(`${API}/api/miembros`, { headers: { Authorization: `Bearer ${getToken()}` } })
+          .then(r => r.json())
+          .then(data => setMiembros(Array.isArray(data) ? data.filter(m => m.estado === "activo") : []))
+          .catch(() => {});
+      }
+    }
+    // Cargar personas para tipos de evento especiales
+    if (TIPOS_CON_PERSONA[ev.tipo]) {
+      fetch(`${API}/api/secretaria/anotaciones/evento/${ev.id}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            const mapped = data.map((a, idx) => ({
+              id: a.id,
+              idx,
+              tipoAnot: a.tipo,
+              miembro_id: a.miembro_id,
+              nombre: a.miembro_id
+                ? `${a.miembro_nombre || ""} ${a.miembro_apellido || ""}`.trim()
+                : a.nombre_libre,
+              foto_url: a.foto_url || null,
+              fecha_ocurrencia: a.fecha_ocurrencia ? a.fecha_ocurrencia.split("T")[0] : null,
+            }));
+            setPersonas(mapped);
+            setPersonasOriginales(mapped);
           }
         })
         .catch(() => {});
@@ -990,6 +1308,21 @@ function ModificarEvento({ getToken }) {
         .map(o => o.id);
       const nuevas = anotaciones.filter(a => !a.id);
 
+      // Sincronizar personas (para eventos tipo defunciones, bautizos, etc.)
+      const eliminar_personas_ids = personasOriginales
+        .filter(o => !personas.some(p => p.id === o.id))
+        .map(o => o.id);
+      const nuevasPersonas = personas.filter(p => !p.id && p.nombre);
+      // Personas existentes cuya fecha_ocurrencia cambió → re-crear
+      const personasConFechaCambiada = personas.filter(p => {
+        if (!p.id) return false;
+        const original = personasOriginales.find(o => o.id === p.id);
+        if (!original) return false;
+        const fechaOrig = original.fecha_ocurrencia ? String(original.fecha_ocurrencia).split("T")[0] : null;
+        const fechaNueva = p.fecha_ocurrencia || null;
+        return fechaOrig !== fechaNueva;
+      });
+
       await Promise.all([
         ...eliminar_ids.map(id =>
           fetch(`${API}/api/secretaria/anotaciones/${id}`, {
@@ -1010,10 +1343,54 @@ function ModificarEvento({ getToken }) {
             }),
           })
         ),
+        ...eliminar_personas_ids.map(id =>
+          fetch(`${API}/api/secretaria/anotaciones/${id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${getToken()}` },
+          })
+        ),
+        ...nuevasPersonas.map(p =>
+          fetch(`${API}/api/secretaria/anotaciones`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+            body: JSON.stringify({
+              evento_id: editando,
+              fecha: form.fecha,
+              tipo: p.tipoAnot,
+              miembro_id: p.miembro_id || null,
+              nombre_libre: p.miembro_id ? null : p.nombre,
+              fecha_ocurrencia: p.fecha_ocurrencia || null,
+            }),
+          })
+        ),
+        // Re-crear personas existentes cuya fecha_ocurrencia cambió (DELETE secuencial primero)
+        ...personasConFechaCambiada.map(p =>
+          fetch(`${API}/api/secretaria/anotaciones/${p.id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${getToken()}` },
+          })
+        ),
       ]);
 
-      setMensaje({ tipo: "ok", texto: "Evento actualizado." });
-      setEditando(null);
+      // POSTs de personas con fecha cambiada (después de q sus DELETEs terminaron)
+      if (personasConFechaCambiada.length > 0) {
+        await Promise.all(personasConFechaCambiada.map(p =>
+          fetch(`${API}/api/secretaria/anotaciones`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+            body: JSON.stringify({
+              evento_id: editando,
+              fecha: form.fecha,
+              tipo: p.tipoAnot,
+              miembro_id: p.miembro_id || null,
+              nombre_libre: p.miembro_id ? null : p.nombre,
+              fecha_ocurrencia: p.fecha_ocurrencia || null,
+            }),
+          })
+        ));
+      }
+
+      setMensaje({ tipo: "ok", texto: "✓ Evento actualizado correctamente." });
       buscar();
     } catch (e) {
       setMensaje({ tipo: "error", texto: e.message });
@@ -1189,6 +1566,17 @@ function ModificarEvento({ getToken }) {
               setAnotaciones={setAnotaciones}
               getToken={getToken}
               miembros={miembros}
+            />
+          )}
+
+          {!!TIPOS_CON_PERSONA[form.tipo] && (
+            <PersonaEventoSelector
+              tipoEvento={form.tipo}
+              personas={personas}
+              setPersonas={setPersonas}
+              getToken={getToken}
+              miembros={miembros}
+              setMiembros={setMiembros}
             />
           )}
 
@@ -2203,11 +2591,14 @@ function DashboardSecretaria({ getToken }) {
             const bautizos         = (data?.anotaciones || []).filter(a => a.tipo === "bautizo");
             const declaraciones    = (data?.anotaciones || []).filter(a => a.tipo === "declaracion_fe");
             const presentaciones   = (data?.anotaciones || []).filter(a => a.tipo === "presentacion");
+            const defunciones      = (data?.anotaciones || []).filter(a => a.tipo === "defuncion");
+            const matrimoniosMes   = (data?.anotaciones || []).filter(a => a.tipo === "matrimonio");
             const nuevosMiembros   = data?.nuevosMiembros || [];
 
             const hayAlgo = cumpleaniosMes.length > 0 || cumpleanosCulto.length > 0
               || bautizos.length > 0 || declaraciones.length > 0
-              || presentaciones.length > 0 || nuevosMiembros.length > 0;
+              || presentaciones.length > 0 || defunciones.length > 0
+              || matrimoniosMes.length > 0 || nuevosMiembros.length > 0;
 
             if (!hayAlgo) return null;
 
@@ -2261,7 +2652,7 @@ function DashboardSecretaria({ getToken }) {
                           {a.miembro_nombre
                             ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim()
                             : a.nombre_libre}
-                          <span className="text-xs text-orange-400 italic ml-1">{fmtDiaMes(a.fecha)}</span>
+                          <span className="text-xs text-orange-400 italic ml-1">{fmtDiaMes(a.fecha_ocurrencia || a.fecha)}</span>
                         </span>
                       ))}
                     </div>
@@ -2322,6 +2713,63 @@ function DashboardSecretaria({ getToken }) {
                             ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim()
                             : a.nombre_libre}
                           <span className="text-xs text-blue-400 italic ml-1">{fmtDiaMes(a.fecha)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Matrimonios */}
+                {matrimoniosMes.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-rose-700 uppercase tracking-wide mb-3">
+                      💍 Matrimonios
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {/* Agrupar parejas por evento (fecha + orden de aparición) */}
+                      {(() => {
+                        const parejas = [];
+                        const vistos = new Set();
+                        matrimoniosMes.forEach(a => {
+                          const key = a.evento_id || a.fecha;
+                          if (!vistos.has(key)) {
+                            vistos.add(key);
+                            parejas.push(matrimoniosMes.filter(x => (x.evento_id || x.fecha) === key));
+                          }
+                        });
+                        return parejas.map((par, i) => (
+                          <span key={i} className="flex items-center gap-1.5 bg-rose-50 border border-rose-100 text-sm text-gray-800 px-3 py-1.5 rounded-full">
+                            {par.map((p, j) => (
+                              <span key={j} className="flex items-center gap-1">
+                                {j > 0 && <span className="text-rose-300 mx-1">&amp;</span>}
+                                {p.foto_url && <img src={p.foto_url} alt="" className="w-5 h-5 rounded-full object-cover" />}
+                                {p.miembro_nombre
+                                  ? `${p.miembro_nombre} ${p.miembro_apellido || ""}`.trim()
+                                  : p.nombre_libre}
+                              </span>
+                            ))}
+                            <span className="text-xs text-rose-400 italic ml-1">{fmtDiaMes(par[0].fecha)}</span>
+                          </span>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {/* Defunciones */}
+                {defunciones.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">
+                      🕊️ Defunciones
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {defunciones.map((a, i) => (
+                        <span key={i} className="flex items-center gap-1.5 bg-gray-100 border border-gray-200 text-sm text-gray-700 px-3 py-1.5 rounded-full">
+                          {a.foto_url && <img src={a.foto_url} alt="" className="w-5 h-5 rounded-full object-cover" />}
+                          {a.miembro_nombre
+                            ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim()
+                            : a.nombre_libre}
+                          <span className="text-xs text-gray-400 italic ml-1">{fmtDiaMes(a.fecha_ocurrencia || a.fecha)}</span>
                         </span>
                       ))}
                     </div>

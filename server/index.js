@@ -1786,6 +1786,7 @@ app.get("/api/miembros/directorio", authenticateMiembro, async (req, res) => {
 // GET /api/miembros/:id/publico — perfil público para miembros del portal
 app.get("/api/miembros/:id/publico", authenticateMiembro, async (req, res) => {
   try {
+
     const result = await pool.query(
       `SELECT m.id, m.nombre, m.apellido, m.foto_url, m.email, m.celular,
               m.fecha_nacimiento, m.direccion, m.estado, m.acerca_de_mi,
@@ -1830,14 +1831,14 @@ app.get("/api/miembros/:id", authenticateToken, async (req, res) => {
 
 // POST /api/miembros — crear miembro
 app.post("/api/miembros", authenticateToken, async (req, res) => {
-  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles } = req.body;
+  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado } = req.body;
   if (!nombre || !apellido) return res.status(400).json({ error: "Nombre y apellido son obligatorios" });
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `INSERT INTO miembros (nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null]
+      `INSERT INTO miembros (nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, bautizado || false, declaracion_fe || false, estado_civil || null, separado || false, nivel_discipulado || null]
     );
     const miembro = result.rows[0];
     if (Array.isArray(roles) && roles.length > 0) {
@@ -1858,13 +1859,13 @@ app.post("/api/miembros", authenticateToken, async (req, res) => {
 
 // PUT /api/miembros/:id — actualizar miembro
 app.put("/api/miembros/:id", authenticateToken, async (req, res) => {
-  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles, acerca_de_mi } = req.body;
+  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles, acerca_de_mi, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado } = req.body;
   try {
     const client = await pool.connect();
     const result = await client.query(
       `UPDATE miembros SET nombre=$1, apellido=$2, foto_url=$3, fecha_nacimiento=$4, celular=$5, 
-       email=$6, direccion=$7, estado=$8, notas=$9, acerca_de_mi=$10 WHERE id=$11 RETURNING *`,
-      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, acerca_de_mi || null, req.params.id]
+       email=$6, direccion=$7, estado=$8, notas=$9, acerca_de_mi=$10, bautizado=$11, declaracion_fe=$12, estado_civil=$13, separado=$14, nivel_discipulado=$15 WHERE id=$16 RETURNING *`,
+      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, acerca_de_mi || null, bautizado || false, declaracion_fe || false, estado_civil || null, separado || false, nivel_discipulado || null, req.params.id]
     );
     if (result.rows.length === 0) { client.release(); return res.status(404).json({ error: "Miembro no encontrado" }); }
     if (Array.isArray(roles)) {
@@ -2949,7 +2950,17 @@ app.get("/api/secretaria/eventos/:id", authenticateToken, requireSecretariaAcces
       });
     }
 
-    res.json({ ...evento, asistencias });
+    // Anotaciones vinculadas al evento (personas para bautizos, defunciones, etc.)
+    const anotacionesResult = await pool.query(
+      `SELECT a.*, m.nombre AS miembro_nombre, m.apellido AS miembro_apellido, m.foto_url
+       FROM secretaria_anotaciones a
+       LEFT JOIN miembros m ON m.id = a.miembro_id
+       WHERE a.evento_id = $1
+       ORDER BY a.tipo, a.id`,
+      [id]
+    );
+
+    res.json({ ...evento, asistencias, anotaciones: anotacionesResult.rows });
   } catch (err) {
     console.error("Error get evento detalle:", err.message);
     res.status(500).json({ error: "Error al obtener evento" });
@@ -3080,13 +3091,13 @@ app.put("/api/secretaria/asistencia/:id", authenticateToken, requireSecretariaAc
 
 // POST /api/secretaria/anotaciones — crear anotación
 app.post("/api/secretaria/anotaciones", authenticateToken, requireSecretariaAccess, async (req, res) => {
-  const { evento_id, fecha, tipo, miembro_id, nombre_libre, notas } = req.body;
+  const { evento_id, fecha, tipo, miembro_id, nombre_libre, notas, fecha_ocurrencia } = req.body;
   if (!fecha || !tipo) return res.status(400).json({ error: "Fecha y tipo son requeridos" });
   try {
     const result = await pool.query(
-      `INSERT INTO secretaria_anotaciones (evento_id, fecha, tipo, miembro_id, nombre_libre, notas, creado_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [evento_id || null, fecha, tipo, miembro_id || null, nombre_libre || null, notas || null, req.user.username]
+      `INSERT INTO secretaria_anotaciones (evento_id, fecha, tipo, miembro_id, nombre_libre, notas, creado_por, fecha_ocurrencia)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [evento_id || null, fecha, tipo, miembro_id || null, nombre_libre || null, notas || null, req.user.username, fecha_ocurrencia || null]
     );
     res.json(result.rows[0]);
   } catch (err) {

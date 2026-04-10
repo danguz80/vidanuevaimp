@@ -44,6 +44,11 @@ const FORM_INICIAL = {
   estado: "activo",
   notas: "",
   roles: [],
+  bautizado: false,
+  declaracion_fe: false,
+  estado_civil: "",
+  separado: false,
+  nivel_discipulado: null,
 };
 
 const PARENTESCOS = [
@@ -113,6 +118,11 @@ export default function AdminMiembros() {
       estado: m.estado || "activo",
       notas: m.notas || "",
       roles: m.roles || [],
+      bautizado: m.bautizado || false,
+      declaracion_fe: m.declaracion_fe || false,
+      estado_civil: m.estado_civil || "",
+      separado: m.separado || false,
+      nivel_discipulado: m.nivel_discipulado || null,
     });
     setModalAbierto(true);
   };
@@ -308,6 +318,10 @@ export default function AdminMiembros() {
     return coincideBusqueda && coincideEstado && coincideRol;
   });
 
+  const idxActual = editando ? miembrosFiltrados.findIndex(m => m.id === editando) : -1;
+  const navAnterior = () => { if (idxActual > 0) abrirEditar(miembrosFiltrados[idxActual - 1]); };
+  const navSiguiente = () => { if (idxActual < miembrosFiltrados.length - 1) abrirEditar(miembrosFiltrados[idxActual + 1]); };
+
   const calcularEdad = (fechaNac) => {
     if (!fechaNac) return null;
     const hoy = new Date();
@@ -472,7 +486,28 @@ export default function AdminMiembros() {
               <h2 className="text-xl font-bold text-gray-800">
                 {editando ? "Editar Miembro" : "Nuevo Miembro"}
               </h2>
-              <button onClick={cerrarModal} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+              <div className="flex items-center gap-2">
+                {editando && (
+                  <>
+                    <button
+                      onClick={navAnterior}
+                      disabled={idxActual <= 0}
+                      className="text-gray-500 hover:text-gray-800 disabled:opacity-25 px-1.5 py-0.5 rounded hover:bg-gray-100 text-lg font-bold transition"
+                      title="Miembro anterior"
+                    >&#8249;</button>
+                    <span className="text-xs text-gray-400 tabular-nums min-w-[3rem] text-center">
+                      {idxActual + 1} / {miembrosFiltrados.length}
+                    </span>
+                    <button
+                      onClick={navSiguiente}
+                      disabled={idxActual >= miembrosFiltrados.length - 1}
+                      className="text-gray-500 hover:text-gray-800 disabled:opacity-25 px-1.5 py-0.5 rounded hover:bg-gray-100 text-lg font-bold transition"
+                      title="Siguiente miembro"
+                    >&#8250;</button>
+                  </>
+                )}
+                <button onClick={cerrarModal} className="text-gray-400 hover:text-gray-600 text-2xl leading-none ml-1">&times;</button>
+              </div>
             </div>
 
             <div className="p-6 space-y-5 overflow-y-auto flex-1">
@@ -612,6 +647,117 @@ export default function AdminMiembros() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Bautizado / Declaración de Fe */}
+              <div className="flex flex-wrap gap-6">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.bautizado}
+                    onChange={e => setForm(prev => ({ ...prev, bautizado: e.target.checked }))}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  <span className="text-sm font-semibold text-gray-700">Bautizado/a</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.declaracion_fe}
+                    onChange={e => setForm(prev => ({ ...prev, declaracion_fe: e.target.checked }))}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  <span className="text-sm font-semibold text-gray-700">Declaración de Fe</span>
+                </label>
+              </div>
+
+              {/* Estado civil */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Estado civil</label>
+                <div className="flex flex-wrap gap-4">
+                  {[
+                    { value: "soltero",    label: "Soltero/a" },
+                    { value: "casado",     label: "Casado/a" },
+                    { value: "viudo",      label: "Viudo/a" },
+                    { value: "divorciado", label: "Divorciado/a" },
+                  ].map(({ value, label }) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="radio"
+                        name="estado_civil"
+                        value={value}
+                        checked={form.estado_civil === value}
+                        onChange={() => setForm(prev => ({
+                          ...prev,
+                          estado_civil: value,
+                          // Limpiar separado si cambia a algo distinto de casado
+                          separado: value === "casado" ? prev.separado : false,
+                        }))}
+                        className="accent-blue-600"
+                      />
+                      <span className="text-sm text-gray-700">{label}</span>
+                    </label>
+                  ))}
+                  {form.estado_civil && (
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({ ...prev, estado_civil: "", separado: false }))}
+                      className="text-xs text-gray-400 underline"
+                    >
+                      Limpiar
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Separado/a (solo si Casado/a) */}
+              {form.estado_civil === "casado" && (
+                <div className="ml-2">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.separado}
+                      onChange={e => setForm(prev => ({ ...prev, separado: e.target.checked }))}
+                      className="w-4 h-4 rounded accent-blue-600"
+                    />
+                    <span className="text-sm text-gray-700">Separado/a</span>
+                    <span className="text-xs text-gray-400">(casado/a pero separado/a)</span>
+                  </label>
+                </div>
+              )}
+
+              {/* Nivel de Discipulado */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Nivel de Discipulado</label>
+                <div className="flex flex-wrap gap-3">
+                  {[
+                    { value: 1, label: "Nivel 1 — Fundamentos" },
+                    { value: 2, label: "Nivel 2 — Crecimiento" },
+                    { value: 3, label: "Nivel 3 — Servicio" },
+                    { value: 4, label: "Nivel 4 — Liderazgo" },
+                  ].map(({ value, label }) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="radio"
+                        name="nivel_discipulado"
+                        value={value}
+                        checked={form.nivel_discipulado === value}
+                        onChange={() => setForm(prev => ({ ...prev, nivel_discipulado: value }))}
+                        className="accent-blue-600"
+                      />
+                      <span className="text-sm text-gray-700">{label}</span>
+                    </label>
+                  ))}
+                </div>
+                {form.nivel_discipulado && (
+                  <button
+                    type="button"
+                    onClick={() => setForm(prev => ({ ...prev, nivel_discipulado: null }))}
+                    className="mt-1 text-xs text-gray-400 hover:text-red-500 underline"
+                  >
+                    Limpiar selección
+                  </button>
+                )}
               </div>
 
               {/* Notas */}
