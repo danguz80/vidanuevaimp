@@ -2835,13 +2835,13 @@ app.delete("/api/musica/playlists/:id/canciones/:cancionId", authenticateMiembro
 
 // POST /api/secretaria/eventos — crear evento
 app.post("/api/secretaria/eventos", authenticateToken, requireSecretariaAccess, async (req, res) => {
-  const { tipo, nombre_evento, fecha, descripcion } = req.body;
+  const { tipo, nombre_evento, fecha, descripcion, hora_inicio, hora_fin } = req.body;
   if (!tipo || !fecha) return res.status(400).json({ error: "Tipo y fecha son requeridos" });
   try {
     const result = await pool.query(
-      `INSERT INTO secretaria_eventos (tipo, nombre_evento, fecha, descripcion, creado_por)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [tipo, nombre_evento || null, fecha, descripcion || null, req.user.username]
+      `INSERT INTO secretaria_eventos (tipo, nombre_evento, fecha, descripcion, hora_inicio, hora_fin, creado_por)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [tipo, nombre_evento || null, fecha, descripcion || null, hora_inicio || null, hora_fin || null, req.user.username]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -2878,14 +2878,14 @@ app.get("/api/secretaria/eventos", authenticateToken, requireSecretariaAccess, a
 // PUT /api/secretaria/eventos/:id — actualizar evento
 app.put("/api/secretaria/eventos/:id", authenticateToken, requireSecretariaAccess, async (req, res) => {
   const { id } = req.params;
-  const { tipo, nombre_evento, fecha, descripcion } = req.body;
+  const { tipo, nombre_evento, fecha, descripcion, hora_inicio, hora_fin } = req.body;
   if (!tipo || !fecha) return res.status(400).json({ error: "Tipo y fecha son requeridos" });
   try {
     const result = await pool.query(
       `UPDATE secretaria_eventos
-       SET tipo=$1, nombre_evento=$2, fecha=$3, descripcion=$4, updated_at=NOW()
-       WHERE id=$5 RETURNING *`,
-      [tipo, nombre_evento || null, fecha, descripcion || null, id]
+       SET tipo=$1, nombre_evento=$2, fecha=$3, descripcion=$4, hora_inicio=$5, hora_fin=$6, updated_at=NOW()
+       WHERE id=$7 RETURNING *`,
+      [tipo, nombre_evento || null, fecha, descripcion || null, hora_inicio || null, hora_fin || null, id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Evento no encontrado" });
     res.json(result.rows[0]);
@@ -3073,6 +3073,240 @@ app.put("/api/secretaria/asistencia/:id", authenticateToken, requireSecretariaAc
     res.status(500).json({ error: "Error al actualizar asistencia" });
   } finally {
     client.release();
+  }
+});
+
+// ── Anotaciones (cumpleaños en evento, presentaciones, declaraciones de fe, bautizos) ──
+
+// POST /api/secretaria/anotaciones — crear anotación
+app.post("/api/secretaria/anotaciones", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { evento_id, fecha, tipo, miembro_id, nombre_libre, notas } = req.body;
+  if (!fecha || !tipo) return res.status(400).json({ error: "Fecha y tipo son requeridos" });
+  try {
+    const result = await pool.query(
+      `INSERT INTO secretaria_anotaciones (evento_id, fecha, tipo, miembro_id, nombre_libre, notas, creado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [evento_id || null, fecha, tipo, miembro_id || null, nombre_libre || null, notas || null, req.user.username]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error crear anotacion:", err.message);
+    res.status(500).json({ error: "Error al guardar anotación" });
+  }
+});
+
+// DELETE /api/secretaria/anotaciones/:id
+app.delete("/api/secretaria/anotaciones/:id", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM secretaria_anotaciones WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: "Error al eliminar anotación" });
+  }
+});
+
+// GET /api/secretaria/anotaciones?desde=&hasta= — listar por rango
+app.get("/api/secretaria/anotaciones", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { desde, hasta } = req.query;
+  try {
+    const result = await pool.query(
+      `SELECT a.*, m.nombre AS miembro_nombre, m.apellido AS miembro_apellido, m.foto_url
+       FROM secretaria_anotaciones a
+       LEFT JOIN miembros m ON m.id = a.miembro_id
+       WHERE a.fecha BETWEEN $1 AND $2
+       ORDER BY a.fecha, a.tipo, a.id`,
+      [desde, hasta]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Error al obtener anotaciones" });
+  }
+});
+
+// GET /api/secretaria/anotaciones/evento/:evento_id — anotaciones de un evento
+app.get("/api/secretaria/anotaciones/evento/:evento_id", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT a.*, m.nombre AS miembro_nombre, m.apellido AS miembro_apellido, m.foto_url
+       FROM secretaria_anotaciones a
+       LEFT JOIN miembros m ON m.id = a.miembro_id
+       WHERE a.evento_id = $1
+       ORDER BY a.tipo, a.id`,
+      [req.params.evento_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Error al obtener anotaciones del evento" });
+  }
+});
+
+// GET /api/secretaria/cumpleanos?mes= — miembros con cumpleaños en ese mes (1-12)
+app.get("/api/secretaria/cumpleanos", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { mes } = req.query;
+  if (!mes) return res.status(400).json({ error: "Parámetro mes requerido" });
+  try {
+    const result = await pool.query(
+      `SELECT id, nombre, apellido, fecha_nacimiento, foto_url
+       FROM miembros
+       WHERE estado = 'activo'
+         AND EXTRACT(MONTH FROM fecha_nacimiento) = $1
+       ORDER BY EXTRACT(DAY FROM fecha_nacimiento), apellido`,
+      [parseInt(mes)]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: "Error al obtener cumpleaños" });
+  }
+});
+
+// GET /api/secretaria/dashboard?desde=&hasta= — estadísticas para dashboard
+app.get("/api/secretaria/dashboard", authenticateToken, requireSecretariaAccess, async (req, res) => {
+  const { desde, hasta } = req.query;
+  if (!desde || !hasta) return res.status(400).json({ error: "Parámetros desde y hasta son requeridos" });
+  try {
+    // ── Asistencia: stats por tipo_evento ──────────────────────────────────
+    const asistStats = await pool.query(
+      `SELECT
+         sa.tipo_evento,
+         sa.nombre_evento,
+         COUNT(sa.id)::int                                              AS sesiones,
+         ROUND(AVG(p.cnt))::int                                         AS promedio_presentes,
+         MAX(p.cnt)::int                                                AS max_presentes,
+         MIN(p.cnt)::int                                                AS min_presentes
+       FROM secretaria_asistencia sa
+       JOIN (
+         SELECT asistencia_id, COUNT(*) FILTER (WHERE presente) AS cnt
+         FROM secretaria_asistencia_registros
+         GROUP BY asistencia_id
+       ) p ON p.asistencia_id = sa.id
+       WHERE sa.fecha BETWEEN $1 AND $2
+       GROUP BY sa.tipo_evento, sa.nombre_evento
+       ORDER BY sa.tipo_evento, sa.nombre_evento`,
+      [desde, hasta]
+    );
+
+    // ── Eventos: stats de horario por tipo (solo tipos de culto/reunión) ──
+    const eventoStats = await pool.query(
+      `WITH base AS (
+         SELECT tipo, nombre_evento, fecha, hora_inicio, hora_fin,
+           EXTRACT(EPOCH FROM (hora_fin - hora_inicio))/60 AS dur_min
+         FROM secretaria_eventos
+         WHERE fecha BETWEEN $1 AND $2
+           AND hora_inicio IS NOT NULL
+           AND tipo = ANY(ARRAY['culto_domingo','culto_jueves','estudio_biblico',
+                                'dorcas','cadena_oracion','esc_dominical','evento_especial'])
+       ),
+       grp AS (
+         SELECT tipo, nombre_evento,
+           COUNT(*)::int AS total,
+           TO_CHAR(
+             (EXTRACT(EPOCH FROM AVG(hora_inicio - '00:00'::time)) || ' seconds')::interval,
+             'HH24:MI'
+           ) AS inicio_promedio,
+           MIN(hora_inicio)  AS inicio_min_val,
+           MAX(hora_fin)     AS fin_max_val,
+           ROUND(AVG(dur_min))::int AS duracion_prom_min,
+           MIN(dur_min)::int AS dur_min_val,
+           MAX(dur_min)::int AS dur_max_val
+         FROM base GROUP BY tipo, nombre_evento
+       ),
+       e_inicio_min AS (
+         SELECT DISTINCT ON (b.tipo, b.nombre_evento)
+           b.tipo, b.nombre_evento, b.fecha AS fecha_inicio_min
+         FROM base b
+         JOIN grp g ON g.tipo = b.tipo
+           AND (g.nombre_evento IS NOT DISTINCT FROM b.nombre_evento)
+         WHERE b.hora_inicio = g.inicio_min_val
+         ORDER BY b.tipo, b.nombre_evento, b.fecha
+       ),
+       e_fin_max AS (
+         SELECT DISTINCT ON (b.tipo, b.nombre_evento)
+           b.tipo, b.nombre_evento, b.fecha AS fecha_fin_max
+         FROM base b
+         JOIN grp g ON g.tipo = b.tipo
+           AND (g.nombre_evento IS NOT DISTINCT FROM b.nombre_evento)
+         WHERE b.hora_fin = g.fin_max_val AND b.hora_fin IS NOT NULL
+         ORDER BY b.tipo, b.nombre_evento, b.fecha
+       ),
+       e_dur_min AS (
+         SELECT DISTINCT ON (b.tipo, b.nombre_evento)
+           b.tipo, b.nombre_evento, b.fecha AS fecha_dur_min
+         FROM base b
+         JOIN grp g ON g.tipo = b.tipo
+           AND (g.nombre_evento IS NOT DISTINCT FROM b.nombre_evento)
+         WHERE b.dur_min = g.dur_min_val
+         ORDER BY b.tipo, b.nombre_evento, b.fecha
+       ),
+       e_dur_max AS (
+         SELECT DISTINCT ON (b.tipo, b.nombre_evento)
+           b.tipo, b.nombre_evento, b.fecha AS fecha_dur_max
+         FROM base b
+         JOIN grp g ON g.tipo = b.tipo
+           AND (g.nombre_evento IS NOT DISTINCT FROM b.nombre_evento)
+         WHERE b.dur_min = g.dur_max_val
+         ORDER BY b.tipo, b.nombre_evento, b.fecha
+       )
+       SELECT
+         g.tipo, g.nombre_evento, g.total,
+         g.inicio_promedio,
+         TO_CHAR(g.inicio_min_val, 'HH24:MI') AS inicio_mas_temprano,
+         im.fecha_inicio_min,
+         TO_CHAR(g.fin_max_val,    'HH24:MI') AS termino_mas_tarde,
+         fm.fecha_fin_max,
+         g.duracion_prom_min,
+         g.dur_max_val AS duracion_max_min,
+         dma.fecha_dur_max,
+         g.dur_min_val AS duracion_min_min,
+         dmi.fecha_dur_min
+       FROM grp g
+       LEFT JOIN e_inicio_min im  ON im.tipo  = g.tipo AND (im.nombre_evento  IS NOT DISTINCT FROM g.nombre_evento)
+       LEFT JOIN e_fin_max    fm  ON fm.tipo  = g.tipo AND (fm.nombre_evento  IS NOT DISTINCT FROM g.nombre_evento)
+       LEFT JOIN e_dur_min    dmi ON dmi.tipo = g.tipo AND (dmi.nombre_evento IS NOT DISTINCT FROM g.nombre_evento)
+       LEFT JOIN e_dur_max    dma ON dma.tipo = g.tipo AND (dma.nombre_evento IS NOT DISTINCT FROM g.nombre_evento)
+       ORDER BY g.tipo, g.nombre_evento`,
+      [desde, hasta]
+    );
+
+    // ── Anotaciones del mes ────────────────────────────────────────────────
+    const anotacionesResult = await pool.query(
+      `SELECT a.*, m.nombre AS miembro_nombre, m.apellido AS miembro_apellido, m.foto_url
+       FROM secretaria_anotaciones a
+       LEFT JOIN miembros m ON m.id = a.miembro_id
+       WHERE a.fecha BETWEEN $1 AND $2
+       ORDER BY a.fecha, a.tipo, a.id`,
+      [desde, hasta]
+    );
+
+    // ── Cumpleaños del mes (miembros activos) ──────────────────────────────
+    const mesNum = parseInt(desde.split("-")[1]);
+    const cumpleanosResult = await pool.query(
+      `SELECT id, nombre, apellido, fecha_nacimiento, foto_url
+       FROM miembros
+       WHERE estado = 'activo' AND EXTRACT(MONTH FROM fecha_nacimiento) = $1
+       ORDER BY EXTRACT(DAY FROM fecha_nacimiento), apellido`,
+      [mesNum]
+    );
+
+    // ── Nuevos miembros del mes ────────────────────────────────────────────
+    const nuevosMiembrosResult = await pool.query(
+      `SELECT id, nombre, apellido, foto_url, DATE(created_at) AS fecha_ingreso
+       FROM miembros
+       WHERE estado = 'activo'
+         AND DATE(created_at) BETWEEN $1 AND $2
+       ORDER BY created_at`,
+      [desde, hasta]
+    );
+
+    res.json({
+      asistencia:    asistStats.rows,
+      horarios:      eventoStats.rows,
+      anotaciones:   anotacionesResult.rows,
+      cumpleanos:    cumpleanosResult.rows,
+      nuevosMiembros: nuevosMiembrosResult.rows,
+    });
+  } catch (err) {
+    console.error("Error dashboard:", err.message);
+    res.status(500).json({ error: "Error al obtener estadísticas" });
   }
 });
 
