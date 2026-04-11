@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import AdminNav from "../components/AdminNav";
-import { Music2, Plus, Pencil, Trash2, X, Save, Loader2, Eye, EyeOff, Search, Upload, ArrowLeft, CheckSquare, Square } from "lucide-react";
+import { Music2, Plus, Pencil, Trash2, X, Save, Loader2, Eye, EyeOff, Search, Upload, ArrowLeft, CheckSquare, Square, ListChecks, ChevronUp, ChevronDown, Filter } from "lucide-react";
 import ChordProRenderer from "../components/ChordProRenderer";
 
 const API = import.meta.env.VITE_BACKEND_URL;
@@ -76,14 +76,39 @@ export default function AdminChordPro() {
   // Vista previa en modal
   const [preview, setPreview] = useState(false);
 
+  // Vista lectura (click en fila)
+  const [vistaCancion, setVistaCancion] = useState(null); // cancion completa
+  const [loadingVista, setLoadingVista] = useState(false);
+  const [semitonos, setSemitonos] = useState(0);
+
   // Importar archivos
   const inputRef = useRef(null);
   const [importando, setImportando] = useState(false);
   const [importError, setImportError] = useState(null);
 
+  // Filtros
+  const [mostrarFiltros, setMostrarFiltros] = useState(false);
+  const [filtroTono, setFiltroTono] = useState(null);
+  const [filtroArtista, setFiltroArtista] = useState(null);
+  const [filtroTag, setFiltroTag] = useState(null);
+
+  const limpiarFiltros = () => { setFiltroTono(null); setFiltroArtista(null); setFiltroTag(null); };
+  const filtrosActivos = [filtroTono, filtroArtista, filtroTag].filter(Boolean).length;
+
+  // Valores únicos para chips de filtro
+  const tonosUnicos = [...new Set(canciones.map(c => c.tono).filter(Boolean))].sort();
+  const artistasUnicos = [...new Set(canciones.map(c => c.artista).filter(Boolean))].sort();
+  const tagsUnicos = [...new Set(canciones.flatMap(c =>
+    (c.tags || "").split(/[,\s]+/).map(t => t.trim()).filter(Boolean)
+  ))].sort();
+
   // Selección para borrado en lote
+  const [modoSeleccion, setModoSeleccion] = useState(false);
   const [seleccionados, setSeleccionados] = useState(new Set());
   const [borrandoLote, setBorrandoLote] = useState(false);
+
+  const activarSeleccion = () => setModoSeleccion(true);
+  const salirSeleccion = () => { setModoSeleccion(false); setSeleccionados(new Set()); };
 
   // Confirmar borrado individual
   const [borrandoId, setBorrandoId] = useState(null);
@@ -107,6 +132,16 @@ export default function AdminChordPro() {
     setErrorForm(null);
     setPreview(false);
     setModal("nuevo");
+  };
+
+  const verCancion = async (c) => {
+    setSemitonos(0);
+    setLoadingVista(true);
+    setVistaCancion(null);
+    const r = await fetch(`${API}/api/chordpro/${c.id}`, { headers: hdrs() });
+    const data = await r.json();
+    setVistaCancion(data);
+    setLoadingVista(false);
   };
 
   const abrirEditar = async (cancion) => {
@@ -203,7 +238,7 @@ export default function AdminChordPro() {
         const r = await fetch(`${API}/api/chordpro`, {
           method: "POST",
           headers: hdrs(),
-          body: JSON.stringify({ titulo, artista: meta.artista, tono: meta.tono, tags: ext === "cho" ? "cho" : "", contenido }),
+          body: JSON.stringify({ titulo, artista: "", tono: meta.tono, tags: ext === "cho" ? "cho" : "", contenido }),
         });
         if (!r.ok) { const d = await r.json(); errores.push(`${file.name}: ${d.error}`); continue; }
         importados++;
@@ -218,11 +253,18 @@ export default function AdminChordPro() {
     if (inputRef.current) inputRef.current.value = "";
   };
 
-  const cancionesFiltradas = canciones.filter(c =>
-    c.titulo.toLowerCase().includes(busqueda.toLowerCase()) ||
-    (c.artista || "").toLowerCase().includes(busqueda.toLowerCase()) ||
-    (c.tags || "").toLowerCase().includes(busqueda.toLowerCase())
-  );
+  const cancionesFiltradas = canciones.filter(c => {
+    const q = busqueda.toLowerCase();
+    const matchSearch = !q ||
+      c.titulo.toLowerCase().includes(q) ||
+      (c.artista || "").toLowerCase().includes(q) ||
+      (c.tono || "").toLowerCase().includes(q) ||
+      (c.tags || "").toLowerCase().includes(q);
+    const matchTono = !filtroTono || (c.tono || "") === filtroTono;
+    const matchArtista = !filtroArtista || (c.artista || "") === filtroArtista;
+    const matchTag = !filtroTag || (c.tags || "").split(/[,\s]+/).map(t => t.trim()).includes(filtroTag);
+    return matchSearch && matchTono && matchArtista && matchTag;
+  });
 
   const todosSeleccionados = cancionesFiltradas.length > 0 && seleccionados.size === cancionesFiltradas.length;
 
@@ -265,6 +307,22 @@ export default function AdminChordPro() {
               {importando ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
               {importando ? "Importando..." : "Importar"}
             </button>
+            {!modoSeleccion ? (
+              <button
+                onClick={activarSeleccion}
+                className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-sm font-semibold transition"
+                title="Activar modo selección"
+              >
+                <ListChecks size={15} /> Seleccionar
+              </button>
+            ) : (
+              <button
+                onClick={salirSeleccion}
+                className="flex items-center gap-2 bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-xl text-sm font-semibold transition"
+              >
+                <X size={15} /> Cancelar
+              </button>
+            )}
             <button
               onClick={abrirNuevo}
               className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-sm font-semibold transition"
@@ -284,32 +342,161 @@ export default function AdminChordPro() {
           </div>
         )}
 
-        {/* Buscador + barra de selecci\u00f3n */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              value={busqueda}
-              onChange={e => setBusqueda(e.target.value)}
-              placeholder="Buscar por t\u00edtulo, artista o etiqueta..."
-              className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
-            />
-          </div>
-          {seleccionados.size > 0 && (
+        {/* Buscador + filtros + borrar seleccionados */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={busqueda}
+                onChange={e => setBusqueda(e.target.value)}
+                placeholder="Buscar por título, artista, tono o etiqueta..."
+                className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
+              />
+            </div>
             <button
-              onClick={() => setBorrandoLote(true)}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition flex-shrink-0"
+              onClick={() => setMostrarFiltros(v => !v)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition flex-shrink-0 border ${
+                mostrarFiltros || filtrosActivos > 0
+                  ? "bg-violet-50 border-violet-300 text-violet-700"
+                  : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+              }`}
             >
-              <Trash2 size={15} /> Borrar {seleccionados.size}
+              <Filter size={15} />
+              Filtros
+              {filtrosActivos > 0 && (
+                <span className="bg-violet-600 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                  {filtrosActivos}
+                </span>
+              )}
             </button>
+            {modoSeleccion && seleccionados.size > 0 && (
+              <button
+                onClick={() => setBorrandoLote(true)}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition flex-shrink-0"
+              >
+                <Trash2 size={15} /> Borrar {seleccionados.size}
+              </button>
+            )}
+          </div>
+
+          {/* Panel de filtros */}
+          {mostrarFiltros && (
+            <div className="bg-white border border-gray-200 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filtros activos</p>
+                {filtrosActivos > 0 && (
+                  <button
+                    onClick={limpiarFiltros}
+                    className="text-xs text-red-500 hover:text-red-700 font-medium transition flex items-center gap-1"
+                  >
+                    <X size={12} /> Limpiar todo
+                  </button>
+                )}
+              </div>
+
+              {/* Tono */}
+              {tonosUnicos.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-gray-400 font-medium">Tono</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {tonosUnicos.map(t => (
+                      <button
+                        key={t}
+                        onClick={() => setFiltroTono(prev => prev === t ? null : t)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition border ${
+                          filtroTono === t
+                            ? "bg-violet-600 border-violet-600 text-white"
+                            : "bg-gray-50 border-gray-200 text-gray-600 hover:border-violet-300 hover:text-violet-700"
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Artista */}
+              {artistasUnicos.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-gray-400 font-medium">Artista</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {artistasUnicos.map(a => (
+                      <button
+                        key={a}
+                        onClick={() => setFiltroArtista(prev => prev === a ? null : a)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition border ${
+                          filtroArtista === a
+                            ? "bg-violet-600 border-violet-600 text-white"
+                            : "bg-gray-50 border-gray-200 text-gray-600 hover:border-violet-300 hover:text-violet-700"
+                        }`}
+                      >
+                        {a}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Etiquetas */}
+              {tagsUnicos.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-gray-400 font-medium">Etiqueta</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {tagsUnicos.map(tag => (
+                      <button
+                        key={tag}
+                        onClick={() => setFiltroTag(prev => prev === tag ? null : tag)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition border ${
+                          filtroTag === tag
+                            ? "bg-amber-500 border-amber-500 text-white"
+                            : "bg-gray-50 border-gray-200 text-gray-600 hover:border-amber-300 hover:text-amber-700"
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {tonosUnicos.length === 0 && artistasUnicos.length === 0 && tagsUnicos.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-2">No hay metadatos disponibles para filtrar</p>
+              )}
+            </div>
+          )}
+
+          {/* Chips de filtros activos (visibles aunque el panel esté cerrado) */}
+          {!mostrarFiltros && filtrosActivos > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {filtroTono && (
+                <span className="flex items-center gap-1 bg-violet-100 text-violet-700 text-xs font-semibold px-2.5 py-1 rounded-lg">
+                  Tono: {filtroTono}
+                  <button onClick={() => setFiltroTono(null)} className="hover:text-violet-900"><X size={11} /></button>
+                </span>
+              )}
+              {filtroArtista && (
+                <span className="flex items-center gap-1 bg-violet-100 text-violet-700 text-xs font-semibold px-2.5 py-1 rounded-lg">
+                  Artista: {filtroArtista}
+                  <button onClick={() => setFiltroArtista(null)} className="hover:text-violet-900"><X size={11} /></button>
+                </span>
+              )}
+              {filtroTag && (
+                <span className="flex items-center gap-1 bg-amber-100 text-amber-700 text-xs font-semibold px-2.5 py-1 rounded-lg">
+                  Tag: {filtroTag}
+                  <button onClick={() => setFiltroTag(null)} className="hover:text-amber-900"><X size={11} /></button>
+                </span>
+              )}
+            </div>
           )}
         </div>
 
         {/* Lista */}
         <div className="bg-white rounded-2xl shadow-sm divide-y divide-gray-100">
-          {/* Fila de cabecera con "seleccionar todas" */}
-          {!loading && cancionesFiltradas.length > 0 && (
+          {/* Fila de cabecera con "seleccionar todas" — solo en modo selección */}
+          {!loading && modoSeleccion && cancionesFiltradas.length > 0 && (
             <div className="flex items-center gap-3 px-5 py-3 bg-gray-50 rounded-t-2xl">
               <button onClick={toggleTodos} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition">
                 {todosSeleccionados
@@ -337,42 +524,124 @@ export default function AdminChordPro() {
               return (
                 <div
                   key={c.id}
-                  className={`flex items-center gap-3 px-5 py-4 transition ${selec ? "bg-violet-50" : ""}`}
+                  onClick={() => !modoSeleccion && verCancion(c)}
+                  className={`flex items-center gap-3 px-5 py-4 transition
+                    ${!modoSeleccion ? "cursor-pointer hover:bg-gray-50" : ""}
+                    ${selec ? "bg-violet-50" : ""}`}
                 >
-                  <button onClick={() => toggleSeleccion(c.id)} className="flex-shrink-0 text-gray-300 hover:text-violet-500 transition">
-                    {selec ? <CheckSquare size={18} className="text-violet-600" /> : <Square size={18} />}
-                  </button>
-                  <div className="min-w-0 flex-1">
+                  {modoSeleccion && (
+                    <button
+                      onClick={e => { e.stopPropagation(); toggleSeleccion(c.id); }}
+                      className="flex-shrink-0 text-gray-300 hover:text-violet-500 transition"
+                    >
+                      {selec ? <CheckSquare size={18} className="text-violet-600" /> : <Square size={18} />}
+                    </button>
+                  )}
+                  <div
+                    className="min-w-0 flex-1"
+                    onClick={modoSeleccion ? () => toggleSeleccion(c.id) : undefined}
+                  >
                     <p className="font-semibold text-gray-800 truncate">{c.titulo}</p>
                     <p className="text-sm text-gray-500 truncate">
                       {c.artista && <span>{c.artista}</span>}
-                      {c.artista && c.tono && <span className="mx-1 text-gray-300">\u00b7</span>}
+                      {c.artista && c.tono && <span className="mx-1 text-gray-300">·</span>}
                       {c.tono && <span className="text-violet-600 font-medium">Tono: {c.tono}</span>}
                       {c.tags && <span className="ml-2 text-xs text-gray-400">{c.tags}</span>}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      onClick={() => abrirEditar(c)}
-                      className="p-2 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition"
-                      title="Editar"
-                    >
-                      <Pencil size={16} />
-                    </button>
-                    <button
-                      onClick={() => setBorrandoId(c.id)}
-                      className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition"
-                      title="Eliminar"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+                  {!modoSeleccion && (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={e => { e.stopPropagation(); abrirEditar(c); }}
+                        className="p-2 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition"
+                        title="Editar"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); setBorrandoId(c.id); }}
+                        className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition"
+                        title="Eliminar"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })
           )}
         </div>
       </div>
+
+      {/* Panel de vista lectura */}
+      {(vistaCancion || loadingVista) && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8">
+            {/* Barra superior */}
+            <div className="sticky top-0 bg-white flex items-center gap-3 px-5 py-4 border-b border-gray-100 rounded-t-2xl">
+              <button
+                onClick={() => { setVistaCancion(null); setSemitonos(0); }}
+                className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 transition flex-shrink-0"
+              >
+                <X size={20} />
+              </button>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-gray-800 truncate">{vistaCancion?.titulo || ""}</p>
+                {vistaCancion?.artista && <p className="text-xs text-gray-500 truncate">{vistaCancion.artista}</p>}
+              </div>
+              {/* Transposición */}
+              <div className="flex items-center gap-1 bg-gray-100 rounded-xl px-1.5 py-1 flex-shrink-0">
+                <button onClick={() => setSemitonos(s => s - 1)} className="p-1 rounded-lg hover:bg-white transition text-gray-600" title="Bajar semitono">
+                  <ChevronDown size={16} />
+                </button>
+                <span className="text-xs font-bold text-violet-700 w-14 text-center select-none">
+                  {semitonos === 0 ? "Original" : semitonos > 0 ? `+${semitonos}` : semitonos}
+                </span>
+                <button onClick={() => setSemitonos(s => s + 1)} className="p-1 rounded-lg hover:bg-white transition text-gray-600" title="Subir semitono">
+                  <ChevronUp size={16} />
+                </button>
+                {semitonos !== 0 && (
+                  <button onClick={() => setSemitonos(0)} className="p-1 rounded-lg hover:bg-white transition text-gray-400" title="Restablecer">
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              {/* Editar */}
+              {vistaCancion && (
+                <button
+                  onClick={() => { setVistaCancion(null); setSemitonos(0); abrirEditar(vistaCancion); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold rounded-lg transition flex-shrink-0"
+                >
+                  <Pencil size={14} /> Editar
+                </button>
+              )}
+            </div>
+
+            {/* Contenido */}
+            <div className="p-6">
+              {loadingVista ? (
+                <div className="flex items-center justify-center gap-2 py-16 text-gray-400">
+                  <Loader2 size={20} className="animate-spin" /> Cargando...
+                </div>
+              ) : (
+                <>
+                  {vistaCancion.tono && (
+                    <div className="mb-4">
+                      <span className="inline-block bg-violet-100 text-violet-700 text-xs font-semibold px-3 py-1 rounded-full">
+                        Tono original: {vistaCancion.tono}
+                      </span>
+                    </div>
+                  )}
+                  <div className="overflow-x-auto">
+                    <ChordProRenderer contenido={vistaCancion.contenido} transponer={semitonos} />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal crear/editar */}
       {modal !== null && (

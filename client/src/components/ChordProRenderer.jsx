@@ -1,21 +1,5 @@
 import React, { useMemo } from "react";
 
-/**
- * Renderiza contenido en formato ChordPro.
- *
- * Soporta:
- *   {title:}, {artist:}, {key:}, {capo:}, {tempo:}
- *   {soc}/{eoc} — inicio/fin de coro
- *   {sos}/{eos} — inicio/fin de solo
- *   {sov}/{eov} — inicio/fin de verso
- *   {comment: texto} / {c: texto}
- *   [Acorde] inline con letra
- *
- * Props:
- *   contenido  — string ChordPro
- *   transponer — número de semitonos (+/-)
- */
-
 const NOTAS_STD = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const ENARM = { "Db": "C#", "Eb": "D#", "Fb": "E", "Gb": "F#", "Ab": "G#", "Bb": "A#", "Cb": "B" };
 
@@ -24,52 +8,86 @@ function transponerNota(nota, semitonos) {
   const base = ENARM[nota] || nota;
   const idx = NOTAS_STD.indexOf(base);
   if (idx === -1) return nota;
-  const nuevo = NOTAS_STD[((idx + semitonos) % 12 + 12) % 12];
-  return nuevo;
+  return NOTAS_STD[((idx + semitonos) % 12 + 12) % 12];
 }
 
 function transponerAcorde(acorde, semitonos) {
   if (!semitonos) return acorde;
-  // Match root + optional sharp/flat + suffix
   return acorde.replace(/^([A-G][b#]?)/, (_, root) => transponerNota(root, semitonos));
 }
 
-/** Divide una línea con acordes en pares [{acorde, texto}] */
+/**
+ * Valida si el contenido de un bracket es un acorde musical real.
+ * Ejemplos válidos: A, Bm, C#7, Dm7, E/G#, F#maj7, Gsus4, Bb, N.C.
+ * No válidos: Coro, Verso, Final, Pre-Coro, Titulo, Intro, etc.
+ */
+const ACORDE_MUSICAL_RE = /^[A-G][b#]?(?:m(?:aj)?(?:7|9|11|13)?|min|dim(?:7)?|aug|sus[24]?|add\d+|maj\d+|\d+)?(?:\/[A-G][b#]?)?$/;
+
+function esAcordeMusical(str) {
+  const s = str.trim();
+  return ACORDE_MUSICAL_RE.test(s) || /^[Nn]\.?[Cc]\.?$/.test(s);
+}
+
+/**
+ * Parsea una línea con acordes.
+ * Cada [Acorde] va sobre el texto que le SIGUE.
+ * [A]Ale[D]lu[A]ya → [{A,"Ale"},{D,"lu"},{A,"ya"}]
+ */
 function parsearLineaAcordes(linea) {
-  const partes = [];
   const re = /\[([^\]]+)\]/g;
-  let lastIdx = 0;
-  let match;
-  while ((match = re.exec(linea)) !== null) {
-    const textoAntes = linea.slice(lastIdx, match.index);
-    partes.push({ acorde: match[1], texto: textoAntes });
-    lastIdx = match.index + match[0].length;
+  const matches = [];
+  let m;
+  while ((m = re.exec(linea)) !== null) {
+    matches.push({ acorde: m[1], start: m.index, end: m.index + m[0].length });
   }
-  const restoTexto = linea.slice(lastIdx);
-  if (restoTexto) partes.push({ acorde: null, texto: restoTexto });
+  if (!matches.length) return [{ acorde: null, texto: linea }];
+
+  const partes = [];
+  if (matches[0].start > 0) {
+    partes.push({ acorde: null, texto: linea.slice(0, matches[0].start) });
+  }
+  for (let i = 0; i < matches.length; i++) {
+    const textEnd = i + 1 < matches.length ? matches[i + 1].start : linea.length;
+    partes.push({ acorde: matches[i].acorde, texto: linea.slice(matches[i].end, textEnd) });
+  }
   return partes;
 }
 
-/** Verifica si una línea contiene acordes */
 function tieneAcordes(linea) {
   return /\[[^\]]+\]/.test(linea);
+}
+
+/**
+ * Detecta si una línea entre corchetes es una etiqueta de sección y NO un acorde musical.
+ * Soporta: [Coro], [Verso], [Pre-Coro], [Final], [Titulo], [Intro], etc.
+ * Un bracket con contenido que no es acorde musical → etiqueta.
+ */
+const PATRON_SECCION = /^(coro|verso|puente|intro|outro|bridge|chorus|verse|pre-?coro|pre-?chorus|estrofa|interludio|interlude|refrain|tag|final|fin|bis|solo|titulo|title|chorus|refran|refrán)\b/i;
+
+function detectarEtiqueta(partes) {
+  // Una sola parte, todo dentro de corchetes, sin texto fuera → posible etiqueta
+  if (partes.length === 1 && partes[0].acorde !== null && !(partes[0].texto || "").trim()) {
+    if (!esAcordeMusical(partes[0].acorde)) {
+      return partes[0].acorde.trim();
+    }
+  }
+  return null;
 }
 
 export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
   const bloques = useMemo(() => {
     if (!contenido.trim()) return [];
-
     const lineas = contenido.split("\n");
     const result = [];
-    let seccionActual = null; // "coro" | "solo" | "verso" | null
+    let seccionActual = null;
 
     for (const linea of lineas) {
       const trimmed = linea.trim();
 
-      // Directivas de metadatos (omitir del render — se muestran en encabezado)
+      // Directivas de metadatos — ignorar
       if (/^\{(title|t|artist|st|subtitle|key|capo|tempo|time)[:\s]/i.test(trimmed)) continue;
 
-      // Inicio de sección
+      // Marcadores de sección
       if (/^\{(soc|start_of_chorus)\}/i.test(trimmed)) { seccionActual = "coro"; continue; }
       if (/^\{(eoc|end_of_chorus)\}/i.test(trimmed)) { seccionActual = null; result.push({ tipo: "fin_coro" }); continue; }
       if (/^\{(sos|start_of_solo)\}/i.test(trimmed)) { seccionActual = "solo"; continue; }
@@ -77,14 +95,12 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
       if (/^\{(sov|start_of_verse)\}/i.test(trimmed)) { seccionActual = "verso"; continue; }
       if (/^\{(eov|end_of_verse)\}/i.test(trimmed)) { seccionActual = null; continue; }
 
-      // Comentario / label de sección
+      // Comentario / etiqueta explícita
       const comentarioMatch = trimmed.match(/^\{(?:comment|c|x_comment):\s*(.+)\}/i);
       if (comentarioMatch) {
-        result.push({ tipo: "comentario", texto: comentarioMatch[1] });
+        result.push({ tipo: "etiqueta", texto: comentarioMatch[1] });
         continue;
       }
-
-      // Inicio de coro sin marcador explícito pero con etiqueta "Coro:" en comentario — ya manejado arriba
 
       // Línea vacía
       if (!trimmed) {
@@ -94,9 +110,26 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
         continue;
       }
 
+      // Línea de texto plano que es una etiqueta de sección (p.ej. "Coro:", "Verso 1")
+      const textoSinPuntuacion = trimmed.replace(/[:\.\-]/g, "").trim();
+      if (!tieneAcordes(trimmed) && PATRON_SECCION.test(textoSinPuntuacion)) {
+        result.push({ tipo: "etiqueta", texto: trimmed });
+        continue;
+      }
+
       // Línea con acordes
       if (tieneAcordes(trimmed)) {
-        const partes = parsearLineaAcordes(trimmed).map(p => ({
+        const partesRaw = parsearLineaAcordes(trimmed);
+
+        // ¿Es en realidad una etiqueta escrita con acorde? p.ej. [C]oro
+        const etiqueta = detectarEtiqueta(partesRaw);
+        if (etiqueta) {
+          result.push({ tipo: "etiqueta", texto: etiqueta });
+          continue;
+        }
+
+        // Línea musical real — transponemos solo los acordes
+        const partes = partesRaw.map(p => ({
           ...p,
           acorde: p.acorde ? transponerAcorde(p.acorde, transponer) : null,
         }));
@@ -104,7 +137,7 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
         continue;
       }
 
-      // Línea de letra pura
+      // Letra pura
       result.push({ tipo: "linea_letra", texto: trimmed, seccion: seccionActual });
     }
 
@@ -115,45 +148,46 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
     return <p className="text-gray-400 text-sm italic">Sin contenido</p>;
   }
 
-  let enCoro = false;
-
   return (
     <div className="font-sans text-sm leading-relaxed select-text">
       {bloques.map((bloque, i) => {
-        if (bloque.tipo === "fin_coro") { enCoro = false; return null; }
-        if (bloque.seccion === "coro" && !enCoro) enCoro = true;
+        if (bloque.tipo === "fin_coro") return null;
 
         if (bloque.tipo === "espacio") {
           return <div key={i} className="h-3" />;
         }
 
-        if (bloque.tipo === "comentario") {
+        // Etiqueta de sección — color ámbar, claramente distinto de los acordes
+        if (bloque.tipo === "etiqueta") {
           return (
-            <p key={i} className="text-violet-600 font-semibold text-xs uppercase tracking-wide mt-4 mb-1">
+            <p key={i} className="text-amber-600 font-bold text-xs uppercase tracking-widest mt-4 mb-1">
               {bloque.texto}
             </p>
           );
         }
 
-        const esCoroBloque = bloque.seccion === "coro";
-        const wrapClass = esCoroBloque
+        const esCoro = bloque.seccion === "coro";
+        const wrapClass = esCoro
           ? "border-l-2 border-violet-300 pl-3 bg-violet-50/40 rounded-r-sm"
           : "";
 
         if (bloque.tipo === "linea_acordes") {
+          const hayAcordes = bloque.partes.some(p => p.acorde);
           return (
-            <div key={i} className={`${wrapClass}`}>
-              <div className="flex flex-wrap items-end gap-0 whitespace-pre">
+            <div key={i} className={`${wrapClass} my-0.5`}>
+              <div className="flex flex-wrap items-end" style={{ lineHeight: 1 }}>
                 {bloque.partes.map((parte, j) => (
                   <span key={j} className="inline-flex flex-col items-start">
-                    {parte.acorde ? (
-                      <span className="text-violet-700 font-bold text-[13px] leading-none mb-0.5 min-w-[0.5rem]">
-                        {parte.acorde}
-                      </span>
-                    ) : (
-                      <span className="text-[13px] leading-none mb-0.5 opacity-0 select-none">-</span>
-                    )}
-                    <span className="text-gray-700 text-sm leading-snug whitespace-pre">{parte.texto || " "}</span>
+                    <span
+                      className={`block text-[13px] font-bold leading-tight mb-[2px] whitespace-pre ${
+                        parte.acorde ? "text-violet-700" : "opacity-0 select-none pointer-events-none"
+                      }`}
+                    >
+                      {parte.acorde || (hayAcordes ? "\u00a0" : "")}
+                    </span>
+                    <span className="block text-gray-700 text-sm leading-snug whitespace-pre">
+                      {parte.texto || (parte.acorde ? "\u00a0" : "")}
+                    </span>
                   </span>
                 ))}
               </div>
@@ -174,3 +208,4 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
     </div>
   );
 }
+
