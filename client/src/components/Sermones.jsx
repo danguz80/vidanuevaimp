@@ -4,6 +4,7 @@ const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
 export default function Sermones() {
   const [videos, setVideos] = useState([]);
+  const [playing, setPlaying] = useState({});
 
   useEffect(() => {
     const fetchVideos = async () => {
@@ -28,17 +29,55 @@ export default function Sermones() {
 
       <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
         {videos.map((video) => {
-          const url = `https://www.youtube.com/embed/${video.videoId}?start=${video.start || 0}`;
+          const embedUrl = `https://www.youtube.com/embed/${video.videoId}?start=${video.start || 0}&autoplay=1`;
+          const watchUrl = `https://www.youtube.com/watch?v=${video.videoId}&t=${video.start || 0}`;
+          const thumb = video.thumbnail || `https://i.ytimg.com/vi/${video.videoId}/hqdefault.jpg`;
+          const isPlaying = playing[video.videoId];
 
           return (
-            <div key={video.videoId} className="bg-gray-100 rounded shadow p-4">
-              <iframe
-                className="w-full aspect-video rounded"
-                src={url}
-                title={video.title}
-                allowFullScreen
-              />
-              <p className="mt-4 text-gray-700 font-semibold">{video.title}</p>
+            <div key={video.videoId} className="bg-gray-100 rounded shadow p-4 flex flex-col">
+              {isPlaying ? (
+                <iframe
+                  className="w-full aspect-video rounded"
+                  src={embedUrl}
+                  title={video.title}
+                  allow="autoplay; encrypted-media"
+                  allowFullScreen
+                />
+              ) : (
+                <button
+                  onClick={() => setPlaying(p => ({ ...p, [video.videoId]: true }))}
+                  className="relative w-full aspect-video rounded overflow-hidden group focus:outline-none"
+                  aria-label={`Reproducir ${video.title}`}
+                >
+                  <img
+                    src={thumb}
+                    alt={video.title}
+                    className="w-full h-full object-cover"
+                  />
+                  {/* Overlay oscuro al hover */}
+                  <div className="absolute inset-0 bg-black/20 group-hover:bg-black/30 transition" />
+                  {/* Botón play estilo YouTube */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="bg-red-600 group-hover:bg-red-700 transition rounded-2xl px-5 py-3.5 shadow-lg">
+                      <svg viewBox="0 0 24 24" fill="white" className="w-8 h-8 ml-1">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    </div>
+                  </div>
+                </button>
+              )}
+
+              <p className="mt-3 text-gray-700 font-semibold text-sm">{video.title}</p>
+
+              <a
+                href={watchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 text-xs text-red-600 hover:underline"
+              >
+                Ver en YouTube ↗
+              </a>
             </div>
           );
         })}

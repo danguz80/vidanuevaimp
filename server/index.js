@@ -14,6 +14,7 @@ import { fileURLToPath } from "url";
 
 import { v2 as cloudinary } from "cloudinary";
 import { OAuth2Client } from "google-auth-library";
+import cron from "node-cron";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 import { sendDonationReceipt, saveDonation, sendCashDonationReceipt } from "./emailService.js";
@@ -759,6 +760,8 @@ app.post("/api/sermones", authenticateToken, async (req, res) => {
     return res.status(400).json({ error: "videoId es requerido" });
   }
 
+  const startSecs = parseStart(start);
+
   try {
     const client = await pool.connect();
     const result = await client.query(
@@ -771,7 +774,7 @@ app.post("/api/sermones", authenticateToken, async (req, res) => {
          fecha_publicacion = EXCLUDED.fecha_publicacion,
          sunday_date = EXCLUDED.sunday_date
        RETURNING *`,
-      [videoId, title || "", thumbnail || "", start || 0, publishedAt || new Date(), sundayDate || new Date()]
+      [videoId, title || "", thumbnail || "", startSecs, publishedAt || new Date(), sundayDate || new Date()]
     );
     client.release();
 
@@ -790,7 +793,7 @@ app.get("/api/sermones", async (req, res) => {
   try {
     const client = await pool.connect();
     const result = await client.query(
-      "SELECT video_id, start_time, titulo, fecha_publicacion, sunday_date, thumbnail FROM sermones ORDER BY sunday_date DESC LIMIT 3"
+      "SELECT video_id, start_time, titulo, fecha_publicacion, sunday_date, thumbnail FROM sermones ORDER BY sunday_date DESC NULLS LAST, fecha_publicacion DESC NULLS LAST LIMIT 3"
     );
     client.release();
 
@@ -811,9 +814,21 @@ app.get("/api/sermones", async (req, res) => {
 });
 
 // --- API actualizar sermón ---
+// Helper: acepta "H:MM:SS", "MM:SS" o número en segundos
+function parseStart(val) {
+  if (val === undefined || val === null) return 0;
+  const s = String(val).trim();
+  if (!s.includes(":")) return Number(s) || 0;
+  const parts = s.split(":").map(Number);
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return 0;
+}
+
 app.put("/api/sermones/:videoId", authenticateToken, async (req, res) => {
   const { videoId } = req.params;
   const { start, title, fecha_publicacion, sunday_date, thumbnail } = req.body;
+  const startSecs = parseStart(start);
 
   try {
     const client = await pool.connect();
@@ -822,7 +837,7 @@ app.put("/api/sermones/:videoId", authenticateToken, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (video_id) DO UPDATE 
        SET start_time = $2, titulo = $3, fecha_publicacion = $4, sunday_date = $5, thumbnail = $6`,
-      [videoId, start, title, fecha_publicacion, sunday_date, thumbnail]
+      [videoId, startSecs, title, fecha_publicacion, sunday_date, thumbnail]
     );
     client.release();
 
@@ -849,7 +864,227 @@ app.delete("/api/sermones/:videoId", authenticateToken, async (req, res) => {
   }
 });
 
-// --- API enviar mensaje de contacto ---
+// ─────────────────────────────────────────────────────────────────────────────
+// 🎬 BÚSQUEDA AUTOMÁTICA DE SERMONES EN YOUTUBE
+// Corre automáticamente: Jueves 22:00 y Domingos 16:00 (hora Santiago)
+// También se puede disparar manualmente desde el panel admin
+// ─────────────────────────────────────────────────────────────────────────────
+
+let ultimaBusquedaYoutube = { fecha: null, encontrado: false, titulo: null, error: null };
+
+async function buscarUltimoCultoYoutube() {
+  const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+  const CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID;
+  const ahora = new Date();
+
+  console.log("[YouTube Sermones] Ejecutando búsqueda...");
+
+  if (!YOUTUBE_API_KEY || !CHANNEL_ID) {
+    ultimaBusquedaYoutube = { fecha: ahora, encontrado: false, titulo: null, error: "YOUTUBE_API_KEY o YOUTUBE_CHANNEL_ID no configurados" };
+    console.warn("[YouTube Sermones] Variables de entorno no configuradas.");
+    return;
+  }
+
+  try {
+    // Traer los 10 videos en vivo más recientes del canal
+    // (jueves + domingos = max ~9/mes, con 10 siempre hay al menos 1 domingo)
+    const searchResponse = await axios.get("https://www.googleapis.com/youtube/v3/search", {
+      params: {
+        part: "snippet",
+        channelId: CHANNEL_ID,
+        eventType: "completed",
+        type: "video",
+        order: "date",
+        maxResults: 10,
+        key: YOUTUBE_API_KEY,
+      },
+    });
+
+    const searchItems = searchResponse.data.items || [];
+    if (!searchItems.length) {
+      ultimaBusquedaYoutube = { fecha: ahora, encontrado: false, titulo: "No se encontraron transmisiones en el canal", error: null };
+      console.log("[YouTube Sermones] No se encontraron transmisiones.");
+      return;
+    }
+
+    // Segunda llamada: obtener liveStreamingDetails para saber la hora REAL de inicio
+    // publishedAt es cuando se publica el video (puede ser horas después), actualStartTime es la hora exacta del culto
+    const videoIds = searchItems.map(i => i.id.videoId).join(",");
+    const videosResponse = await axios.get("https://www.googleapis.com/youtube/v3/videos", {
+      params: {
+        part: "snippet,liveStreamingDetails",
+        id: videoIds,
+        key: YOUTUBE_API_KEY,
+      },
+    });
+
+    // Construir mapa videoId → actualStartTime (o fallback a scheduledStartTime o publishedAt)
+    const liveDetails = {};
+    for (const v of (videosResponse.data.items || [])) {
+      const actual = v.liveStreamingDetails?.actualStartTime;
+      const scheduled = v.liveStreamingDetails?.scheduledStartTime;
+      const published = v.snippet.publishedAt;
+      const startTime = actual || scheduled || published;
+      const source = actual ? "actualStart" : scheduled ? "scheduledStart" : "publishedAt";
+      console.log(`[YouTube Sermones] "${v.snippet.title}" → ${source}: ${startTime}`);
+      liveDetails[v.id] = {
+        titulo: v.snippet.title,
+        thumbnail:
+          v.snippet.thumbnails?.high?.url ||
+          v.snippet.thumbnails?.medium?.url ||
+          v.snippet.thumbnails?.default?.url || "",
+        startTime,
+      };
+    }
+
+    // Helper: obtener día de semana (0=domingo) en hora Santiago de forma fiable con Intl
+    const diaSantiago = (isoStr) => {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Santiago",
+        weekday: "short",
+      }).formatToParts(new Date(isoStr));
+      const dayStr = parts.find(p => p.type === "weekday")?.value;
+      return { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[dayStr] ?? -1;
+    };
+
+    // Helper: retorna la fecha del domingo (YYYY-MM-DD) en hora Santiago
+    // Si el video es de domingo retorna ese día; si no, retrocede al domingo anterior
+    const sundayIsoDate = (isoStr) => {
+      const date = new Date(isoStr);
+      const dayNum = diaSantiago(isoStr); // 0=domingo
+      // Restar los días necesarios para llegar al domingo, en ms
+      const sundayMs = date.getTime() - dayNum * 24 * 60 * 60 * 1000;
+      // Formatear la fecha resultante en Santiago (en-CA da YYYY-MM-DD)
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Santiago",
+        year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date(sundayMs));
+    };
+
+    // Helper: formatea una fecha YYYY-MM-DD como "5 de abril"
+    const formatarFechaCorta = (isoDate) => {
+      const [y, m, d] = isoDate.split("-").map(Number);
+      return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("es-CL", {
+        day: "numeric", month: "long", timeZone: "UTC",
+      });
+    };
+
+    // Helper: agrega la fecha al título si no la tiene ya
+    const tituloConFecha = (titulo, sundayDate) => {
+      const fecha = formatarFechaCorta(sundayDate);
+      if (titulo.includes(fecha)) return titulo;
+      return `${titulo} - ${fecha}`;
+    };
+
+    // Filtrar: solo videos publicados en domingo o lunes (hora Santiago)
+    // Los cultos del domingo se publican ese mismo día o al lunes siguiente — nunca más tarde
+    // Cualquier otro día (martes-sábado) se descarta (son cultos de jueves u otros)
+    const domingosCandidatos = searchItems
+      .map(item => {
+        const det = liveDetails[item.id.videoId];
+        const publishedAt = item.snippet.publishedAt;
+        const diaPub = diaSantiago(publishedAt);
+        // sundayIsoDate: si publicado domingo → ese día; si publicado lunes → retrocede 1 día al domingo
+        const sundayDate = sundayIsoDate(publishedAt);
+        const tituloOriginal = det?.titulo || item.snippet.title;
+        return {
+          videoId: item.id.videoId,
+          titulo: tituloConFecha(tituloOriginal, sundayDate),
+          thumbnail: det?.thumbnail || item.snippet.thumbnails?.high?.url || "",
+          startTime: publishedAt,
+          sundayDate,
+          diaPub,
+        };
+      })
+      .filter(item => {
+        const esDomingoOLunes = item.diaPub === 0 || item.diaPub === 1;
+        if (!esDomingoOLunes) {
+          console.log(`[YouTube Sermones] Saltando "${item.titulo}" — publicado día ${item.diaPub} (${item.startTime}), no es culto dominical`);
+        }
+        return esDomingoOLunes;
+      })
+      .slice(0, 3);
+
+    if (!domingosCandidatos.length) {
+      ultimaBusquedaYoutube = { fecha: ahora, encontrado: false, titulo: "Las transmisiones recientes no son de domingo", error: null };
+      console.log("[YouTube Sermones] No se encontraron transmisiones de domingo.");
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      // Insertar/actualizar los domingos encontrados
+      // ON CONFLICT: actualiza titulo y sunday_date para corregir entradas previas con datos erróneos
+      let nuevosInsertados = [];
+      for (const v of domingosCandidatos) {
+        const result = await client.query(
+          `INSERT INTO sermones (video_id, titulo, thumbnail, start_time, fecha_publicacion, sunday_date)
+           VALUES ($1, $2, $3, 0, $4::timestamptz, $5::date)
+           ON CONFLICT (video_id) DO UPDATE
+             SET titulo = EXCLUDED.titulo,
+                 sunday_date = EXCLUDED.sunday_date,
+                 thumbnail = COALESCE(EXCLUDED.thumbnail, sermones.thumbnail)
+           RETURNING video_id, titulo`,
+          [v.videoId, v.titulo, v.thumbnail, v.startTime, v.sundayDate]
+        );
+        if (result.rowCount > 0) {
+          nuevosInsertados.push(v.titulo);
+          console.log(`[YouTube Sermones] ✓ "${v.titulo}" (${v.videoId}) sunday_date=${v.sundayDate}`);
+        }
+      }
+
+      // Dejar SOLO los videos que encontramos como válidos (domingos/lunes) — eliminar todo lo demás
+      const videoIdsValidos = domingosCandidatos.map(v => v.videoId);
+      await client.query(
+        `DELETE FROM sermones WHERE video_id != ALL($1::text[])`,
+        [videoIdsValidos]
+      );
+      console.log(`[YouTube Sermones] BD limpiada. Quedan: ${videoIdsValidos.join(", ")}`);
+
+      if (nuevosInsertados.length > 0) {
+        ultimaBusquedaYoutube = {
+          fecha: ahora,
+          encontrado: true,
+          titulo: nuevosInsertados.length === 1
+            ? nuevosInsertados[0]
+            : `${nuevosInsertados.length} videos nuevos agregados`,
+          error: null,
+        };
+      } else {
+        ultimaBusquedaYoutube = { fecha: ahora, encontrado: false, titulo: "Los 3 domingos más recientes ya estaban registrados", error: null };
+        console.log("[YouTube Sermones] Sin videos nuevos (ya estaban en la BD).");
+      }
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    const status = error.response?.status;
+    const reason = error.response?.data?.error?.errors?.[0]?.reason;
+    const msg =
+      status === 403 && reason
+        ? `Cuota de YouTube agotada (${reason})`
+        : error.message || "Error desconocido";
+    ultimaBusquedaYoutube = { fecha: ahora, encontrado: false, titulo: null, error: msg };
+    console.error("[YouTube Sermones] Error:", msg);
+  }
+}
+
+// Cron: Lunes 12:00 hora Santiago (el domingo ya se publicó, el lunes está disponible)
+cron.schedule("0 12 * * 1", buscarUltimoCultoYoutube, { timezone: "America/Santiago" });
+console.log("[YouTube Sermones] Cron programado: Lunes 12:00 (America/Santiago)");
+
+// GET /api/sermones/buscar-youtube — estado de la última búsqueda
+app.get("/api/sermones/buscar-youtube", authenticateToken, (req, res) => {
+  res.json(ultimaBusquedaYoutube);
+});
+
+// POST /api/sermones/buscar-youtube — búsqueda manual inmediata
+app.post("/api/sermones/buscar-youtube", authenticateToken, async (req, res) => {
+  await buscarUltimoCultoYoutube();
+  res.json(ultimaBusquedaYoutube);
+});
+
+
 app.post("/api/contacto", async (req, res) => {
   const { nombre, correo, mensaje } = req.body;
 
