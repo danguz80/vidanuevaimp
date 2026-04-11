@@ -54,14 +54,14 @@ export default function CancionesCifrado() {
   // ──── Vista de canción individual ────
   if (seleccionada || loadingCancion) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="fixed inset-0 bg-white z-50 flex flex-col">
         {/* Barra superior */}
-        <div className="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm">
+        <div className="flex-shrink-0 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm">
           <button
             onClick={cerrar}
-            className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 transition flex-shrink-0"
+            className="p-2 rounded-xl text-gray-500 hover:bg-gray-100 transition flex-shrink-0"
           >
-            <ArrowLeft size={20} />
+            <ArrowLeft size={22} />
           </button>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-gray-800 truncate">{seleccionada?.titulo || ""}</p>
@@ -70,48 +70,47 @@ export default function CancionesCifrado() {
             )}
           </div>
           {/* Control de transposición */}
-          <div className="flex items-center gap-1 bg-gray-100 rounded-xl px-1.5 py-1 flex-shrink-0">
+          <div className="flex items-center gap-1 bg-gray-100 rounded-xl px-2 py-1.5 flex-shrink-0">
             <button
               onClick={() => setSemitonos(s => s - 1)}
-              className="p-1 rounded-lg hover:bg-white transition text-gray-600"
+              className="p-2 rounded-lg hover:bg-white transition text-gray-600"
               title="Bajar un semitono"
             >
-              <ChevronDown size={16} />
+              <ChevronDown size={18} />
             </button>
-            <span className="text-xs font-bold text-violet-700 w-10 text-center select-none">
+            <span className="text-sm font-bold text-violet-700 w-12 text-center select-none">
               {semitonos === 0 ? "Original" : semitonos > 0 ? `+${semitonos}` : semitonos}
             </span>
             <button
               onClick={() => setSemitonos(s => s + 1)}
-              className="p-1 rounded-lg hover:bg-white transition text-gray-600"
+              className="p-2 rounded-lg hover:bg-white transition text-gray-600"
               title="Subir un semitono"
             >
-              <ChevronUp size={16} />
+              <ChevronUp size={18} />
             </button>
             {semitonos !== 0 && (
               <button
                 onClick={() => setSemitonos(0)}
-                className="p-1 rounded-lg hover:bg-white transition text-gray-400"
+                className="p-1.5 rounded-lg hover:bg-white transition text-gray-400"
                 title="Restablecer tono original"
               >
-                <X size={13} />
+                <X size={14} />
               </button>
             )}
           </div>
         </div>
 
-        {/* Contenido */}
-        <div className="max-w-2xl mx-auto px-4 py-6">
+        {/* Contenido scrolleable */}
+        <div className="flex-1 overflow-y-auto px-5 py-5">
           {loadingCancion ? (
-            <div className="flex items-center justify-center gap-2 py-20 text-gray-400">
-              <Loader2 size={20} className="animate-spin" /> Cargando...
+            <div className="flex items-center justify-center gap-2 h-full text-gray-400">
+              <Loader2 size={24} className="animate-spin" /> Cargando...
             </div>
           ) : (
             <>
-              {/* Metadatos */}
-              <div className="mb-5 space-y-1">
-                {seleccionada.tono && (
-                  <span className="inline-block bg-violet-100 text-violet-700 text-xs font-semibold px-3 py-1 rounded-full">
+              {seleccionada.tono && (
+                <div className="mb-5">
+                  <span className="inline-block bg-violet-100 text-violet-700 text-sm font-semibold px-3 py-1 rounded-full">
                     Tono original: {seleccionada.tono}
                     {semitonos !== 0 && (
                       <span className="ml-1 text-violet-500">
@@ -119,16 +118,9 @@ export default function CancionesCifrado() {
                       </span>
                     )}
                   </span>
-                )}
-                {seleccionada.tags && (
-                  <p className="text-xs text-gray-400">{seleccionada.tags}</p>
-                )}
-              </div>
-
-              {/* Renderer */}
-              <div className="bg-white rounded-2xl shadow-sm p-5 overflow-x-auto">
-                <ChordProRenderer contenido={seleccionada.contenido} transponer={semitonos} />
-              </div>
+                </div>
+              )}
+              <ChordProRenderer contenido={seleccionada.contenido} transponer={semitonos} escala="grande" />
             </>
           )}
         </div>

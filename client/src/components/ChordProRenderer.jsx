@@ -150,7 +150,7 @@ export default function ChordProRenderer({ contenido = "", transponer = 0, escal
   }
 
   return (
-    <div className={`font-sans leading-relaxed select-text ${grande ? "text-base" : "text-sm"}`}>
+    <div className={`font-sans leading-relaxed select-text ${grande ? "text-lg" : "text-sm"}`}>
       {bloques.map((bloque, i) => {
         if (bloque.tipo === "fin_coro") return null;
 
@@ -162,7 +162,7 @@ export default function ChordProRenderer({ contenido = "", transponer = 0, escal
         if (bloque.tipo === "etiqueta") {
           return (
             <p key={i} className={`text-amber-600 font-bold uppercase tracking-widest mt-4 mb-1 ${
-              grande ? "text-sm" : "text-xs"
+              grande ? "text-base" : "text-xs"
             }`}>
               {bloque.texto}
             </p>
@@ -183,7 +183,7 @@ export default function ChordProRenderer({ contenido = "", transponer = 0, escal
                   <span key={j} className="inline-flex flex-col items-start">
                     <span
                       className={`block font-bold leading-tight mb-[3px] whitespace-pre ${
-                        grande ? "text-[16px]" : "text-[13px]"
+                        grande ? "text-[20px]" : "text-[13px]"
                       } ${
                         parte.acorde ? "text-violet-700" : "opacity-0 select-none pointer-events-none"
                       }`}
@@ -191,7 +191,7 @@ export default function ChordProRenderer({ contenido = "", transponer = 0, escal
                       {parte.acorde || (hayAcordes ? "\u00a0" : "")}
                     </span>
                     <span className={`block text-gray-700 leading-snug whitespace-pre ${
-                      grande ? "text-lg" : "text-sm"
+                      grande ? "text-xl" : "text-sm"
                     }`}>
                       {parte.texto || (parte.acorde ? "\u00a0" : "")}
                     </span>
@@ -206,7 +206,7 @@ export default function ChordProRenderer({ contenido = "", transponer = 0, escal
           return (
             <div key={i} className={`${wrapClass}`}>
               <p className={`text-gray-700 leading-snug whitespace-pre-wrap ${
-                grande ? "text-lg" : "text-sm"
+                grande ? "text-xl" : "text-sm"
               }`}>{bloque.texto}</p>
             </div>
           );
