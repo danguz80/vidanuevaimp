@@ -74,7 +74,8 @@ function detectarEtiqueta(partes) {
   return null;
 }
 
-export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
+export default function ChordProRenderer({ contenido = "", transponer = 0, escala = "normal" }) {
+  const grande = escala === "grande";
   const bloques = useMemo(() => {
     if (!contenido.trim()) return [];
     const lineas = contenido.split("\n");
@@ -149,7 +150,7 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
   }
 
   return (
-    <div className="font-sans text-sm leading-relaxed select-text">
+    <div className={`font-sans leading-relaxed select-text ${grande ? "text-base" : "text-sm"}`}>
       {bloques.map((bloque, i) => {
         if (bloque.tipo === "fin_coro") return null;
 
@@ -160,7 +161,9 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
         // Etiqueta de sección — color ámbar, claramente distinto de los acordes
         if (bloque.tipo === "etiqueta") {
           return (
-            <p key={i} className="text-amber-600 font-bold text-xs uppercase tracking-widest mt-4 mb-1">
+            <p key={i} className={`text-amber-600 font-bold uppercase tracking-widest mt-4 mb-1 ${
+              grande ? "text-sm" : "text-xs"
+            }`}>
               {bloque.texto}
             </p>
           );
@@ -179,13 +182,17 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
                 {bloque.partes.map((parte, j) => (
                   <span key={j} className="inline-flex flex-col items-start">
                     <span
-                      className={`block text-[13px] font-bold leading-tight mb-[2px] whitespace-pre ${
+                      className={`block font-bold leading-tight mb-[3px] whitespace-pre ${
+                        grande ? "text-[16px]" : "text-[13px]"
+                      } ${
                         parte.acorde ? "text-violet-700" : "opacity-0 select-none pointer-events-none"
                       }`}
                     >
                       {parte.acorde || (hayAcordes ? "\u00a0" : "")}
                     </span>
-                    <span className="block text-gray-700 text-sm leading-snug whitespace-pre">
+                    <span className={`block text-gray-700 leading-snug whitespace-pre ${
+                      grande ? "text-lg" : "text-sm"
+                    }`}>
                       {parte.texto || (parte.acorde ? "\u00a0" : "")}
                     </span>
                   </span>
@@ -198,7 +205,9 @@ export default function ChordProRenderer({ contenido = "", transponer = 0 }) {
         if (bloque.tipo === "linea_letra") {
           return (
             <div key={i} className={`${wrapClass}`}>
-              <p className="text-gray-700 text-sm leading-snug whitespace-pre-wrap">{bloque.texto}</p>
+              <p className={`text-gray-700 leading-snug whitespace-pre-wrap ${
+                grande ? "text-lg" : "text-sm"
+              }`}>{bloque.texto}</p>
             </div>
           );
         }

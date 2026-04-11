@@ -3747,6 +3747,81 @@ app.delete("/api/chordpro", authenticateToken, async (req, res) => {
   }
 });
 
+// ─── PLANIFICACIÓN DE EVENTOS ────────────────────────────────────────────────
+
+// Auto-crear tabla
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS planificacion_eventos (
+        id          SERIAL PRIMARY KEY,
+        fecha       TIMESTAMPTZ NOT NULL,
+        tipo        TEXT NOT NULL DEFAULT 'culto_domingo',
+        nombre      TEXT,
+        items       JSONB NOT NULL DEFAULT '[]',
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log("[DB] Tabla planificacion_eventos lista.");
+  } catch (err) {
+    console.error("[DB] Error tabla planificacion_eventos:", err.message);
+  }
+})();
+
+// GET /api/planificacion
+app.get("/api/planificacion", authenticateToken, async (req, res) => {
+  try {
+    const r = await pool.query(
+      "SELECT id, fecha, tipo, nombre, jsonb_array_length(items) AS num_items FROM planificacion_eventos ORDER BY fecha DESC"
+    );
+    res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/planificacion/:id
+app.get("/api/planificacion/:id", authenticateToken, async (req, res) => {
+  try {
+    const r = await pool.query("SELECT * FROM planificacion_eventos WHERE id = $1", [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: "No encontrado" });
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/planificacion
+app.post("/api/planificacion", authenticateToken, async (req, res) => {
+  try {
+    const { fecha, tipo, nombre, items } = req.body;
+    if (!fecha) return res.status(400).json({ error: "fecha es requerida" });
+    const r = await pool.query(
+      "INSERT INTO planificacion_eventos (fecha, tipo, nombre, items) VALUES ($1,$2,$3,$4) RETURNING *",
+      [fecha, tipo || "culto_domingo", nombre || null, JSON.stringify(items || [])]
+    );
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/planificacion/:id
+app.put("/api/planificacion/:id", authenticateToken, async (req, res) => {
+  try {
+    const { fecha, tipo, nombre, items } = req.body;
+    const r = await pool.query(
+      "UPDATE planificacion_eventos SET fecha=$1, tipo=$2, nombre=$3, items=$4, updated_at=NOW() WHERE id=$5 RETURNING *",
+      [fecha, tipo, nombre || null, JSON.stringify(items || []), req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: "No encontrado" });
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/planificacion/:id
+app.delete("/api/planificacion/:id", authenticateToken, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM planificacion_eventos WHERE id = $1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.listen(PORT, async () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   await initFamiliasTables();

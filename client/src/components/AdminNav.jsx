@@ -4,12 +4,13 @@ import { useAuth } from "../context/AuthContext";
 
 // Ítems del panel completo (acceso total)
 const NAV_ITEMS_FULL = [
-  { label: "Miembros",   path: "/admin/miembros",   color: "indigo" },
-  { label: "Calendario", path: "/admin/calendario", color: "teal" },
-  { label: "Mensajes",   path: "/admin/mensajes",   color: "blue" },
-  { label: "Sermones",   path: "/admin/videos",     color: "green" },
-  { label: "Hero",       path: "/admin/hero",       color: "purple" },
-  { label: "Música",     path: "/admin/musica",     color: "rose" },
+  { label: "Miembros",      path: "/admin/miembros",       color: "indigo" },
+  { label: "Calendario",    path: "/admin/calendario",     color: "teal" },
+  { label: "Planificación", path: "/admin/planificacion",  color: "blue" },
+  { label: "Mensajes",      path: "/admin/mensajes",       color: "sky" },
+  { label: "Sermones",      path: "/admin/videos",         color: "green" },
+  { label: "Hero",          path: "/admin/hero",           color: "purple" },
+  { label: "Música",        path: "/admin/musica",         color: "rose" },
 ];
 
 const NAV_ITEM_FONDOS     = { label: "Fondos",     path: "/admin/fondos",     color: "yellow" };
@@ -32,6 +33,7 @@ const COLOR_MAP = {
   rose:    { base: "bg-rose-600 hover:bg-rose-700",       active: "bg-rose-800" },
   violet:  { base: "bg-violet-600 hover:bg-violet-700",   active: "bg-violet-800" },
   cyan:    { base: "bg-cyan-600 hover:bg-cyan-700",       active: "bg-cyan-800" },
+  sky:     { base: "bg-sky-600 hover:bg-sky-700",         active: "bg-sky-800" },
   emerald: { base: "bg-emerald-600 hover:bg-emerald-700", active: "bg-emerald-800" },
 };
 

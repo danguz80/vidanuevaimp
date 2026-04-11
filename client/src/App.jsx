@@ -40,6 +40,7 @@ import PerfilPublicoMiembro from "./pages/PerfilPublicoMiembro";
 import BibliotecaMusica from "./pages/BibliotecaMusica";
 import AdminMusica from "./pages/AdminMusica";
 import AdminChordPro from "./pages/AdminChordPro";
+import AdminPlanificacion from "./pages/AdminPlanificacion";
 import AdminSecretaria from "./pages/AdminSecretaria";
 import AdminTesoreria from "./pages/AdminTesoreria";
 import CancionesCifrado from "./pages/CancionesCifrado";
@@ -80,6 +81,7 @@ export default function App() {
               <Route path="/admin/calendario" element={<ProtectedRoute><AdminCalendario /></ProtectedRoute>} />
               <Route path="/admin/musica" element={<ProtectedRoute><AdminMusica /></ProtectedRoute>} />
               <Route path="/admin/canciones" element={<ProtectedRoute><AdminChordPro /></ProtectedRoute>} />
+              <Route path="/admin/planificacion" element={<ProtectedRoute><AdminPlanificacion /></ProtectedRoute>} />
               <Route path="/admin/secretaria" element={<ProtectedRoute><AdminSecretaria /></ProtectedRoute>} />
               <Route path="/admin/tesoreria" element={<ProtectedRoute><AdminTesoreria /></ProtectedRoute>} />
 
