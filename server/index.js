@@ -3642,6 +3642,111 @@ app.post("/api/tesoreria/saldo-inicial", authenticateToken, requireTesoreriaAcce
   }
 });
 
+// ─── CHORDPRO ────────────────────────────────────────────────────────────────
+
+const initChordPro = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS canciones_chordpro (
+      id SERIAL PRIMARY KEY,
+      titulo TEXT NOT NULL,
+      artista TEXT DEFAULT '',
+      tono TEXT DEFAULT '',
+      tags TEXT DEFAULT '',
+      contenido TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+};
+
+// GET /api/chordpro — lista (sin contenido completo)
+app.get("/api/chordpro", authenticateToken, async (req, res) => {
+  try {
+    await initChordPro();
+    const { rows } = await pool.query(
+      "SELECT id, titulo, artista, tono, tags, created_at FROM canciones_chordpro ORDER BY titulo ASC"
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/chordpro/:id — canción completa
+app.get("/api/chordpro/:id", authenticateToken, async (req, res) => {
+  try {
+    await initChordPro();
+    const { rows } = await pool.query(
+      "SELECT * FROM canciones_chordpro WHERE id = $1",
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "No encontrado" });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/chordpro — crear
+app.post("/api/chordpro", authenticateToken, async (req, res) => {
+  try {
+    await initChordPro();
+    const { titulo, artista = "", tono = "", tags = "", contenido } = req.body;
+    if (!titulo || !contenido) return res.status(400).json({ error: "titulo y contenido requeridos" });
+    const { rows } = await pool.query(
+      "INSERT INTO canciones_chordpro (titulo, artista, tono, tags, contenido) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+      [titulo.trim(), artista.trim(), tono.trim(), tags.trim(), contenido]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/chordpro/:id — actualizar
+app.put("/api/chordpro/:id", authenticateToken, async (req, res) => {
+  try {
+    await initChordPro();
+    const { titulo, artista = "", tono = "", tags = "", contenido } = req.body;
+    if (!titulo || !contenido) return res.status(400).json({ error: "titulo y contenido requeridos" });
+    const { rows } = await pool.query(
+      `UPDATE canciones_chordpro
+       SET titulo=$1, artista=$2, tono=$3, tags=$4, contenido=$5, updated_at=NOW()
+       WHERE id=$6 RETURNING *`,
+      [titulo.trim(), artista.trim(), tono.trim(), tags.trim(), contenido, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: "No encontrado" });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/chordpro/:id
+app.delete("/api/chordpro/:id", authenticateToken, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM canciones_chordpro WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/chordpro  (borrado en lote) — body: { ids: [1,2,3...] }
+app.delete("/api/chordpro", authenticateToken, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids requeridos" });
+    await pool.query(
+      "DELETE FROM canciones_chordpro WHERE id = ANY($1::int[])",
+      [ids]
+    );
+    res.json({ ok: true, eliminados: ids.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   await initFamiliasTables();

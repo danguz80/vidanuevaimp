@@ -30,6 +30,7 @@ const COLOR_MAP = {
   purple:  { base: "bg-purple-600 hover:bg-purple-700",   active: "bg-purple-800" },
   yellow:  { base: "bg-yellow-600 hover:bg-yellow-700",   active: "bg-yellow-800" },
   rose:    { base: "bg-rose-600 hover:bg-rose-700",       active: "bg-rose-800" },
+  violet:  { base: "bg-violet-600 hover:bg-violet-700",   active: "bg-violet-800" },
   cyan:    { base: "bg-cyan-600 hover:bg-cyan-700",       active: "bg-cyan-800" },
   emerald: { base: "bg-emerald-600 hover:bg-emerald-700", active: "bg-emerald-800" },
 };

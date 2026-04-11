@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
-import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X, Bell, Star, Mic, DoorOpen, CalendarOff, Plus, Trash2, Users, Music } from "lucide-react";
+import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X, Bell, Star, Mic, DoorOpen, CalendarOff, Plus, Trash2, Users, Music, Music2 } from "lucide-react";
 import { useMemberAuth } from "../context/MemberAuthContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -801,6 +801,12 @@ export default function MiPortal() {
               className="flex items-center gap-2 text-sm text-indigo-700 hover:text-indigo-900 font-medium transition"
             >
               <Music size={16} /> Biblioteca de música
+            </button>
+            <button
+              onClick={() => navigate("/portal/canciones")}
+              className="flex items-center gap-2 text-sm text-violet-700 hover:text-violet-900 font-medium transition"
+            >
+              <Music2 size={16} /> Canciones (cifrado)
             </button>
             <button
               onClick={() => setShowCambiarPwd(true)}

@@ -39,8 +39,10 @@ import DirectorioMiembros from "./pages/DirectorioMiembros";
 import PerfilPublicoMiembro from "./pages/PerfilPublicoMiembro";
 import BibliotecaMusica from "./pages/BibliotecaMusica";
 import AdminMusica from "./pages/AdminMusica";
+import AdminChordPro from "./pages/AdminChordPro";
 import AdminSecretaria from "./pages/AdminSecretaria";
 import AdminTesoreria from "./pages/AdminTesoreria";
+import CancionesCifrado from "./pages/CancionesCifrado";
 
 export default function App() {
   return (
@@ -77,6 +79,7 @@ export default function App() {
               <Route path="/admin/miembros/:id" element={<ProtectedRoute><PerfilMiembro /></ProtectedRoute>} />
               <Route path="/admin/calendario" element={<ProtectedRoute><AdminCalendario /></ProtectedRoute>} />
               <Route path="/admin/musica" element={<ProtectedRoute><AdminMusica /></ProtectedRoute>} />
+              <Route path="/admin/canciones" element={<ProtectedRoute><AdminChordPro /></ProtectedRoute>} />
               <Route path="/admin/secretaria" element={<ProtectedRoute><AdminSecretaria /></ProtectedRoute>} />
               <Route path="/admin/tesoreria" element={<ProtectedRoute><AdminTesoreria /></ProtectedRoute>} />
 
@@ -86,6 +89,7 @@ export default function App() {
               <Route path="/portal/directorio" element={<DirectorioMiembros />} />
               <Route path="/portal/miembros/:id" element={<PerfilPublicoMiembro />} />
               <Route path="/portal/musica" element={<BibliotecaMusica />} />
+              <Route path="/portal/canciones" element={<CancionesCifrado />} />
               
               <Route path="*" element={<NotFound />} />
             </Routes>
