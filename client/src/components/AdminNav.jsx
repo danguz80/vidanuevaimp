@@ -2,29 +2,36 @@ import React from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-const NAV_ITEMS = [
+// Ítems del panel completo (acceso total)
+const NAV_ITEMS_FULL = [
   { label: "Miembros",   path: "/admin/miembros",   color: "indigo" },
   { label: "Calendario", path: "/admin/calendario", color: "teal" },
   { label: "Mensajes",   path: "/admin/mensajes",   color: "blue" },
   { label: "Sermones",   path: "/admin/videos",     color: "green" },
   { label: "Hero",       path: "/admin/hero",       color: "purple" },
-  { label: "Fondos",     path: "/admin/fondos",     color: "yellow" },
   { label: "Música",     path: "/admin/musica",     color: "rose" },
 ];
 
+const NAV_ITEM_FONDOS     = { label: "Fondos",     path: "/admin/fondos",     color: "yellow" };
 const NAV_ITEM_SECRETARIA = { label: "Secretaría", path: "/admin/secretaria", color: "cyan" };
+const NAV_ITEM_TESORERIA  = { label: "Tesorería",  path: "/admin/tesoreria",  color: "emerald" };
 
-const ROLES_SECRETARIA = ["admin", "Pastor", "Obispo", "Secretario"];
+// Roles con acceso total al panel
+const ROLES_FULL       = ["admin", "Pastor", "Obispo"];
+// Roles con acceso restringido
+const ROLES_SECRETARIO = ["Secretario"];
+const ROLES_TESORERO   = ["Tesorero"];
 
 const COLOR_MAP = {
-  indigo: { base: "bg-indigo-600 hover:bg-indigo-700", active: "bg-indigo-800" },
-  teal:   { base: "bg-teal-600 hover:bg-teal-700",     active: "bg-teal-800" },
-  blue:   { base: "bg-blue-600 hover:bg-blue-700",     active: "bg-blue-800" },
-  green:  { base: "bg-green-600 hover:bg-green-700",   active: "bg-green-800" },
-  purple: { base: "bg-purple-600 hover:bg-purple-700", active: "bg-purple-800" },
-  yellow: { base: "bg-yellow-600 hover:bg-yellow-700", active: "bg-yellow-800" },
-  rose:   { base: "bg-rose-600 hover:bg-rose-700",     active: "bg-rose-800" },
-  cyan:   { base: "bg-cyan-600 hover:bg-cyan-700",     active: "bg-cyan-800" },
+  indigo:  { base: "bg-indigo-600 hover:bg-indigo-700",   active: "bg-indigo-800" },
+  teal:    { base: "bg-teal-600 hover:bg-teal-700",       active: "bg-teal-800" },
+  blue:    { base: "bg-blue-600 hover:bg-blue-700",       active: "bg-blue-800" },
+  green:   { base: "bg-green-600 hover:bg-green-700",     active: "bg-green-800" },
+  purple:  { base: "bg-purple-600 hover:bg-purple-700",   active: "bg-purple-800" },
+  yellow:  { base: "bg-yellow-600 hover:bg-yellow-700",   active: "bg-yellow-800" },
+  rose:    { base: "bg-rose-600 hover:bg-rose-700",       active: "bg-rose-800" },
+  cyan:    { base: "bg-cyan-600 hover:bg-cyan-700",       active: "bg-cyan-800" },
+  emerald: { base: "bg-emerald-600 hover:bg-emerald-700", active: "bg-emerald-800" },
 };
 
 export default function AdminNav() {
@@ -32,11 +39,23 @@ export default function AdminNav() {
   const location = useLocation();
   const { user, roles, logout } = useAuth();
 
-  const puedeVerSecretaria = roles.some(r => ROLES_SECRETARIA.includes(r));
+  const esFull       = roles.some(r => ROLES_FULL.includes(r));
+  const esSecretario = !esFull && roles.some(r => ROLES_SECRETARIO.includes(r));
+  const esTesorero   = !esFull && roles.some(r => ROLES_TESORERO.includes(r));
 
-  const visibleItems = puedeVerSecretaria
-    ? [...NAV_ITEMS, NAV_ITEM_SECRETARIA]
-    : NAV_ITEMS;
+  // Acceso total: ve todo
+  // Secretario solo: ve solo Secretaría
+  // Tesorero solo: ve Fondos + Tesorería
+  // Combinaciones mixtas se suman
+  let visibleItems;
+  if (esFull) {
+    visibleItems = [...NAV_ITEMS_FULL, NAV_ITEM_FONDOS, NAV_ITEM_SECRETARIA, NAV_ITEM_TESORERIA];
+  } else {
+    visibleItems = [
+      ...(esTesorero   ? [NAV_ITEM_FONDOS, NAV_ITEM_TESORERIA] : []),
+      ...(esSecretario ? [NAV_ITEM_SECRETARIA]                  : []),
+    ];
+  }
 
   const handleLogout = () => {
     logout();

@@ -81,36 +81,50 @@ const authenticateToken = (req, res, next) => {
 
 // Endpoint de login
 app.post("/api/auth/login", async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password } = req.body; // 'username' contiene el email
 
   if (!username || !password) {
-    return res.status(400).json({ error: "Usuario y contraseña requeridos" });
+    return res.status(400).json({ error: "Email y contraseña requeridos" });
   }
 
   try {
-    const client = await pool.connect();
-    const result = await client.query("SELECT * FROM usuarios WHERE username = $1", [username]);
-    client.release();
+    // Autenticación unificada: buscar en miembros por email
+    const result = await pool.query(
+      "SELECT id, nombre, apellido, email, password_hash FROM miembros WHERE LOWER(email) = LOWER($1)",
+      [username.trim()]
+    );
 
     if (result.rows.length === 0) {
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
-    const user = result.rows[0];
-    const validPassword = await bcrypt.compare(password, user.password_hash);
+    const miembro = result.rows[0];
 
+    if (!miembro.password_hash) {
+      return res.status(401).json({ error: "Cuenta sin contraseña configurada. Contacta al administrador." });
+    }
+
+    const validPassword = await bcrypt.compare(password, miembro.password_hash);
     if (!validPassword) {
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
-    // Generar token JWT
+    // Verificar que tiene algún rol de acceso al panel admin
+    const rolesRes = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [miembro.id]);
+    const roles = rolesRes.rows.map(r => r.rol);
+    const ROLES_ADMIN = ["admin", "Pastor", "Obispo", "Secretario", "Tesorero"];
+    if (roles.length > 0 && !roles.some(r => ROLES_ADMIN.includes(r))) {
+      return res.status(403).json({ error: "No tienes permiso para acceder al panel de administración" });
+    }
+
+    const displayName = `${miembro.nombre} ${miembro.apellido}`.trim();
     const token = jwt.sign(
-      { id: user.id, username: user.username },
+      { id: miembro.id, username: displayName },
       process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
 
-    res.json({ token, username: user.username });
+    res.json({ token, username: displayName });
   } catch (error) {
     console.error("Error en login:", error.message);
     res.status(500).json({ error: "Error al iniciar sesión" });
@@ -126,14 +140,11 @@ app.get("/api/auth/verify", authenticateToken, (req, res) => {
 app.get("/api/auth/mis-roles", authenticateToken, async (req, res) => {
   const { id } = req.user;
   try {
-    const miembroCheck = await pool.query("SELECT id FROM miembros WHERE id = $1", [id]);
-    if (miembroCheck.rows.length > 0) {
-      const rolesRes = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [id]);
-      const roles = rolesRes.rows.map(r => r.rol);
-      if (roles.length === 0) roles.push("admin");
-      return res.json({ roles });
-    }
-    return res.json({ roles: ["admin"] });
+    const rolesRes = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [id]);
+    const roles = rolesRes.rows.map(r => r.rol);
+    // Si no tiene roles asignados, se asume admin (usuario sistema)
+    if (roles.length === 0) roles.push("admin");
+    res.json({ roles });
   } catch (err) {
     console.error("Error mis-roles:", err.message);
     res.status(500).json({ error: "Error al obtener roles" });
@@ -144,13 +155,13 @@ app.get("/api/auth/mis-roles", authenticateToken, async (req, res) => {
 const requireSecretariaAccess = async (req, res, next) => {
   const { id } = req.user;
   try {
-    const miembroCheck = await pool.query("SELECT id FROM miembros WHERE id = $1", [id]);
-    if (miembroCheck.rows.length === 0) return next(); // usuario sistema → acceso total
     const rolesRes = await pool.query(
       "SELECT rol FROM miembro_roles WHERE miembro_id = $1 AND rol = ANY($2::text[])",
       [id, ["admin", "Pastor", "Obispo", "Secretario"]]
     );
-    if (rolesRes.rows.length > 0) return next();
+    // Si no tiene roles (usuario sistema), tiene acceso total
+    const todosRoles = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [id]);
+    if (todosRoles.rows.length === 0 || rolesRes.rows.length > 0) return next();
     return res.status(403).json({ error: "No tienes permiso para acceder a esta sección" });
   } catch (err) {
     console.error("Error requireSecretariaAccess:", err.message);
@@ -194,7 +205,8 @@ app.post("/api/miembros/login", async (req, res) => {
 
     const rolesRes = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [miembro.id]);
     const roles = rolesRes.rows.map(r => r.rol);
-    const esAdmin = roles.includes("admin");
+    const ROLES_PANEL = ["admin", "Pastor", "Obispo", "Secretario", "Tesorero"];
+    const tienePanelAccess = roles.some(r => ROLES_PANEL.includes(r));
 
     const token = jwt.sign(
       { id: miembro.id, nombre: miembro.nombre, apellido: miembro.apellido, tipo: "miembro" },
@@ -203,7 +215,7 @@ app.post("/api/miembros/login", async (req, res) => {
     );
 
     let adminToken = null;
-    if (esAdmin) {
+    if (tienePanelAccess) {
       adminToken = jwt.sign(
         { id: miembro.id, username: `${miembro.nombre} ${miembro.apellido}` },
         process.env.JWT_SECRET,
@@ -220,7 +232,7 @@ app.post("/api/miembros/login", async (req, res) => {
         apellido: miembro.apellido,
         foto_url: miembro.foto_url,
         email: miembro.email,
-        esAdmin,
+        esAdmin: tienePanelAccess,
       },
     });
   } catch (err) {
@@ -602,7 +614,8 @@ app.post("/api/miembros/auth/google", async (req, res) => {
 
     const rolesRes = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [miembro.id]);
     const roles = rolesRes.rows.map(r => r.rol);
-    const esAdmin = roles.includes("admin");
+    const ROLES_PANEL = ["admin", "Pastor", "Obispo", "Secretario", "Tesorero"];
+    const tienePanelAccess = roles.some(r => ROLES_PANEL.includes(r));
 
     const token = jwt.sign(
       { id: miembro.id, nombre: miembro.nombre, apellido: miembro.apellido, tipo: "miembro" },
@@ -611,7 +624,7 @@ app.post("/api/miembros/auth/google", async (req, res) => {
     );
 
     let adminToken = null;
-    if (esAdmin) {
+    if (tienePanelAccess) {
       adminToken = jwt.sign(
         { id: miembro.id, username: `${miembro.nombre} ${miembro.apellido}` },
         process.env.JWT_SECRET,
@@ -628,7 +641,7 @@ app.post("/api/miembros/auth/google", async (req, res) => {
         apellido: miembro.apellido,
         foto_url: miembro.foto_url,
         email: miembro.email,
-        esAdmin,
+        esAdmin: tienePanelAccess,
       },
     });
   } catch (err) {
@@ -643,7 +656,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   if (!email) return res.status(400).json({ error: "Email requerido" });
 
   try {
-    const result = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
+    const result = await pool.query("SELECT * FROM miembros WHERE LOWER(email) = LOWER($1)", [email.trim()]);
     // Responder siempre igual para no revelar si el email existe
     if (result.rows.length === 0) {
       return res.json({ message: "Si el email existe, recibirás un enlace de recuperación." });
@@ -655,7 +668,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
 
     await pool.query(
-      "UPDATE usuarios SET reset_token = $1, reset_token_expires = $2 WHERE id = $3",
+      "UPDATE miembros SET reset_token = $1, reset_token_expires = $2 WHERE id = $3",
       [token, expires, user.id]
     );
 
@@ -710,7 +723,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
   try {
     const result = await pool.query(
-      "SELECT * FROM usuarios WHERE reset_token = $1 AND reset_token_expires > NOW()",
+      "SELECT * FROM miembros WHERE reset_token = $1 AND reset_token_expires > NOW()",
       [token]
     );
 
@@ -722,7 +735,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
     await pool.query(
-      "UPDATE usuarios SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
+      "UPDATE miembros SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
       [passwordHash, user.id]
     );
 
@@ -1573,6 +1586,46 @@ app.put("/api/fondos/:id/meta", authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error al actualizar meta:", error);
     res.status(500).json({ error: "Error al actualizar meta" });
+  }
+});
+
+// POST admin: crear nuevo fondo
+app.post("/api/fondos", authenticateToken, async (req, res) => {
+  const { nombre, descripcion, meta } = req.body;
+  if (!nombre || !nombre.trim()) {
+    return res.status(400).json({ error: "El nombre del fondo es requerido" });
+  }
+  try {
+    const result = await pool.query(
+      "INSERT INTO fondos (nombre, descripcion, meta) VALUES ($1, $2, $3) RETURNING *",
+      [nombre.trim(), descripcion?.trim() || null, meta ? parseFloat(meta) : null]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error al crear fondo:", error.message);
+    res.status(500).json({ error: "Error al crear el fondo" });
+  }
+});
+
+// DELETE admin: desactivar (o eliminar si no tiene donaciones) un fondo
+app.delete("/api/fondos/:id", authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const check = await pool.query(
+      "SELECT COUNT(*) FROM donaciones WHERE fondo_id = $1 AND estado != 'anulado'",
+      [id]
+    );
+    if (parseInt(check.rows[0].count) > 0) {
+      // Tiene donaciones activas: solo desactivar
+      await pool.query("UPDATE fondos SET activo = FALSE WHERE id = $1", [id]);
+      return res.json({ desactivado: true });
+    }
+    // Sin donaciones activas: eliminar completamente
+    await pool.query("DELETE FROM fondos WHERE id = $1", [id]);
+    res.json({ eliminado: true });
+  } catch (error) {
+    console.error("Error al eliminar fondo:", error.message);
+    res.status(500).json({ error: "Error al eliminar el fondo" });
   }
 });
 
@@ -2960,7 +3013,24 @@ app.get("/api/secretaria/eventos/:id", authenticateToken, requireSecretariaAcces
       [id]
     );
 
-    res.json({ ...evento, asistencias, anotaciones: anotacionesResult.rows });
+    // Tesorería vinculada (culto_domingo / culto_jueves)
+    let tesoreria = [];
+    try {
+      if (["culto_domingo", "culto_jueves"].includes(evento.tipo)) {
+        const tesoreriaResult = await pool.query(
+          `SELECT t.id, t.tipo, t.categoria, t.monto, t.descripcion, t.tipo_culto, t.fecha,
+                  m.nombre || ' ' || m.apellido AS registrado_por_nombre
+           FROM tesoreria_movimientos t
+           LEFT JOIN miembros m ON m.id = t.registrado_por
+           WHERE t.tipo_culto = $1 AND t.fecha = $2
+           ORDER BY t.created_at`,
+          [evento.tipo, evento.fecha]
+        );
+        tesoreria = tesoreriaResult.rows;
+      }
+    } catch (_e) { /* tabla aún no existe */ }
+
+    res.json({ ...evento, asistencias, anotaciones: anotacionesResult.rows, tesoreria });
   } catch (err) {
     console.error("Error get evento detalle:", err.message);
     res.status(500).json({ error: "Error al obtener evento" });
@@ -3359,6 +3429,216 @@ app.get("/api/secretaria/bitacora", authenticateToken, requireSecretariaAccess, 
   } catch (err) {
     console.error("Error bitácora:", err.message);
     res.status(500).json({ error: "Error al obtener bitácora" });
+  }
+});
+
+// ========================
+// 💰 TESORERÍA
+// ========================
+
+const ROLES_TESORERIA = ["admin", "Tesorero"];
+
+const requireTesoreriaAccess = async (req, res, next) => {
+  try {
+    const id = req.user?.id;
+    if (!id) return res.status(403).json({ error: "Sin acceso" });
+    const rolesRes = await pool.query(
+      "SELECT rol FROM miembro_roles WHERE miembro_id = $1 AND rol = ANY($2::text[])",
+      [id, ROLES_TESORERIA]
+    );
+    if (rolesRes.rows.length > 0) return next();
+    // Si no tiene roles asignados, es admin del sistema
+    const todosRoles = await pool.query("SELECT rol FROM miembro_roles WHERE miembro_id = $1", [id]);
+    if (todosRoles.rows.length === 0) return next();
+    return res.status(403).json({ error: "Acceso restringido a Tesorería" });
+  } catch (err) {
+    console.error("Error requireTesoreriaAccess:", err.message);
+    res.status(500).json({ error: "Error de autenticación" });
+  }
+};
+
+// GET /api/tesoreria — listar movimientos con filtros opcionales
+app.get("/api/tesoreria", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { desde, hasta, tipo } = req.query;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tesoreria_movimientos (
+        id             SERIAL PRIMARY KEY,
+        tipo           TEXT NOT NULL CHECK (tipo IN ('ingreso','egreso')),
+        categoria      TEXT NOT NULL,
+        monto          DECIMAL(12,0) NOT NULL CHECK (monto > 0),
+        descripcion    TEXT,
+        tipo_culto     TEXT,
+        fecha          DATE NOT NULL DEFAULT CURRENT_DATE,
+        registrado_por INTEGER REFERENCES miembros(id),
+        created_at     TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS tipo_culto TEXT");
+    await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS notas TEXT");
+    const conditions = [];
+    const params = [];
+    if (desde) { params.push(desde); conditions.push(`fecha >= $${params.length}`); }
+    if (hasta) { params.push(hasta); conditions.push(`fecha <= $${params.length}`); }
+    if (tipo)  { params.push(tipo);  conditions.push(`tipo = $${params.length}`); }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const result = await pool.query(
+      `SELECT t.*, m.nombre || ' ' || m.apellido AS registrado_por_nombre
+       FROM tesoreria_movimientos t
+       LEFT JOIN miembros m ON m.id = t.registrado_por
+       ${where}
+       ORDER BY t.fecha DESC, t.created_at DESC`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error GET tesoreria:", err.message);
+    res.status(500).json({ error: "Error al obtener movimientos" });
+  }
+});
+
+// POST /api/tesoreria — registrar ingreso o egreso
+app.post("/api/tesoreria", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { tipo, categoria, monto, descripcion, fecha, tipo_culto, notas } = req.body;
+  if (!tipo || !["ingreso","egreso"].includes(tipo)) return res.status(400).json({ error: "Tipo inválido" });
+  if (!categoria || !categoria.trim()) return res.status(400).json({ error: "Categoría requerida" });
+  if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
+  const TIPOS_CULTO_VALIDOS = ["culto_domingo", "culto_jueves"];
+  const tipoCultoFinal = (tipo === "ingreso" && tipo_culto && TIPOS_CULTO_VALIDOS.includes(tipo_culto)) ? tipo_culto : null;
+  try {
+    await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS tipo_culto TEXT");
+    await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS notas TEXT");
+    const result = await pool.query(
+      `INSERT INTO tesoreria_movimientos (tipo, categoria, monto, descripcion, tipo_culto, notas, fecha, registrado_por)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [tipo, categoria.trim(), Math.round(parseFloat(monto)), descripcion?.trim() || null, tipoCultoFinal, notas?.trim() || null, fecha || new Date().toISOString().split("T")[0], req.user.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error POST tesoreria:", err.message);
+    res.status(500).json({ error: "Error al registrar movimiento" });
+  }
+});
+
+// DELETE /api/tesoreria/:id — eliminar un movimiento
+app.delete("/api/tesoreria/:id", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query("DELETE FROM tesoreria_movimientos WHERE id = $1 RETURNING id", [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "Movimiento no encontrado" });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error DELETE tesoreria:", err.message);
+    res.status(500).json({ error: "Error al eliminar movimiento" });
+  }
+});
+
+// PUT /api/tesoreria/:id — editar un movimiento
+app.put("/api/tesoreria/:id", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { id } = req.params;
+  const { tipo, categoria, monto, descripcion, fecha, tipo_culto, notas } = req.body;
+  if (!tipo || !["ingreso","egreso"].includes(tipo)) return res.status(400).json({ error: "Tipo inválido" });
+  if (!categoria || !categoria.trim()) return res.status(400).json({ error: "Categoría requerida" });
+  if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
+  const TIPOS_CULTO_VALIDOS = ["culto_domingo", "culto_jueves"];
+  const tipoCultoFinal = (tipo === "ingreso" && tipo_culto && TIPOS_CULTO_VALIDOS.includes(tipo_culto)) ? tipo_culto : null;
+  try {
+    const result = await pool.query(
+      `UPDATE tesoreria_movimientos
+       SET tipo=$1, categoria=$2, monto=$3, descripcion=$4, tipo_culto=$5, notas=$6, fecha=$7
+       WHERE id=$8 RETURNING *`,
+      [tipo, categoria.trim(), Math.round(parseFloat(monto)), descripcion?.trim() || null, tipoCultoFinal, notas?.trim() || null, fecha, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Movimiento no encontrado" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error PUT tesoreria:", err.message);
+    res.status(500).json({ error: "Error al actualizar movimiento" });
+  }
+});
+
+// Helper: mes anterior
+function mesPrevio(mes) {
+  const [y, m] = mes.split("-").map(Number);
+  if (m === 1) return `${y - 1}-12`;
+  return `${y}-${String(m - 1).padStart(2, "0")}`;
+}
+
+// GET /api/tesoreria/saldo-anterior?mes=YYYY-MM — devuelve el saldo de cierre del mes previo
+app.get("/api/tesoreria/saldo-anterior", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { mes } = req.query;
+  if (!mes || !/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: "Mes inválido" });
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tesoreria_saldo_inicial (
+        mes   TEXT PRIMARY KEY,
+        monto DECIMAL(12,0) NOT NULL DEFAULT 0
+      )
+    `);
+    // Si el usuario guardó manualmente el saldo inicial del mes actual, devolver directo
+    const manualMesActual = await pool.query(
+      "SELECT monto FROM tesoreria_saldo_inicial WHERE mes = $1", [mes]
+    );
+    if (manualMesActual.rows.length > 0) {
+      return res.json({ saldo: parseFloat(manualMesActual.rows[0].monto), manual: true });
+    }
+    // Calcular cierre del mes anterior
+    const prev = mesPrevio(mes);
+    const [py, pm] = prev.split("-");
+    const diasPrev = new Date(parseInt(py), parseInt(pm), 0).getDate();
+    const desde = `${py}-${pm}-01`;
+    const hasta = `${py}-${pm}-${String(diasPrev).padStart(2, "0")}`;
+
+    const saldoInicialM1 = await pool.query(
+      "SELECT monto FROM tesoreria_saldo_inicial WHERE mes = $1", [prev]
+    );
+    const tieneManualM1 = saldoInicialM1.rows.length > 0;
+    const baseM1 = tieneManualM1 ? parseFloat(saldoInicialM1.rows[0].monto) : 0;
+
+    const movRes = await pool.query(
+      `SELECT tipo, COALESCE(SUM(monto), 0)::DECIMAL AS total
+       FROM tesoreria_movimientos
+       WHERE fecha >= $1 AND fecha <= $2
+       GROUP BY tipo`,
+      [desde, hasta]
+    );
+    const tieneMovM1 = movRes.rows.length > 0;
+    if (!tieneMovM1 && !tieneManualM1) {
+      return res.json({ noData: true, mes_anterior: prev });
+    }
+    let ing = 0, egr = 0;
+    movRes.rows.forEach(r => {
+      if (r.tipo === "ingreso") ing = parseFloat(r.total);
+      else egr = parseFloat(r.total);
+    });
+    res.json({ saldo: baseM1 + ing - egr, mes_anterior: prev });
+  } catch (err) {
+    console.error("Error GET saldo-anterior:", err.message);
+    res.status(500).json({ error: "Error al obtener saldo anterior" });
+  }
+});
+
+// POST /api/tesoreria/saldo-inicial — guardar apertura manual del mes
+app.post("/api/tesoreria/saldo-inicial", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { mes, monto } = req.body;
+  if (!mes || !/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: "Mes inválido" });
+  if (monto === undefined || monto === null || isNaN(monto)) return res.status(400).json({ error: "Monto inválido" });
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tesoreria_saldo_inicial (
+        mes   TEXT PRIMARY KEY,
+        monto DECIMAL(12,0) NOT NULL DEFAULT 0
+      )
+    `);
+    await pool.query(
+      `INSERT INTO tesoreria_saldo_inicial (mes, monto) VALUES ($1, $2)
+       ON CONFLICT (mes) DO UPDATE SET monto = $2`,
+      [mes, Math.round(parseFloat(monto))]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error POST saldo-inicial:", err.message);
+    res.status(500).json({ error: "Error al guardar saldo inicial" });
   }
 });
 

@@ -40,6 +40,7 @@ import PerfilPublicoMiembro from "./pages/PerfilPublicoMiembro";
 import BibliotecaMusica from "./pages/BibliotecaMusica";
 import AdminMusica from "./pages/AdminMusica";
 import AdminSecretaria from "./pages/AdminSecretaria";
+import AdminTesoreria from "./pages/AdminTesoreria";
 
 export default function App() {
   return (
@@ -77,6 +78,7 @@ export default function App() {
               <Route path="/admin/calendario" element={<ProtectedRoute><AdminCalendario /></ProtectedRoute>} />
               <Route path="/admin/musica" element={<ProtectedRoute><AdminMusica /></ProtectedRoute>} />
               <Route path="/admin/secretaria" element={<ProtectedRoute><AdminSecretaria /></ProtectedRoute>} />
+              <Route path="/admin/tesoreria" element={<ProtectedRoute><AdminTesoreria /></ProtectedRoute>} />
 
               {/* Portal de miembros */}
               <Route path="/portal/login" element={<LoginMiembro />} />

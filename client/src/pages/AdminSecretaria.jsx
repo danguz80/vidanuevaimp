@@ -51,11 +51,17 @@ async function generarBitacoraPDF(mesPicker, getToken, setCargandoPDF) {
     const diasEnMes = new Date(parseInt(anio), parseInt(mes), 0).getDate();
     const hasta = `${anio}-${mes}-${String(diasEnMes).padStart(2, "0")}`;
 
-    const res = await fetch(`${API}/api/secretaria/bitacora?desde=${desde}&hasta=${hasta}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
+    const [res, dashRes] = await Promise.all([
+      fetch(`${API}/api/secretaria/bitacora?desde=${desde}&hasta=${hasta}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      }),
+      fetch(`${API}/api/secretaria/dashboard?desde=${desde}&hasta=${hasta}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      }),
+    ]);
     if (!res.ok) throw new Error("Error al obtener datos del servidor");
     const { eventos, asistencias } = await res.json();
+    const dashData = dashRes.ok ? await dashRes.json() : {};
 
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const PW = doc.internal.pageSize.getWidth();
@@ -256,6 +262,239 @@ async function generarBitacoraPDF(mesPicker, getToken, setCargandoPDF) {
       });
     }
 
+    // ── Sección: Resumen del mes (Dashboard) ───────────────────
+    const fmtMin = (min) => {
+      if (min == null) return "—";
+      const h = Math.floor(min / 60);
+      const m = min % 60;
+      return h > 0 ? `${h}h ${m > 0 ? m + "min" : ""}`.trim() : `${m}min`;
+    };
+    const fmtDiaMesPDF = (fecha) => {
+      if (!fecha) return "";
+      const soloFecha = String(fecha).split("T")[0];
+      const d = new Date(soloFecha + "T12:00:00");
+      if (isNaN(d)) return "";
+      return d.toLocaleDateString("es-CL", { day: "numeric", month: "long" });
+    };
+
+    const asistNormal   = dashData.asistencia?.filter(r => r.tipo_evento !== "evento_especial") || [];
+    const asistEspecial = dashData.asistencia?.filter(r => r.tipo_evento === "evento_especial") || [];
+    const horNormal     = dashData.horarios?.filter(r => r.tipo !== "evento_especial") || [];
+    const horEspecial   = dashData.horarios?.filter(r => r.tipo === "evento_especial") || [];
+    const cumpleaniosMesDash = dashData.cumpleanos || [];
+    const anotsDash          = dashData.anotaciones || [];
+    const cumpleanosCulto    = anotsDash.filter(a => a.tipo === "cumpleanos");
+    const bautizosDash       = anotsDash.filter(a => a.tipo === "bautizo");
+    const declaracionesDash  = anotsDash.filter(a => a.tipo === "declaracion_fe");
+    const presentacionesDash = anotsDash.filter(a => a.tipo === "presentacion");
+    const defuncionesDash    = anotsDash.filter(a => a.tipo === "defuncion");
+    const matrimoniosDash    = anotsDash.filter(a => a.tipo === "matrimonio");
+    const nuevosMiembrosDash = dashData.nuevosMiembros || [];
+
+    const hayDash = asistNormal.length > 0 || asistEspecial.length > 0
+      || horNormal.length > 0 || horEspecial.length > 0
+      || cumpleaniosMesDash.length > 0 || cumpleanosCulto.length > 0
+      || bautizosDash.length > 0 || declaracionesDash.length > 0
+      || presentacionesDash.length > 0 || defuncionesDash.length > 0
+      || matrimoniosDash.length > 0 || nuevosMiembrosDash.length > 0;
+
+    if (hayDash) {
+      // Separador
+      checkBreak(16);
+      doc.setLineWidth(0.5);
+      doc.setDrawColor(60);
+      doc.line(ML, y, PW - MR, y);
+      y += 6;
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("RESUMEN DEL MES — ESTADÍSTICAS", ML, y);
+      y += 8;
+
+      // ── Asistencia por tipo ───────────────────────────────────
+      const todaAsist = [...asistNormal, ...asistEspecial];
+      if (todaAsist.length > 0) {
+        checkBreak(16);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.text("Asistencia por tipo de evento", ML, y);
+        y += 5;
+
+        // Cabecera
+        const colAsist = [
+          { x: ML,       w: 58, label: "TIPO" },
+          { x: ML + 58,  w: 22, label: "SESIONES" },
+          { x: ML + 80,  w: 28, label: "PROMEDIO" },
+          { x: ML + 108, w: 28, label: "MÁXIMO" },
+          { x: ML + 136, w: CW - 136, label: "MÍNIMO" },
+        ];
+        doc.setFontSize(7.5);
+        doc.setFillColor(220, 220, 220);
+        doc.rect(ML, y - 3.5, CW, 6, "F");
+        colAsist.forEach(c => doc.text(c.label, c.x + 1, y));
+        y += 3.5;
+        doc.setLineWidth(0.2);
+        doc.setDrawColor(130);
+        doc.line(ML, y, PW - MR, y);
+        y += 3.5;
+
+        doc.setFont("helvetica", "normal");
+        let lastWasNormal = asistNormal.length > 0;
+        todaAsist.forEach((r, idx) => {
+          // Sub-cabecera eventos especiales
+          if (idx === asistNormal.length && asistEspecial.length > 0) {
+            checkBreak(6);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(7);
+            doc.setTextColor(120);
+            doc.text("Eventos Especiales", ML + 1, y);
+            doc.setTextColor(0);
+            y += 4.5;
+            doc.setFont("helvetica", "normal");
+            lastWasNormal = false;
+          }
+          const label = r.tipo_evento === "evento_especial"
+            ? (r.nombre_evento || "Evento especial")
+            : (TIPOS_EVENTO.find(t => t.value === r.tipo_evento)?.label || r.tipo_evento);
+          const labelLines = doc.splitTextToSize(label, colAsist[0].w - 2);
+          const rowH = labelLines.length * 4.2 + 2;
+          checkBreak(rowH + 2);
+          doc.setFontSize(7.5);
+          doc.text(labelLines,           ML + 1,       y);
+          doc.text(String(r.sesiones),   ML + 58 + 1,  y);
+          doc.text(String(r.promedio_presentes), ML + 80 + 1, y);
+          doc.text(String(r.max_presentes),      ML + 108 + 1, y);
+          doc.text(String(r.min_presentes),      ML + 136 + 1, y);
+          y += rowH;
+        });
+        y += 5;
+      }
+
+      // ── Horarios ─────────────────────────────────────────────
+      const todaHor = [...horNormal, ...horEspecial];
+      if (todaHor.length > 0) {
+        checkBreak(20);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.text("Horarios y duración de eventos", ML, y);
+        y += 5;
+
+        const colHor = [
+          { x: ML,       w: 42, label: "TIPO" },
+          { x: ML + 42,  w: 20, label: "H.INICIO" },
+          { x: ML + 62,  w: 23, label: "MÁS TEMPRANO" },
+          { x: ML + 85,  w: 23, label: "TÉRMINO TARDE" },
+          { x: ML + 108, w: 22, label: "DUR. PROM." },
+          { x: ML + 130, w: 22, label: "DUR. MAX." },
+          { x: ML + 152, w: CW - 152, label: "DUR. MIN." },
+        ];
+        doc.setFontSize(6.5);
+        doc.setFillColor(220, 220, 220);
+        doc.rect(ML, y - 3.5, CW, 6, "F");
+        colHor.forEach(c => doc.text(c.label, c.x + 1, y));
+        y += 3.5;
+        doc.setLineWidth(0.2);
+        doc.setDrawColor(130);
+        doc.line(ML, y, PW - MR, y);
+        y += 3.5;
+
+        doc.setFont("helvetica", "normal");
+        todaHor.forEach((r, idx) => {
+          if (idx === horNormal.length && horEspecial.length > 0) {
+            checkBreak(5);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(6.5);
+            doc.setTextColor(120);
+            doc.text("Eventos Especiales", ML + 1, y);
+            doc.setTextColor(0);
+            y += 4;
+            doc.setFont("helvetica", "normal");
+          }
+          const label = r.tipo === "evento_especial"
+            ? (r.nombre_evento || "Evento especial")
+            : (TIPOS_EVENTO.find(t => t.value === r.tipo)?.label || r.tipo);
+          const labelLines = doc.splitTextToSize(`${label} (${r.total})`, colHor[0].w - 2);
+          const rowH = labelLines.length * 4 + 2;
+          checkBreak(rowH + 2);
+          doc.setFontSize(6.5);
+          const fmtF = (f) => f ? f.split("T")[0].split("-").reverse().slice(0,2).join("/") : "";
+          doc.text(labelLines,                     colHor[0].x + 1, y);
+          doc.text(r.inicio_promedio || "—",        colHor[1].x + 1, y);
+          doc.text((r.inicio_mas_temprano || "—") + (fmtF(r.fecha_inicio_min) ? ` (${fmtF(r.fecha_inicio_min)})` : ""), colHor[2].x + 1, y);
+          doc.text((r.termino_mas_tarde || "—") + (fmtF(r.fecha_fin_max) ? ` (${fmtF(r.fecha_fin_max)})` : ""),        colHor[3].x + 1, y);
+          doc.text(r.duracion_prom_min != null ? fmtMin(r.duracion_prom_min) : "—", colHor[4].x + 1, y);
+          doc.text(r.duracion_max_min != null ? fmtMin(r.duracion_max_min) + (fmtF(r.fecha_dur_max) ? ` (${fmtF(r.fecha_dur_max)})` : "") : "—", colHor[5].x + 1, y);
+          doc.text(r.duracion_min_min != null ? fmtMin(r.duracion_min_min) : "—", colHor[6].x + 1, y);
+          y += rowH;
+        });
+        y += 5;
+      }
+
+      // ── Anotaciones Especiales ────────────────────────────────
+      const seccionesAnot = [
+        { lista: cumpleaniosMesDash,  titulo: "Cumpleanos del mes",          fmt: m => `${m.nombre} ${m.apellido} — ${fmtDiaMesPDF(m.fecha_nacimiento_este_anio || m.fecha_nacimiento)}` },
+        { lista: cumpleanosCulto,     titulo: "Cumpleanos celebrados en culto", fmt: a => `${a.miembro_nombre ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim() : a.nombre_libre} — ${fmtDiaMesPDF(a.fecha_ocurrencia || a.fecha)}` },
+        { lista: presentacionesDash,  titulo: "Presentaciones",              fmt: a => `${a.miembro_nombre ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim() : a.nombre_libre} — ${fmtDiaMesPDF(a.fecha)}` },
+        { lista: declaracionesDash,   titulo: "Declaraciones de Fe",         fmt: a => `${a.miembro_nombre ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim() : a.nombre_libre} — ${fmtDiaMesPDF(a.fecha)}` },
+        { lista: bautizosDash,        titulo: "Bautizos",                    fmt: a => `${a.miembro_nombre ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim() : a.nombre_libre} — ${fmtDiaMesPDF(a.fecha)}` },
+        { lista: matrimoniosDash,     titulo: "Matrimonios",                 fmt: null }, // manejo especial
+        { lista: defuncionesDash,     titulo: "Defunciones",                 fmt: a => `${a.miembro_nombre ? `${a.miembro_nombre} ${a.miembro_apellido || ""}`.trim() : a.nombre_libre} — ${fmtDiaMesPDF(a.fecha_ocurrencia || a.fecha)}` },
+        { lista: nuevosMiembrosDash,  titulo: "Nuevos miembros",             fmt: m => `${m.nombre} ${m.apellido} — ${fmtDiaMesPDF(m.created_at?.split("T")[0])}` },
+      ];
+
+      const hayAlgunAnot = seccionesAnot.some(s => s.lista.length > 0);
+      if (hayAlgunAnot) {
+        checkBreak(14);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.text("Anotaciones Especiales", ML, y);
+        y += 6;
+
+        seccionesAnot.forEach(({ lista, titulo, fmt }) => {
+          if (lista.length === 0) return;
+          checkBreak(12);
+          doc.setFontSize(8);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(60);
+          doc.text(titulo.toUpperCase(), ML + 2, y);
+          doc.setTextColor(0);
+          y += 4.5;
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(7.5);
+
+          if (titulo === "Matrimonios") {
+            // Agrupar parejas por evento_id
+            const parejas = [];
+            const vistos = new Set();
+            lista.forEach(a => {
+              const key = a.evento_id || a.fecha;
+              if (!vistos.has(key)) {
+                vistos.add(key);
+                parejas.push(lista.filter(x => (x.evento_id || x.fecha) === key));
+              }
+            });
+            parejas.forEach(par => {
+              const nombres = par.map(p => p.miembro_nombre ? `${p.miembro_nombre} ${p.miembro_apellido || ""}`.trim() : p.nombre_libre).join(" & ");
+              const fecha = fmtDiaMesPDF(par[0].fecha);
+              const lineaText = `• ${nombres}${fecha ? ` — ${fecha}` : ""}`;
+              const lines = doc.splitTextToSize(lineaText, CW - 6);
+              checkBreak(lines.length * 4 + 1);
+              doc.text(lines, ML + 4, y);
+              y += lines.length * 4 + 1;
+            });
+          } else {
+            lista.forEach(item => {
+              const lineaText = `• ${fmt(item)}`;
+              const lines = doc.splitTextToSize(lineaText, CW - 6);
+              checkBreak(lines.length * 4 + 1);
+              doc.text(lines, ML + 4, y);
+              y += lines.length * 4 + 1;
+            });
+          }
+          y += 4;
+        });
+      }
+    }
+
     // ── Pie de página en todas las páginas ─────────────────────
     const totalPags = doc.internal.getNumberOfPages();
     for (let i = 1; i <= totalPags; i++) {
@@ -450,6 +689,34 @@ function VerEventos({ getToken }) {
                   </div>
                 );
               })}
+            </div>
+          );
+        })()}
+
+        {/* Tesorería vinculada */}
+        {eventoDetalle.tesoreria && eventoDetalle.tesoreria.length > 0 && (() => {
+          const CAT = { ofrendas: "Ofrendas", cuotas_diezmos: "Cuotas / Diezmos", cumpleanos: "Cumpleaños", otros: "Otros" };
+          const total = eventoDetalle.tesoreria.reduce((s, t) => s + parseFloat(t.monto), 0);
+          return (
+            <div className="border-t pt-5">
+              <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">
+                💰 Ingresos — Tesorería
+              </h3>
+              <div className="space-y-2">
+                {eventoDetalle.tesoreria.map(t => (
+                  <div key={t.id} className="flex items-center justify-between bg-emerald-50 rounded-lg px-4 py-2 text-sm">
+                    <div>
+                      <span className="font-medium text-gray-700">{CAT[t.categoria] || t.categoria}</span>
+                      {t.descripcion && <span className="ml-2 text-gray-400 italic">— {t.descripcion}</span>}
+                    </div>
+                    <span className="font-bold text-emerald-700">${Math.round(parseFloat(t.monto)).toLocaleString("es-CL")}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between border-t border-emerald-100 pt-2 mt-1">
+                  <span className="text-sm font-semibold text-gray-700">Total ofrendas del culto</span>
+                  <span className="font-bold text-emerald-800">${Math.round(total).toLocaleString("es-CL")}</span>
+                </div>
+              </div>
             </div>
           );
         })()}

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import AdminNav from "../components/AdminNav";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { Edit2, Save, X, ChevronDown, ChevronUp, CheckCircle, XCircle } from "lucide-react";
+import { Edit2, Save, X, ChevronDown, ChevronUp, CheckCircle, XCircle, Plus, Trash2 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 const COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"];
@@ -16,6 +16,9 @@ export default function AdminFondos() {
   const [guardando, setGuardando] = useState(false);
   const [expandido, setExpandido] = useState(null);
   const [donacionesFondo, setDonacionesFondo] = useState({});
+  const [mostrarFormNuevo, setMostrarFormNuevo] = useState(false);
+  const [nuevoFondo, setNuevoFondo] = useState({ nombre: "", descripcion: "", meta: "" });
+  const [creando, setCreando] = useState(false);
 
   const cargarFondos = () => {
     const token = getToken();
@@ -121,6 +124,48 @@ export default function AdminFondos() {
     }
   };
 
+  const crearFondo = async () => {
+    if (!nuevoFondo.nombre.trim()) { alert("El nombre es requerido"); return; }
+    setCreando(true);
+    try {
+      const res = await fetch(`${API_URL}/api/fondos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({
+          nombre: nuevoFondo.nombre.trim(),
+          descripcion: nuevoFondo.descripcion.trim() || null,
+          meta: nuevoFondo.meta ? parseFloat(nuevoFondo.meta) : null,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Error al crear");
+      setNuevoFondo({ nombre: "", descripcion: "", meta: "" });
+      setMostrarFormNuevo(false);
+      cargarFondos();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setCreando(false);
+    }
+  };
+
+  const eliminarFondo = async (fondo) => {
+    const tieneBalance = parseFloat(fondo.total_disponible || 0) > 0 || parseFloat(fondo.total_pendiente || 0) > 0;
+    const msg = tieneBalance
+      ? `"${fondo.nombre}" tiene donaciones activas y será desactivado (no se eliminará). ¿Continuar?`
+      : `¿Eliminar definitivamente el fondo "${fondo.nombre}"?`;
+    if (!confirm(msg)) return;
+    try {
+      const res = await fetch(`${API_URL}/api/fondos/${fondo.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) throw new Error("Error al eliminar");
+      cargarFondos();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
   const totalDisponible = fondos.reduce((s, f) => s + parseFloat(f.total_disponible || 0), 0);
   const totalPendiente = fondos.reduce((s, f) => s + parseFloat(f.total_pendiente || 0), 0);
   const totalContable = fondos.reduce((s, f) => s + parseFloat(f.total_contable || 0), 0);
@@ -130,8 +175,73 @@ export default function AdminFondos() {
       <AdminNav />
       <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-800">Administración de Fondos</h1>
-        <p className="text-gray-500 mt-1">Gestiona las metas y revisa los montos recaudados por fondo</p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800">Administración de Fondos</h1>
+            <p className="text-gray-500 mt-1">Gestiona las metas y revisa los montos recaudados por fondo</p>
+          </div>
+          <button
+            onClick={() => setMostrarFormNuevo(v => !v)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+          >
+            <Plus size={16} />
+            Nuevo fondo
+          </button>
+        </div>
+
+        {mostrarFormNuevo && (
+          <div className="mt-4 bg-blue-50 border border-blue-200 rounded-xl p-5 space-y-3">
+            <p className="text-sm font-bold text-blue-800">Crear nuevo fondo</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-gray-600 font-semibold mb-1 block">Nombre *</label>
+                <input
+                  type="text"
+                  value={nuevoFondo.nombre}
+                  onChange={e => setNuevoFondo(p => ({ ...p, nombre: e.target.value }))}
+                  placeholder="Ej: Instrumentos"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 font-semibold mb-1 block">Descripción</label>
+                <input
+                  type="text"
+                  value={nuevoFondo.descripcion}
+                  onChange={e => setNuevoFondo(p => ({ ...p, descripcion: e.target.value }))}
+                  placeholder="Descripción breve (opcional)"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 font-semibold mb-1 block">Meta ($CLP, opcional)</label>
+                <input
+                  type="number"
+                  value={nuevoFondo.meta}
+                  onChange={e => setNuevoFondo(p => ({ ...p, meta: e.target.value }))}
+                  placeholder="Ej: 1000000"
+                  min="1"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => { setMostrarFormNuevo(false); setNuevoFondo({ nombre: "", descripcion: "", meta: "" }); }}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={crearFondo}
+                disabled={creando}
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold disabled:opacity-60"
+              >
+                {creando ? "Creando..." : "Crear fondo"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -283,13 +393,22 @@ export default function AdminFondos() {
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => toggleDetalle(fondo.id)}
-                        className="text-gray-500 hover:text-gray-800 flex items-center gap-1 text-sm"
-                      >
-                        {expandido === fondo.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                        {expandido === fondo.id ? "Ocultar" : "Ver donaciones"}
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => toggleDetalle(fondo.id)}
+                          className="text-gray-500 hover:text-gray-800 flex items-center gap-1 text-sm"
+                        >
+                          {expandido === fondo.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                          {expandido === fondo.id ? "Ocultar" : "Ver donaciones"}
+                        </button>
+                        <button
+                          onClick={() => eliminarFondo(fondo)}
+                          title="Eliminar o desactivar fondo"
+                          className="text-red-400 hover:text-red-600 transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Barra de progreso: solo si tiene meta */}
