@@ -4061,11 +4061,31 @@ app.delete("/api/planificacion/:id", authenticateToken, async (req, res) => {
 // 📸 GALERÍA — ENLACES A GOOGLE PHOTOS
 // ===================================
 
+// Extrae la og:image de una URL de álbum compartido de Google Photos
+async function fetchOgImage(url) {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; facebookexternalhit/1.1)",
+        "Accept": "text/html"
+      },
+      signal: AbortSignal.timeout(6000)
+    });
+    const html = await res.text();
+    const match =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 // Listar álbumes (público)
 app.get("/api/galeria/albums", async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, nombre, url FROM galeria_albums WHERE activo = TRUE ORDER BY created_at DESC"
+      "SELECT id, nombre, url, thumbnail FROM galeria_albums WHERE activo = TRUE ORDER BY created_at DESC"
     );
     res.json(result.rows);
   } catch (err) {
@@ -4086,14 +4106,15 @@ app.get("/api/admin/galeria/albums", authenticateToken, async (req, res) => {
 
 // ADMIN: agregar álbum
 app.post("/api/admin/galeria/albums", authenticateToken, async (req, res) => {
-  const { nombre, url } = req.body;
+  const { nombre, url, thumbnail: thumbManual } = req.body;
   if (!nombre || !url) return res.status(400).json({ error: "nombre y url son requeridos" });
-  // Validar que sea una URL de Google Photos o Google Drive
   if (!url.startsWith("https://")) return res.status(400).json({ error: "URL inválida" });
   try {
+    // Intentar obtener portada automáticamente si no se proveyó manualmente
+    const thumbnail = thumbManual || (await fetchOgImage(url));
     const result = await pool.query(
-      "INSERT INTO galeria_albums (nombre, url) VALUES ($1, $2) RETURNING *",
-      [nombre, url]
+      "INSERT INTO galeria_albums (nombre, url, thumbnail) VALUES ($1, $2, $3) RETURNING *",
+      [nombre, url, thumbnail]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -4101,9 +4122,26 @@ app.post("/api/admin/galeria/albums", authenticateToken, async (req, res) => {
   }
 });
 
+// ADMIN: refrescar miniatura de un álbum
+app.post("/api/admin/galeria/albums/:id/refresh-thumbnail", authenticateToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT url FROM galeria_albums WHERE id = $1", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "Álbum no encontrado" });
+    const thumbnail = await fetchOgImage(rows[0].url);
+    if (!thumbnail) return res.status(422).json({ error: "No se pudo obtener la miniatura automáticamente" });
+    const result = await pool.query(
+      "UPDATE galeria_albums SET thumbnail = $1 WHERE id = $2 RETURNING *",
+      [thumbnail, req.params.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ADMIN: editar álbum
 app.put("/api/admin/galeria/albums/:id", authenticateToken, async (req, res) => {
-  const { nombre, url, activo } = req.body;
+  const { nombre, url, activo, thumbnail } = req.body;
   try {
     const fields = [];
     const values = [];
@@ -4111,6 +4149,7 @@ app.put("/api/admin/galeria/albums/:id", authenticateToken, async (req, res) => 
     if (nombre !== undefined) { fields.push(`nombre = $${idx++}`); values.push(nombre); }
     if (url !== undefined) { fields.push(`url = $${idx++}`); values.push(url); }
     if (activo !== undefined) { fields.push(`activo = $${idx++}`); values.push(activo); }
+    if (thumbnail !== undefined) { fields.push(`thumbnail = $${idx++}`); values.push(thumbnail); }
     if (fields.length === 0) return res.status(400).json({ error: "Nada que actualizar" });
     values.push(req.params.id);
     const result = await pool.query(
@@ -4268,6 +4307,10 @@ app.listen(PORT, async () => {
         activo     BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `);
+    // Agregar columna thumbnail si no existe (para instancias ya creadas)
+    await pool.query(`
+      ALTER TABLE galeria_albums ADD COLUMN IF NOT EXISTS thumbnail TEXT
     `);
     // Limpiar tablas antiguas si existen
     await pool.query("DROP TABLE IF EXISTS google_photos_cache CASCADE");
