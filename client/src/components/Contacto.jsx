@@ -32,56 +32,59 @@ export default function Contacto() {
   };
 
   return (
-    <section id="contacto" className="bg-white py-16 px-4">
-      <div className="max-w-4xl mx-auto text-center mb-10">
-        <h3 className="text-2xl md:text-3xl font-bold text-gray-800 mb-4">¡Contáctanos!</h3>
-        <p className="text-gray-600">
+    <section id="contacto" className="relative bg-gradient-to-br from-violet-50 via-white to-indigo-50 py-24 px-4 overflow-hidden">
+      <div className="absolute top-0 right-0 w-64 h-64 bg-violet-100 rounded-full opacity-50 blur-3xl -translate-y-1/2 translate-x-1/3 pointer-events-none" />
+
+      <div className="max-w-4xl mx-auto text-center mb-12">
+        <span className="inline-block text-amber-600 font-bold text-sm tracking-widest uppercase mb-3">Escríbenos</span>
+        <h3 className="text-4xl md:text-5xl font-bold text-violet-900 mb-4" style={{fontFamily:'"Playfair Display", Georgia, serif'}}>
+          ¡Contáctanos!
+        </h3>
+        <div className="w-16 h-1 bg-gradient-to-r from-amber-400 to-orange-400 rounded-full mx-auto mb-5" />
+        <p className="text-slate-600 text-lg max-w-2xl mx-auto">
           Si necesitas comunicarnos algo, realizar alguna consulta, petición de oración, o por cualquier otro motivo, rellena con tus datos el siguiente formulario y detállanos el motivo de tu inquietud.
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="max-w-2xl mx-auto space-y-6 text-left">
+      <form onSubmit={handleSubmit} className="max-w-2xl mx-auto space-y-5 text-left relative">
         <div>
-          <label className="block text-gray-700 mb-1">Nombre</label>
+          <label className="block text-violet-900 font-semibold mb-1.5 text-sm">Nombre</label>
           <input
             type="text"
             name="nombre"
             value={formData.nombre}
             onChange={handleChange}
-            className="w-full border border-gray-300 p-2 rounded"
+            className="w-full border-2 border-violet-200 focus:border-violet-500 bg-white/80 backdrop-blur-sm p-3 rounded-xl outline-none transition-colors duration-200 text-slate-700"
             required
           />
         </div>
 
         <div>
-          <label className="block text-gray-700 mb-1">Correo electrónico</label>
+          <label className="block text-violet-900 font-semibold mb-1.5 text-sm">Correo electrónico</label>
           <input
             type="email"
             name="correo"
             value={formData.correo}
             onChange={handleChange}
-            className="w-full border border-gray-300 p-2 rounded"
+            className="w-full border-2 border-violet-200 focus:border-violet-500 bg-white/80 backdrop-blur-sm p-3 rounded-xl outline-none transition-colors duration-200 text-slate-700"
             required
           />
         </div>
 
         <div>
-          <label className="block text-gray-700 mb-1">¡Escríbenos!</label>
+          <label className="block text-violet-900 font-semibold mb-1.5 text-sm">¡Escríbenos!</label>
           <textarea
             name="mensaje"
             value={formData.mensaje}
             onChange={handleChange}
-            className="w-full border border-gray-300 p-2 rounded h-32"
+            className="w-full border-2 border-violet-200 focus:border-violet-500 bg-white/80 backdrop-blur-sm p-3 rounded-xl outline-none transition-colors duration-200 text-slate-700 h-36 resize-none"
             required
           />
         </div>
 
-        <div className="text-center">
-          <button
-            type="submit"
-            className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition"
-          >
-            Enviar petición
+        <div className="text-center pt-2">
+          <button type="submit" className="btn-primary text-base px-10 py-3">
+            Enviar mensaje
           </button>
         </div>
       </form>

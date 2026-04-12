@@ -12,23 +12,33 @@ const horarios = [
 
 export default function Horarios() {
   return (
-    <section className="bg-gray-50 py-20 px-4 text-center">
-      <div className="max-w-5xl mx-auto">
-        <h2 className="text-3xl font-bold text-gray-800 mb-10">Horarios de Reunión</h2>
+    <section className="relative bg-gradient-to-br from-indigo-50 via-violet-50 to-purple-50 py-24 px-4 text-center overflow-hidden">
+      {/* Decoración */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-violet-100 rounded-full opacity-30 blur-3xl pointer-events-none" />
 
-        <div className="grid md:grid-cols-2 gap-6 text-left">
+      <div className="max-w-5xl mx-auto relative">
+        <span className="inline-block text-amber-600 font-bold text-sm tracking-widest uppercase mb-3">Reuniones</span>
+        <h2 className="text-4xl md:text-5xl font-bold text-violet-900 mb-3" style={{fontFamily:'"Playfair Display", Georgia, serif'}}>
+          Horarios
+        </h2>
+        <div className="w-16 h-1 bg-gradient-to-r from-amber-400 to-orange-400 rounded-full mx-auto mb-12" />
+
+        <div className="grid md:grid-cols-2 gap-5 text-left">
           {horarios.map((h, i) => (
             <div
               key={i}
-              className="flex items-start gap-4 bg-white p-6 rounded-lg shadow-md border border-gray-100"
+              className="flex items-start gap-4 bg-white/80 backdrop-blur-sm p-6 rounded-2xl shadow-md border border-violet-100 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group"
             >
-              <div className="text-3xl">{h.icon}</div>
+              <div className="text-3xl w-12 h-12 flex items-center justify-center bg-gradient-to-br from-violet-100 to-indigo-100 rounded-xl group-hover:from-violet-200 group-hover:to-indigo-200 transition-colors shrink-0">
+                {h.icon}
+              </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-800">{h.tipo}</h3>
-                <p className="text-gray-600">
-                  <strong>{h.dia}</strong>{h.hora && ` - ${h.hora}`}<br />
-                  <span className="text-sm">{h.detalle}</span>
+                <h3 className="text-lg font-bold text-violet-900">{h.tipo}</h3>
+                <p className="text-slate-600 mt-1">
+                  <span className="font-semibold text-indigo-700">{h.dia}</span>
+                  {h.hora && <span className="text-slate-500"> · {h.hora}</span>}
                 </p>
+                <span className="inline-block mt-1.5 text-xs font-semibold bg-violet-100 text-violet-700 px-2.5 py-0.5 rounded-full">{h.detalle}</span>
               </div>
             </div>
           ))}

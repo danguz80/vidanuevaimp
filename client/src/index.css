@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  body {
+    font-family: 'Nunito', ui-sans-serif, system-ui, sans-serif;
+    @apply text-slate-700 antialiased;
+  }
+  h1, h2, h3, h4 {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-block bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-6 py-2.5 rounded-full font-semibold tracking-wide hover:shadow-lg hover:shadow-violet-500/30 hover:-translate-y-0.5 transition-all duration-200;
+  }
+  .btn-gold {
+    @apply inline-block bg-gradient-to-r from-amber-500 to-orange-500 text-white px-6 py-2.5 rounded-full font-semibold tracking-wide hover:shadow-lg hover:shadow-amber-500/30 hover:-translate-y-0.5 transition-all duration-200;
+  }
+  .section-heading {
+    font-family: 'Playfair Display', Georgia, serif;
+    @apply text-3xl md:text-4xl font-bold text-violet-900;
+  }
+  .gradient-text {
+    @apply bg-gradient-to-r from-violet-700 to-indigo-600 bg-clip-text text-transparent;
+  }
+}
+
 @keyframes fade-in {
     from {
       opacity: 0;

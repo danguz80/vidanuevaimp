@@ -11,6 +11,29 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        heading: ['"Playfair Display"', 'Georgia', 'serif'],
+        sans: ['Nunito', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      },
+      colors: {
+        brand: {
+          50:  '#f5f3ff',
+          100: '#ede9fe',
+          200: '#ddd6fe',
+          300: '#c4b5fd',
+          500: '#8b5cf6',
+          600: '#7c3aed',
+          700: '#6d28d9',
+          800: '#5b21b6',
+          900: '#4c1d95',
+          950: '#2e1065',
+        },
+        gold: {
+          400: '#fbbf24',
+          500: '#f59e0b',
+          600: '#d97706',
+        },
+      },
       keyframes: {
         fadeRight: {
           '0%': { opacity: 0, transform: 'translateX(50px)' },
