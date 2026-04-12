@@ -11,6 +11,7 @@ const NAV_ITEMS_FULL = [
   { label: "Sermones",      path: "/admin/videos",         color: "green" },
   { label: "Hero",          path: "/admin/hero",           color: "purple" },
   { label: "Música",        path: "/admin/musica",         color: "rose" },
+  { label: "Galería",       path: "/admin/galeria",        color: "violet" },
 ];
 
 const NAV_ITEM_FONDOS     = { label: "Fondos",     path: "/admin/fondos",     color: "yellow" };

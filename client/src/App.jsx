@@ -44,6 +44,7 @@ import AdminPlanificacion from "./pages/AdminPlanificacion";
 import AdminSecretaria from "./pages/AdminSecretaria";
 import AdminTesoreria from "./pages/AdminTesoreria";
 import CancionesCifrado from "./pages/CancionesCifrado";
+import AdminGaleria from "./pages/AdminGaleria";
 
 export default function App() {
   return (
@@ -84,6 +85,7 @@ export default function App() {
               <Route path="/admin/planificacion" element={<ProtectedRoute><AdminPlanificacion /></ProtectedRoute>} />
               <Route path="/admin/secretaria" element={<ProtectedRoute><AdminSecretaria /></ProtectedRoute>} />
               <Route path="/admin/tesoreria" element={<ProtectedRoute><AdminTesoreria /></ProtectedRoute>} />
+              <Route path="/admin/galeria" element={<ProtectedRoute><AdminGaleria /></ProtectedRoute>} />
 
               {/* Portal de miembros */}
               <Route path="/portal/login" element={<LoginMiembro />} />

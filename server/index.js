@@ -4057,6 +4057,218 @@ app.delete("/api/planificacion/:id", authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ===================================
+// 📸 GALERÍA GOOGLE PHOTOS
+// ===================================
+
+const getGooglePhotosAccessToken = async () => {
+  const gClient = new OAuth2Client(
+    process.env.GOOGLE_PHOTOS_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_PHOTOS_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET
+  );
+  gClient.setCredentials({
+    refresh_token: process.env.GOOGLE_PHOTOS_REFRESH_TOKEN,
+  });
+  const { token } = await gClient.getAccessToken();
+  return token;
+};
+
+// Listar álbumes configurados (público)
+app.get("/api/galeria/albums", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, nombre, album_id FROM google_photos_albums WHERE activo = TRUE ORDER BY created_at DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("❌ Error al listar álbumes:", err.message);
+    res.status(500).json({ error: "Error al obtener álbumes" });
+  }
+});
+
+// Obtener fotos de un álbum (con caché de 55 minutos)
+// Helper reutilizable: obtener fotos desde la API y guardar en caché
+const fetchAndCacheAlbum = async (albumId) => {
+  const accessToken = await getGooglePhotosAccessToken();
+  let items = [];
+  let pageToken = undefined;
+  do {
+    const body = { albumId, pageSize: 100 };
+    if (pageToken) body.pageToken = pageToken;
+    const gpRes = await axios.post(
+      "https://photoslibrary.googleapis.com/v1/mediaItems:search",
+      body,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    const mediaItems = gpRes.data.mediaItems || [];
+    items = items.concat(mediaItems);
+    pageToken = gpRes.data.nextPageToken;
+  } while (pageToken);
+
+  const fotos = items
+    .filter((item) => item.mimeType?.startsWith("image/"))
+    .map((item) => ({
+      url: `${item.baseUrl}=w1200-h900`,
+      thumb: `${item.baseUrl}=w400-h300`,
+      titulo: item.filename,
+      fecha: item.mediaMetadata?.creationTime || null,
+      descripcion: item.description || null,
+    }));
+
+  const payload = { fotos, total: fotos.length };
+
+  await pool.query(
+    `INSERT INTO google_photos_cache (album_id, data, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (album_id)
+     DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+    [albumId, payload]
+  );
+
+  return payload;
+};
+
+// Cron: renueva las URLs de todos los álbumes en caché cada 45 min
+// (las URLs de Google Photos expiran en ~1 h; esto las mantiene válidas
+//  sin añadir fotos nuevas, que solo ocurre con el botón "Refrescar caché")
+cron.schedule("*/45 * * * *", async () => {
+  try {
+    const result = await pool.query(
+      "SELECT album_id FROM google_photos_albums WHERE activo = TRUE"
+    );
+    for (const row of result.rows) {
+      try {
+        await fetchAndCacheAlbum(row.album_id);
+        console.log(`✅ [Google Photos] URLs renovadas: ${row.album_id}`);
+      } catch (err) {
+        console.error(`❌ [Google Photos] Error renovando ${row.album_id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error("❌ [Google Photos] Error en cron de renovación:", err.message);
+  }
+});
+
+app.get("/api/galeria/album/:albumId", async (req, res) => {
+  const { albumId } = req.params;
+
+  try {
+    // Verificar que el álbum esté registrado y activo
+    const albumCheck = await pool.query(
+      "SELECT id FROM google_photos_albums WHERE album_id = $1 AND activo = TRUE",
+      [albumId]
+    );
+    if (albumCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Álbum no encontrado o inactivo" });
+    }
+
+    // Servir desde caché si existe (se renueva en background cada 45 min)
+    // Las fotos nuevas solo aparecen cuando el admin pulsa "Refrescar caché"
+    const cacheResult = await pool.query(
+      "SELECT data FROM google_photos_cache WHERE album_id = $1",
+      [albumId]
+    );
+    if (cacheResult.rows.length > 0) {
+      return res.json(cacheResult.rows[0].data);
+    }
+
+    // Sin caché aún: primera carga (álbum recién agregado)
+    const payload = await fetchAndCacheAlbum(albumId);
+    res.json(payload);
+  } catch (err) {
+    console.error("❌ Error al obtener fotos del álbum:", err.response?.data || err.message);
+    res.status(500).json({ error: "Error al obtener fotos del álbum" });
+  }
+});
+
+// ADMIN: listar todos los álbumes
+app.get("/api/admin/galeria/albums", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM google_photos_albums ORDER BY created_at DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ADMIN: agregar álbum
+app.post("/api/admin/galeria/albums", authenticateToken, async (req, res) => {
+  const { nombre, album_id } = req.body;
+  if (!nombre || !album_id) {
+    return res.status(400).json({ error: "nombre y album_id son requeridos" });
+  }
+  // Sanitizar: solo permitir caracteres válidos de álbum ID
+  if (!/^[A-Za-z0-9_\-]{5,512}$/.test(album_id)) {
+    return res.status(400).json({ error: "album_id inválido" });
+  }
+  try {
+    const result = await pool.query(
+      "INSERT INTO google_photos_albums (nombre, album_id) VALUES ($1, $2) RETURNING *",
+      [nombre, album_id]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "Ese álbum ya está registrado" });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ADMIN: activar/desactivar álbum
+app.put("/api/admin/galeria/albums/:id", authenticateToken, async (req, res) => {
+  const { activo, nombre } = req.body;
+  try {
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (nombre !== undefined) { fields.push(`nombre = $${idx++}`); values.push(nombre); }
+    if (activo !== undefined) { fields.push(`activo = $${idx++}`); values.push(activo); }
+    if (fields.length === 0) return res.status(400).json({ error: "Nada que actualizar" });
+    values.push(req.params.id);
+    const result = await pool.query(
+      `UPDATE google_photos_albums SET ${fields.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Álbum no encontrado" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ADMIN: eliminar álbum
+app.delete("/api/admin/galeria/albums/:id", authenticateToken, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM google_photos_albums WHERE id = $1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ADMIN: forzar refresco de fotos de un álbum (trae las fotos nuevas desde Google Photos)
+app.post("/api/admin/galeria/albums/:albumId/refresh", authenticateToken, async (req, res) => {
+  const { albumId } = req.params;
+  try {
+    // Verificar que el álbum exista
+    const check = await pool.query(
+      "SELECT id FROM google_photos_albums WHERE album_id = $1",
+      [albumId]
+    );
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: "Álbum no encontrado" });
+    }
+    const payload = await fetchAndCacheAlbum(albumId);
+    res.json({ ok: true, total: payload.total, message: `${payload.total} fotos cargadas desde Google Photos.` });
+  } catch (err) {
+    console.error("❌ Error al refrescar álbum:", err.message);
+    res.status(500).json({ error: "Error al refrescar el álbum" });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   await initFamiliasTables();
@@ -4179,6 +4391,30 @@ app.listen(PORT, async () => {
     console.log("[DB] Tablas secretaría listas.");
   } catch (err) {
     console.error("[DB] Error al migrar tablas secretaría:", err.message);
+  }
+
+  // Migración: tablas Google Photos
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS google_photos_albums (
+        id         SERIAL PRIMARY KEY,
+        nombre     VARCHAR(255) NOT NULL,
+        album_id   VARCHAR(512) NOT NULL UNIQUE,
+        activo     BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS google_photos_cache (
+        id         SERIAL PRIMARY KEY,
+        album_id   VARCHAR(512) NOT NULL UNIQUE,
+        data       JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    console.log("[DB] Tablas Google Photos listas.");
+  } catch (err) {
+    console.error("[DB] Error al migrar tablas Google Photos:", err.message);
   }
 });
 
