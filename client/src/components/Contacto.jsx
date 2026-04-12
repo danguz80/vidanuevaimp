@@ -34,9 +34,9 @@ export default function Contacto() {
   return (
     <section id="contacto" className="bg-white py-16 px-4">
       <div className="max-w-4xl mx-auto text-center mb-10">
-        <h3 className="text-2xl md:text-3xl font-bold text-gray-800 mb-4">¿Necesitas oración?</h3>
+        <h3 className="text-2xl md:text-3xl font-bold text-gray-800 mb-4">¡Contáctanos!</h3>
         <p className="text-gray-600">
-          Estamos aquí para orar contigo y por ti. Completa el siguiente formulario y uno de nuestros líderes te contactará.
+          Si necesitas comunicarnos algo, realizar alguna consulta, petición de oración, o por cualquier otro motivo, rellena con tus datos el siguiente formulario y detállanos el motivo de tu inquietud.
         </p>
       </div>
 
@@ -66,7 +66,7 @@ export default function Contacto() {
         </div>
 
         <div>
-          <label className="block text-gray-700 mb-1">Petición de oración</label>
+          <label className="block text-gray-700 mb-1">¡Escríbenos!</label>
           <textarea
             name="mensaje"
             value={formData.mensaje}
