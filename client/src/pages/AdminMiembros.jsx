@@ -332,6 +332,168 @@ export default function AdminMiembros() {
     return edad;
   };
 
+  const generarPDF = async () => {
+    const { jsPDF } = await import("jspdf");
+
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+    const PAGE_W = 210;
+    const PAGE_H = 297;
+    const M = 12;                         // margen lateral
+    const W = PAGE_W - 2 * M;            // 186mm
+    const HEADER_H = 14;                  // altura cabecera de página
+    const FOOTER_H = 8;
+    const FICHAS = 2;                     // fichas por página
+    const FICHA_H = (PAGE_H - HEADER_H - FOOTER_H) / FICHAS; // ~137mm cada una
+    const FIELD_H = 9;                    // altura por campo
+    const HALF = W / 2 - 2;              // ancho de cada columna de campos
+
+    // Paleta
+    const C_VIOLET    = [109,  40, 217];
+    const C_V_LIGHT   = [237, 233, 254];
+    const C_GOLD      = [217, 119,   6];
+    const C_GRAY      = [107, 114, 128];
+    const C_LINE      = [209, 213, 219];
+    const C_WHITE     = [255, 255, 255];
+    const C_TEXT      = [ 30,  30,  30];
+
+    const fmt = (d) => d ? new Date(d).toLocaleDateString("es-CL") : "";
+    const edad = (d) => {
+      if (!d) return "";
+      const hoy = new Date(), n = new Date(d);
+      let e = hoy.getFullYear() - n.getFullYear();
+      if (hoy.getMonth() - n.getMonth() < 0 || (hoy.getMonth() === n.getMonth() && hoy.getDate() < n.getDate())) e--;
+      return `${e} años`;
+    };
+
+    const truncate = (str, maxW, doc, size) => {
+      if (!str) return "";
+      doc.setFontSize(size);
+      while (str.length > 1 && doc.getStringUnitWidth(str) * size / doc.internal.scaleFactor > maxW) {
+        str = str.slice(0, -1);
+      }
+      return str.length < (str + "...").length ? str : str;
+    };
+
+    // --- Cabecera de página ---
+    const drawPageHeader = () => {
+      doc.setFillColor(...C_VIOLET);
+      doc.rect(0, 0, PAGE_W, 9, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(...C_WHITE);
+      doc.text("TEMPLO VIDA NUEVA  —  DIRECTORIO DE MIEMBROS", PAGE_W / 2, 6.5, { align: "center" });
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(...C_GRAY);
+      doc.text(
+        `Generado el ${new Date().toLocaleDateString("es-CL")}  ·  Total: ${miembros.length} miembros`,
+        PAGE_W / 2, 12, { align: "center" }
+      );
+    };
+
+    // --- Ficha individual ---
+    const drawFicha = (m, fy) => {
+      const fh = FICHA_H - 4;
+
+      // Borde
+      doc.setDrawColor(...C_LINE);
+      doc.setLineWidth(0.25);
+      doc.roundedRect(M, fy, W, fh, 3, 3, "S");
+
+      // Header ficha
+      doc.setFillColor(...C_V_LIGHT);
+      doc.roundedRect(M, fy, W, 10, 3, 3, "F");
+      doc.rect(M, fy + 5, W, 5, "F"); // cuadrar esquinas inferiores
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(...C_VIOLET);
+      const nombreCompleto = `${m.nombre} ${m.apellido}`.toUpperCase();
+      doc.text(nombreCompleto, M + 4, fy + 7);
+
+      // Badge estado
+      const BADGE_COLORS = {
+        activo:   { bg: [209, 250, 229], text: [6, 95, 70] },
+        inactivo: { bg: [229, 231, 235], text: [75, 85, 99] },
+        visita:   { bg: [254, 249, 195], text: [92, 77, 6] },
+      };
+      const bc = BADGE_COLORS[m.estado] || BADGE_COLORS.inactivo;
+      doc.setFillColor(...bc.bg);
+      doc.roundedRect(M + W - 28, fy + 2.5, 26, 5.5, 2, 2, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(...bc.text);
+      doc.text((m.estado || "activo").toUpperCase(), M + W - 15, fy + 6.5, { align: "center" });
+
+      // Campos
+      const y0 = fy + 13;
+      const L  = M + 3;         // columna izquierda
+      const R  = M + W / 2 + 1; // columna derecha
+
+      const drawField = (label, value, x, y, w) => {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.5);
+        doc.setTextColor(...C_GRAY);
+        doc.text(label.toUpperCase(), x, y);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(...C_TEXT);
+        const v = truncate(value || "", w - 3, doc, 9);
+        doc.text(v, x, y + 4.5);
+
+        doc.setDrawColor(...C_LINE);
+        doc.setLineWidth(0.2);
+        doc.line(x, y + 5.5, x + w - 1, y + 5.5);
+      };
+
+      // Columna izquierda
+      drawField("Nombre Completo",     `${m.nombre} ${m.apellido}`,    L, y0,                   HALF);
+      drawField("Fecha de Nacimiento", fmt(m.fecha_nacimiento),         L, y0 + FIELD_H,         HALF);
+      drawField("Edad",                edad(m.fecha_nacimiento),        L, y0 + FIELD_H * 2,     HALF);
+      drawField("Celular",             m.celular || "",                  L, y0 + FIELD_H * 3,     HALF);
+      drawField("Email",               m.email || "",                   L, y0 + FIELD_H * 4,     HALF);
+      drawField("Dirección",           m.direccion || "",               L, y0 + FIELD_H * 5,     HALF);
+
+      // Columna derecha
+      drawField("Estado Civil",        m.estado_civil || "",            R, y0,                   HALF);
+      drawField("Bautizado/a",         m.bautizado ? "Sí" : "",        R, y0 + FIELD_H,         HALF);
+      drawField("Declaración de Fe",   m.declaracion_fe ? "Sí" : "",   R, y0 + FIELD_H * 2,     HALF);
+      drawField("Nivel Discipulado",   m.nivel_discipulado != null ? String(m.nivel_discipulado) : "", R, y0 + FIELD_H * 3, HALF);
+      drawField("Roles",               (m.roles || []).join(", "),      R, y0 + FIELD_H * 4,     HALF);
+      drawField("Notas",               m.notas || "",                   R, y0 + FIELD_H * 5,     HALF);
+    };
+
+    // --- Generar páginas ---
+    let pageCount = 0;
+
+    miembros.forEach((m, i) => {
+      const fichaIdx = i % FICHAS;
+      if (fichaIdx === 0) {
+        if (pageCount > 0) doc.addPage();
+        pageCount++;
+        drawPageHeader();
+      }
+      const fichaY = HEADER_H + fichaIdx * FICHA_H;
+      drawFicha(m, fichaY);
+    });
+
+    // Números de página
+    const nPages = doc.getNumberOfPages();
+    for (let p = 1; p <= nPages; p++) {
+      doc.setPage(p);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(...C_GRAY);
+      doc.text(`Página ${p} de ${nPages}`, PAGE_W - M, PAGE_H - 4, { align: "right" });
+    }
+
+    const fecha = new Date().toISOString().split("T")[0];
+    doc.save(`directorio-miembros-${fecha}.pdf`);
+  };
+
   return (
     <>
       <AdminNav />
@@ -342,12 +504,21 @@ export default function AdminMiembros() {
             <h1 className="text-3xl font-bold text-gray-800">Miembros</h1>
             <p className="text-gray-500 mt-1">{miembros.length} miembro{miembros.length !== 1 ? "s" : ""} registrado{miembros.length !== 1 ? "s" : ""}</p>
           </div>
-          <button
-            onClick={abrirNuevo}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-5 rounded-lg transition flex items-center gap-2"
-          >
-            <span className="text-xl leading-none">+</span> Nuevo Miembro
-          </button>
+          <div className="flex gap-3 flex-wrap">
+            <button
+              onClick={generarPDF}
+              disabled={miembros.length === 0}
+              className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-semibold py-2 px-5 rounded-lg transition flex items-center gap-2"
+            >
+              <span>📄</span> Exportar PDF
+            </button>
+            <button
+              onClick={abrirNuevo}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-5 rounded-lg transition flex items-center gap-2"
+            >
+              <span className="text-xl leading-none">+</span> Nuevo Miembro
+            </button>
+          </div>
         </div>
 
         {/* Filtros */}
