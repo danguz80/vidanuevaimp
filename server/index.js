@@ -2146,9 +2146,11 @@ app.put("/api/miembros/:id", authenticateToken, async (req, res) => {
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `UPDATE miembros SET nombre=$1, apellido=$2, foto_url=$3, fecha_nacimiento=$4, celular=$5, 
+      `UPDATE miembros SET nombre=$1, apellido=$2,
+       foto_url = COALESCE(NULLIF($3::text, ''), foto_url),
+       fecha_nacimiento=$4, celular=$5, 
        email=$6, direccion=$7, estado=$8, notas=$9, acerca_de_mi=$10, bautizado=$11, declaracion_fe=$12, estado_civil=$13, separado=$14, nivel_discipulado=$15 WHERE id=$16 RETURNING *`,
-      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, acerca_de_mi || null, bautizado || false, declaracion_fe || false, estado_civil || null, separado || false, nivel_discipulado || null, req.params.id]
+      [nombre, apellido, foto_url ?? null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, acerca_de_mi || null, bautizado || false, declaracion_fe || false, estado_civil || null, separado || false, nivel_discipulado || null, req.params.id]
     );
     if (result.rows.length === 0) { client.release(); return res.status(404).json({ error: "Miembro no encontrado" }); }
     if (Array.isArray(roles)) {

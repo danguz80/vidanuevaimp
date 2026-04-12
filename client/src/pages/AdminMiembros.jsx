@@ -494,6 +494,170 @@ export default function AdminMiembros() {
     doc.save(`directorio-miembros-${fecha}.pdf`);
   };
 
+  const generarFormularioVacio = async () => {
+    const { jsPDF } = await import("jspdf");
+
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const PAGE_W = 210;
+    const PAGE_H = 297;
+    const M = 14;
+    const W = PAGE_W - 2 * M;
+
+    const C_VIOLET  = [109,  40, 217];
+    const C_V_LIGHT = [237, 233, 254];
+    const C_GOLD    = [217, 119,   6];
+    const C_GRAY    = [107, 114, 128];
+    const C_LINE    = [180, 190, 210];
+    const C_WHITE   = [255, 255, 255];
+    const C_TEXT    = [ 30,  30,  30];
+
+    // ---- Cabecera ----
+    doc.setFillColor(...C_VIOLET);
+    doc.rect(0, 0, PAGE_W, 22, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(...C_WHITE);
+    doc.text("TEMPLO VIDA NUEVA", PAGE_W / 2, 9, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(220, 210, 255);
+    doc.text("Ficha de Registro de Nuevo Miembro", PAGE_W / 2, 16, { align: "center" });
+
+    // Línea dorada decorativa
+    doc.setFillColor(...C_GOLD);
+    doc.rect(0, 22, PAGE_W, 1.5, "F");
+
+    // ---- Foto (recuadro) ----
+    const FOTO_X = M;
+    const FOTO_Y = 27;
+    const FOTO_W = 35;
+    const FOTO_H = 42;
+    doc.setDrawColor(...C_LINE);
+    doc.setLineWidth(0.4);
+    doc.rect(FOTO_X, FOTO_Y, FOTO_W, FOTO_H, "S");
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.setTextColor(...C_GRAY);
+    doc.text("Foto", FOTO_X + FOTO_W / 2, FOTO_Y + FOTO_H / 2, { align: "center" });
+
+    // ---- Sección datos personales a la derecha de la foto ----
+    const DX = M + FOTO_W + 5;  // X inicio columna de campos
+    const DW = W - FOTO_W - 5;  // ancho disponible
+    const HALF = DW / 2 - 3;
+
+    let y = FOTO_Y + 3;
+    const LINE_H = 11;
+
+    const field = (label, x, fy, w) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6);
+      doc.setTextColor(...C_GRAY);
+      doc.text(label.toUpperCase(), x, fy);
+      doc.setDrawColor(...C_LINE);
+      doc.setLineWidth(0.25);
+      doc.line(x, fy + 6, x + w, fy + 6);
+    };
+
+    field("Nombre", DX, y, HALF);
+    field("Apellido", DX + HALF + 3, y, HALF);
+    y += LINE_H;
+    field("Fecha de Nacimiento", DX, y, HALF);
+    field("Estado Civil", DX + HALF + 3, y, HALF);
+    y += LINE_H;
+    field("RUT / DNI", DX, y, HALF);
+    field("Celular / Teléfono", DX + HALF + 3, y, HALF);
+    y += LINE_H;
+    field("Email", DX, y, DW);
+
+    // A partir de aquí a todo el ancho (debajo de la foto también)
+    y = Math.max(y + LINE_H, FOTO_Y + FOTO_H + 4);
+
+    // Separador de sección
+    const seccion = (titulo, sy) => {
+      doc.setFillColor(...C_V_LIGHT);
+      doc.rect(M, sy, W, 7, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(...C_VIOLET);
+      doc.text(titulo.toUpperCase(), M + 3, sy + 5);
+      return sy + 10;
+    };
+
+    y = seccion("Datos de Contacto y Residencia", y);
+    field("Dirección", M, y, W);
+    y += LINE_H;
+    field("Ciudad", M, y, W / 2 - 2);
+    field("Región / País", M + W / 2 + 2, y, W / 2 - 2);
+    y += LINE_H + 2;
+
+    y = seccion("Familia", y);
+    field("Nombre del Cónyuge", M, y, W / 2 - 2);
+    field("N° de Hijos", M + W / 2 + 2, y, W / 2 - 2);
+    y += LINE_H + 2;
+
+    y = seccion("Datos Espirituales", y);
+    // Checks
+    const CHECK_FIELDS = [
+      "Bautizado/a en Agua",
+      "Declaración de Fe",
+      "Consagrado/a",
+      "Lleno del Espíritu Santo",
+    ];
+    const cw = W / CHECK_FIELDS.length;
+    CHECK_FIELDS.forEach((cf, i) => {
+      const cx = M + i * cw;
+      doc.setDrawColor(...C_LINE);
+      doc.setLineWidth(0.3);
+      doc.rect(cx, y, 4, 4, "S");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(...C_TEXT);
+      doc.text(cf, cx + 6, y + 3.5);
+    });
+    y += 10;
+
+    field("Nivel de Discipulado (1-5)", M, y, W / 3 - 5);
+    field("Fecha de Ingreso a la Iglesia", M + W / 3 + 2, y, W / 3 - 5);
+    field("Roles / Ministerio", M + (W / 3) * 2 + 4, y, W / 3 - 5);
+    y += LINE_H + 2;
+
+    y = seccion("Notas y Observaciones", y);
+    doc.setDrawColor(...C_LINE);
+    doc.setLineWidth(0.2);
+    for (let i = 0; i < 4; i++) {
+      doc.line(M, y + i * 9, M + W, y + i * 9);
+    }
+    y += 4 * 9 + 4;
+
+    // ---- Pie de firma ----
+    const FY = PAGE_H - 28;
+    doc.setFillColor(...C_V_LIGHT);
+    doc.rect(M, FY, W, 18, "F");
+
+    const FW = W / 3 - 4;
+    const labels = ["Firma del Miembro", "Registrado por (Secretaría)", "Fecha de Registro"];
+    labels.forEach((l, i) => {
+      const fx = M + 2 + i * (W / 3);
+      doc.setDrawColor(...C_LINE);
+      doc.setLineWidth(0.2);
+      doc.line(fx, FY + 12, fx + FW, FY + 12);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+      doc.setTextColor(...C_GRAY);
+      doc.text(l, fx + FW / 2, FY + 15.5, { align: "center" });
+    });
+
+    // Número de serie / folio
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6);
+    doc.setTextColor(...C_GRAY);
+    doc.text(`Folio Nº _______  ·  Para uso interno`, PAGE_W - M, PAGE_H - 4, { align: "right" });
+
+    doc.save("formulario-nuevo-miembro.pdf");
+  };
+
   return (
     <>
       <AdminNav />
@@ -505,6 +669,12 @@ export default function AdminMiembros() {
             <p className="text-gray-500 mt-1">{miembros.length} miembro{miembros.length !== 1 ? "s" : ""} registrado{miembros.length !== 1 ? "s" : ""}</p>
           </div>
           <div className="flex gap-3 flex-wrap">
+            <button
+              onClick={generarFormularioVacio}
+              className="bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2 px-5 rounded-lg transition flex items-center gap-2"
+            >
+              <span>📋</span> Ficha en Blanco
+            </button>
             <button
               onClick={generarPDF}
               disabled={miembros.length === 0}
