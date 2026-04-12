@@ -45,9 +45,7 @@ export default function Header() {
         <nav className="hidden md:flex gap-4 items-center text-sm md:text-base">
           <Link to="/" className="text-gray-700 hover:text-blue-600">Inicio</Link>
           <Link to="/quienes-somos" className="text-gray-700 hover:text-blue-600">Quiénes Somos</Link>
-          <Link to="/sermones" className="text-gray-700 hover:text-blue-600">Sermones</Link>
-          <Link to="/eventos" className="text-gray-700 hover:text-blue-600">Eventos</Link>
-          <Link to="/ministerios" className="text-gray-700 hover:text-blue-600">Ministerios</Link>
+          <Link to="/calendario" className="text-gray-700 hover:text-blue-600">Calendario</Link>
           <Link to="/galeria" className="text-gray-700 hover:text-blue-600">Galería</Link>
           <Link to="/soundcloud" className="text-gray-700 hover:text-blue-600">Música</Link>
           <Link to="/contacto" className="text-gray-700 hover:text-blue-600">Contacto</Link>
@@ -76,9 +74,7 @@ export default function Header() {
         <div className="absolute top-full left-0 w-full bg-white shadow-md flex flex-col items-center py-4 space-y-3 md:hidden z-40">
           <Link to="/" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Inicio</Link>
           <Link to="/quienes-somos" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Quiénes Somos</Link>
-          <Link to="/sermones" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Sermones</Link>
-          <Link to="/eventos" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Eventos</Link>
-          <Link to="/ministerios" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Ministerios</Link>
+          <Link to="/calendario" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Calendario</Link>
           <Link to="/galeria" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Galería</Link>
           <Link to="/soundcloud" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Música</Link>
           <Link to="/contacto" onClick={() => setMenuOpen(false)} className="text-gray-700 hover:text-blue-600">Contacto</Link>

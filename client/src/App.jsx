@@ -45,6 +45,7 @@ import AdminSecretaria from "./pages/AdminSecretaria";
 import AdminTesoreria from "./pages/AdminTesoreria";
 import CancionesCifrado from "./pages/CancionesCifrado";
 import AdminGaleria from "./pages/AdminGaleria";
+import Calendario from "./pages/Calendario";
 
 export default function App() {
   return (
@@ -70,6 +71,7 @@ export default function App() {
               <Route path="/fondos" element={<ProgresoFondos />} />
               <Route path="/soundcloud" element={<SoundCloudPage />} />
               <Route path="/galeria" element={<GaleriaFotos />} />
+              <Route path="/calendario" element={<Calendario />} />
               
               {/* Rutas protegidas */}
               <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />

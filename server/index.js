@@ -2574,6 +2574,32 @@ app.get("/api/eventos/autenticados", async (req, res) => {
 });
 
 // GET /api/eventos — listar todos, con encargado, coordinador, predicador y ocurrencias por fecha
+// GET /api/eventos/publicos — sin autenticación, para el calendario público
+app.get("/api/eventos/publicos", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT e.id, e.titulo, e.descripcion, e.imagen_url,
+             e.fecha_inicio, e.fecha_fin, e.lugar, e.tipo,
+             e.recurrencia, e.dia_semana, e.color, e.zoom_link,
+             COALESCE(
+               json_agg(
+                 json_build_object('fecha', oc.fecha)
+                 ORDER BY oc.fecha
+               ) FILTER (WHERE oc.id IS NOT NULL),
+               '[]'::json
+             ) AS ocurrencias
+      FROM eventos e
+      LEFT JOIN evento_ocurrencias oc ON oc.evento_id = e.id
+      GROUP BY e.id
+      ORDER BY e.fecha_inicio ASC
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener eventos públicos:", error);
+    res.status(500).json({ error: "Error al obtener eventos" });
+  }
+});
+
 app.get("/api/eventos", authenticateToken, async (req, res) => {
   try {
     const client = await pool.connect();
