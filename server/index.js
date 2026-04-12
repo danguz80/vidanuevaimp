@@ -705,8 +705,6 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     } catch (emailError) {
       // El email falló pero el token ya fue guardado — loguear y continuar
       console.error("Error al enviar email de recuperación:", emailError.message);
-      // En desarrollo, mostrar el enlace en consola como fallback
-      console.log("🔗 Enlace de recuperación (fallback):", resetUrl);
     }
 
     res.json({ message: "Si el email existe, recibirás un enlace de recuperación." });
@@ -1594,8 +1592,6 @@ app.get("/api/galeria", async (req, res) => {
 
 
 
-    console.log("✅ Fotos cargadas:", fotos.map(f => f.fecha_toma));
-
     res.json({ fotos });
   } catch (error) {
     console.error("❌ Error en GET /api/galeria:", error.message);
@@ -1624,7 +1620,6 @@ app.get("/api/galeria/index", async (req, res) => {
     client.release();
   }
 });
-console.log("✅ POST /api/galeria/index registrado");
 
 app.post("/api/galeria/index", async (req, res) => {
   const client = await pool.connect();

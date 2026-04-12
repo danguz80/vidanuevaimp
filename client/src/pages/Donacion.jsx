@@ -175,7 +175,6 @@ export default function DonacionPage() {
         onApprove: async (data, actions) => {
           try {
             const order = await actions.order.capture();
-            console.log('Donación completada:', order);
             // Leer email y fondo desde refs para obtener los valores actuales
             const currentEmail = emailRef.current;
             const currentFondo = fondoSeleccionadoRef.current;
