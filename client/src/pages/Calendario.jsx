@@ -35,7 +35,7 @@ function expandirEventos(eventos, anio, mes) {
           let d = new Date(anio, mes, 1);
           while (d.getDay() !== diaSemana) d.setDate(d.getDate() + 1);
           while (d <= ultimoDia) {
-            resultado.push({ ...ev, _fecha: new Date(d), _key: `${ev.id}-${d.getDate()}` });
+            resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.getDate()}` });
             d.setDate(d.getDate() + 7);
           }
           break;
@@ -47,7 +47,7 @@ function expandirEventos(eventos, anio, mes) {
           let count = 0;
           while (d <= ultimoDia) {
             if (count % 2 === 0)
-              resultado.push({ ...ev, _fecha: new Date(d), _key: `${ev.id}-${d.getDate()}` });
+              resultado.push({ ...mergeOc(ev, d), _fecha: new Date(d), _key: `${ev.id}-${d.getDate()}` });
             d.setDate(d.getDate() + 7);
             count++;
           }
@@ -57,13 +57,13 @@ function expandirEventos(eventos, anio, mes) {
           const dia = inicio.getDate();
           const fecha = new Date(anio, mes, dia);
           if (fecha.getMonth() === mes)
-            resultado.push({ ...ev, _fecha: fecha, _key: `${ev.id}-m` });
+            resultado.push({ ...mergeOc(ev, fecha), _fecha: fecha, _key: `${ev.id}-m` });
           break;
         }
         case "anual": {
           if (inicio.getMonth() === mes) {
             const fecha = new Date(anio, mes, inicio.getDate());
-            resultado.push({ ...ev, _fecha: fecha, _key: `${ev.id}-a` });
+            resultado.push({ ...mergeOc(ev, fecha), _fecha: fecha, _key: `${ev.id}-a` });
           }
           break;
         }
@@ -88,6 +88,47 @@ function renderTexto(texto) {
            className="text-blue-600 underline hover:text-blue-800 break-all">{parte}</a>
       : parte
   );
+}
+
+function Avatar({ nombre, apellido, foto_url, label }) {
+  if (!nombre) return null;
+  const initials = `${nombre?.[0] || ""}${apellido?.[0] || ""}`.toUpperCase();
+  return (
+    <div className="flex items-center gap-2.5">
+      {foto_url ? (
+        <img src={foto_url} className="w-8 h-8 rounded-full object-cover border border-gray-200 flex-shrink-0" alt="" />
+      ) : (
+        <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 flex-shrink-0">{initials}</div>
+      )}
+      <div>
+        <p className="text-xs text-gray-400 leading-none mb-0.5">{label}</p>
+        <p className="text-sm font-semibold text-gray-800">{nombre} {apellido}</p>
+      </div>
+    </div>
+  );
+}
+
+function mergeOc(ev, fecha) {
+  if (!ev.ocurrencias || !Array.isArray(ev.ocurrencias)) return ev;
+  const fs = fecha.toLocaleDateString("sv");
+  const oc = ev.ocurrencias.find(o => o.fecha && String(o.fecha).slice(0, 10) === fs);
+  if (!oc) return ev;
+  const tieneEncargadoOc = oc.encargado_id   !== undefined && oc.encargado_id   !== null;
+  const tieneCoordOc     = oc.coordinador_id !== undefined && oc.coordinador_id !== null;
+  const tienePredOc      = oc.predicador_id  !== undefined && oc.predicador_id  !== null;
+  return {
+    ...ev,
+    encargado_nombre:     oc.encargado_nombre    != null ? oc.encargado_nombre    : ev.encargado_nombre,
+    encargado_apellido:   oc.encargado_apellido  != null ? oc.encargado_apellido  : ev.encargado_apellido,
+    encargado_foto:       tieneEncargadoOc ? oc.encargado_foto   : ev.encargado_foto,
+    coordinador_nombre:   oc.coordinador_id !== undefined ? (tieneCoordOc ? oc.coordinador_nombre   : null) : ev.coordinador_nombre,
+    coordinador_apellido: oc.coordinador_id !== undefined ? (tieneCoordOc ? oc.coordinador_apellido : null) : ev.coordinador_apellido,
+    coordinador_foto:     oc.coordinador_id !== undefined ? (tieneCoordOc ? oc.coordinador_foto     : null) : ev.coordinador_foto,
+    predicador_nombre:    oc.predicador_id  !== undefined ? (tienePredOc  ? oc.predicador_nombre    : null) : ev.predicador_nombre,
+    predicador_apellido:  oc.predicador_id  !== undefined ? (tienePredOc  ? oc.predicador_apellido  : null) : ev.predicador_apellido,
+    predicador_foto:      oc.predicador_id  !== undefined ? (tienePredOc  ? oc.predicador_foto      : null) : ev.predicador_foto,
+    notas:                oc.notas != null ? oc.notas : ev.notas,
+  };
 }
 
 const normUrl = (url) => {
@@ -353,9 +394,24 @@ export default function Calendario() {
                 </a>
               )}
 
+              {/* Personas asignadas */}
+              {(vistaEvento.encargado_nombre || vistaEvento.coordinador_nombre || vistaEvento.predicador_nombre) && (
+                <div className="bg-gray-50 rounded-xl p-3 mb-3 space-y-2.5">
+                  <Avatar nombre={vistaEvento.encargado_nombre}   apellido={vistaEvento.encargado_apellido}   foto_url={vistaEvento.encargado_foto}   label="Encargado" />
+                  <Avatar nombre={vistaEvento.coordinador_nombre} apellido={vistaEvento.coordinador_apellido} foto_url={vistaEvento.coordinador_foto} label="Coordinador" />
+                  <Avatar nombre={vistaEvento.predicador_nombre}  apellido={vistaEvento.predicador_apellido}  foto_url={vistaEvento.predicador_foto}  label="Predicador" />
+                </div>
+              )}
+
               {vistaEvento.descripcion && (
                 <div className="text-sm text-gray-700 whitespace-pre-line mb-3">
                   {renderTexto(vistaEvento.descripcion)}
+                </div>
+              )}
+
+              {vistaEvento.notas && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3 text-sm text-yellow-800 whitespace-pre-line">
+                  📝 {vistaEvento.notas}
                 </div>
               )}
 
