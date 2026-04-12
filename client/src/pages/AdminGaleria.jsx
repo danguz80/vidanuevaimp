@@ -6,7 +6,8 @@ import AdminNav from "../components/AdminNav";
 const API = "https://iglesia-backend.onrender.com";
 
 export default function AdminGaleria() {
-  const { token } = useAuth();
+  const { user } = useAuth();
+  const token = localStorage.getItem("token");
   const headers = { Authorization: `Bearer ${token}` };
 
   const [albums, setAlbums] = useState([]);
