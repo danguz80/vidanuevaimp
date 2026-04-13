@@ -140,16 +140,12 @@ const normUrl = (url) => {
   return "/" + url;
 };
 
-function generarICS(eventos, mes, anio) {
+function generarICS(rawEventos, mes, anio) {
   const pad = n => String(n).padStart(2, "0");
   const dtstamp = new Date().toISOString().replace(/[-:.Z]/g, "").slice(0, 15) + "Z";
   const escape = str => str
     ? str.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;")
     : "";
-  const toICSDateTime = (dateStr) => {
-    const d = parseLocalDate(dateStr);
-    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
-  };
 
   const lineas = [
     "BEGIN:VCALENDAR",
@@ -161,35 +157,88 @@ function generarICS(eventos, mes, anio) {
     "METHOD:PUBLISH",
   ];
 
-  for (const ev of eventos) {
-    const d = parseLocalDate(ev.fecha_inicio);
-    const isAllDay = !d || (d.getHours() === 0 && d.getMinutes() === 0);
-    const diaStr = `${anio}${pad(mes+1)}${pad(ev._fecha.getDate())}`;
-
+  const agregarVEVENT = (ev, fecha) => {
+    const orig = parseLocalDate(ev.fecha_inicio);
+    const isAllDay = !orig || (orig.getHours() === 0 && orig.getMinutes() === 0);
+    const yyyy = fecha.getFullYear();
+    const mm = pad(fecha.getMonth() + 1);
+    const dd = pad(fecha.getDate());
+    const diaStr = `${yyyy}${mm}${dd}`;
     let dtstart, dtend;
     if (isAllDay) {
       dtstart = `DTSTART;VALUE=DATE:${diaStr}`;
-      const sig = new Date(ev._fecha);
+      const sig = new Date(fecha);
       sig.setDate(sig.getDate() + 1);
       dtend = `DTEND;VALUE=DATE:${sig.getFullYear()}${pad(sig.getMonth()+1)}${pad(sig.getDate())}`;
     } else {
-      dtstart = `DTSTART:${toICSDateTime(ev.fecha_inicio)}`;
-      dtend = ev.fecha_fin
-        ? `DTEND:${toICSDateTime(ev.fecha_fin)}`
-        : `DTEND:${toICSDateTime(ev.fecha_inicio)}`;
+      const hh = pad(orig.getHours());
+      const mn = pad(orig.getMinutes());
+      dtstart = `DTSTART:${diaStr}T${hh}${mn}00`;
+      if (ev.fecha_fin) {
+        const fin = parseLocalDate(ev.fecha_fin);
+        dtend = `DTEND:${diaStr}T${pad(fin.getHours())}${pad(fin.getMinutes())}00`;
+      } else {
+        dtend = `DTEND:${diaStr}T${hh}${mn}00`;
+      }
     }
-
     lineas.push(
       "BEGIN:VEVENT",
       `UID:ev-${ev.id}-${diaStr}@iglesia`,
       `DTSTAMP:${dtstamp}`,
-      dtstart,
-      dtend,
+      dtstart, dtend,
       `SUMMARY:${escape(ev.titulo)}`,
     );
     if (ev.descripcion) lineas.push(`DESCRIPTION:${escape(ev.descripcion)}`);
     if (ev.lugar)       lineas.push(`LOCATION:${escape(ev.lugar)}`);
     lineas.push("END:VEVENT");
+  };
+
+  for (const ev of rawEventos) {
+    const inicio = parseLocalDate(ev.fecha_inicio);
+    if (!inicio) continue;
+
+    if (ev.tipo === "recurrente" && ev.recurrencia && ev.recurrencia !== "ninguna") {
+      switch (ev.recurrencia) {
+        case "semanal": {
+          const diaSemana = ev.dia_semana ?? inicio.getDay();
+          let d = new Date(anio, mes, 1);
+          while (d.getDay() !== diaSemana) d.setDate(d.getDate() + 1);
+          while (d.getMonth() === mes) {
+            agregarVEVENT(ev, new Date(d));
+            d.setDate(d.getDate() + 7);
+          }
+          break;
+        }
+        case "quincenal": {
+          const diaSemana = ev.dia_semana ?? inicio.getDay();
+          let d = new Date(anio, mes, 1);
+          while (d.getDay() !== diaSemana) d.setDate(d.getDate() + 1);
+          let count = 0;
+          while (d.getMonth() === mes) {
+            if (count % 2 === 0) agregarVEVENT(ev, new Date(d));
+            d.setDate(d.getDate() + 7);
+            count++;
+          }
+          break;
+        }
+        case "mensual": {
+          const fecha = new Date(anio, mes, inicio.getDate());
+          if (fecha.getMonth() === mes) agregarVEVENT(ev, fecha);
+          break;
+        }
+        case "anual": {
+          if (inicio.getMonth() === mes) {
+            agregarVEVENT(ev, new Date(anio, mes, inicio.getDate()));
+          }
+          break;
+        }
+        default: break;
+      }
+    } else {
+      if (inicio.getFullYear() === anio && inicio.getMonth() === mes) {
+        agregarVEVENT(ev, inicio);
+      }
+    }
   }
 
   lineas.push("END:VCALENDAR");
@@ -293,8 +342,8 @@ export default function Calendario() {
   }
 
   const exportarICS = () => {
-    if (eventosExpandidos.length === 0) return;
-    const contenido = generarICS(eventosExpandidos, mesActual, anioActual);
+    if (eventos.length === 0) return;
+    const contenido = generarICS(eventos, mesActual, anioActual);
     const blob = new Blob([contenido], { type: "text/calendar;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
