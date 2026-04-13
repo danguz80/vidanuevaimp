@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import AdminNav from "../components/AdminNav";
+import ModalComprobante from "../components/ModalComprobante";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { PlusCircle, Trash2, TrendingUp, TrendingDown, DollarSign, Wallet, Pencil, X, FileText } from "lucide-react";
+import { PlusCircle, Trash2, TrendingUp, TrendingDown, DollarSign, Wallet, Pencil, X, FileText, Receipt, CheckCircle, Clock } from "lucide-react";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
@@ -191,6 +192,27 @@ export default function AdminTesoreria() {
   const [mensajeEdit, setMensajeEdit] = useState(null);
   const [generandoPDF, setGenerandoPDF] = useState(false);
 
+  // Comprobantes digitales
+  const [modalComprobante, setModalComprobante] = useState(false);
+  const [comprobantes, setComprobantes] = useState([]);
+  const [cargandoComprobantes, setCargandoComprobantes] = useState(false);
+  const [comprobanteDetalle, setComprobanteDetalle] = useState(null);
+
+  const cargarComprobantes = useCallback(async () => {
+    setCargandoComprobantes(true);
+    try {
+      const res = await fetch(`${API}/api/tesoreria/comprobantes`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      setComprobantes(Array.isArray(data) ? data : []);
+    } catch {
+      setComprobantes([]);
+    } finally {
+      setCargandoComprobantes(false);
+    }
+  }, [getToken]);
+
   const cargar = useCallback(async (mes) => {
     setCargando(true);
     const [anio, m] = mes.split("-");
@@ -233,6 +255,7 @@ export default function AdminTesoreria() {
     if (tieneAcceso) {
       cargar(mesActual);
       cargarSaldoAnterior(mesActual);
+      cargarComprobantes();
     }
   }, []); // eslint-disable-line
 
@@ -526,7 +549,16 @@ export default function AdminTesoreria() {
 
         {/* Formulario nuevo movimiento */}
         <div className="bg-white rounded-xl shadow p-6">
-          <h2 className="text-sm font-bold text-gray-600 uppercase tracking-wide mb-4">Registrar movimiento</h2>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <h2 className="text-sm font-bold text-gray-600 uppercase tracking-wide">Registrar movimiento</h2>
+            <button
+              onClick={() => setModalComprobante(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700 text-xs font-semibold rounded-lg transition-colors"
+            >
+              <Receipt size={14} />
+              Generar comprobante digital
+            </button>
+          </div>
 
           {/* Tabs ingreso / egreso */}
           <div className="flex mb-5 border border-gray-200 rounded-lg overflow-hidden w-fit">
@@ -720,7 +752,186 @@ export default function AdminTesoreria() {
             </div>
           )}
         </div>
+
+        {/* Comprobantes digitales */}
+        <div className="bg-white rounded-xl shadow p-6">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h2 className="text-sm font-bold text-gray-600 uppercase tracking-wide flex items-center gap-2">
+              <Receipt size={15} className="text-emerald-600" />
+              Comprobantes digitales enviados
+            </h2>
+            <span className="text-xs text-gray-400">{comprobantes.length} total</span>
+          </div>
+
+          {cargandoComprobantes ? (
+            <div className="flex justify-center py-8">
+              <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-emerald-600" />
+            </div>
+          ) : comprobantes.length === 0 ? (
+            <p className="text-gray-400 italic text-sm">No hay comprobantes emitidos aún.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-gray-500 uppercase border-b">
+                    <th className="pb-2 text-left pr-3">Fecha</th>
+                    <th className="pb-2 text-left pr-3">Miembro</th>
+                    <th className="pb-2 text-left pr-3">Concepto</th>
+                    <th className="pb-2 text-right pr-3">Monto</th>
+                    <th className="pb-2 text-left pr-3">Pago</th>
+                    <th className="pb-2 text-center">Estado</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {comprobantes.map(c => (
+                    <tr
+                      key={c.id}
+                      className="hover:bg-emerald-50 cursor-pointer transition"
+                      onClick={() => setComprobanteDetalle(c)}
+                    >
+                      <td className="py-2.5 pr-3 text-gray-600 whitespace-nowrap">
+                        {c.fecha ? String(c.fecha).split("T")[0].split("-").reverse().join("/") : "—"}
+                      </td>
+                      <td className="py-2.5 pr-3 font-medium text-gray-800">
+                        {c.miembro_nombre} {c.miembro_apellido}
+                      </td>
+                      <td className="py-2.5 pr-3 text-gray-600">
+                        {c.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : c.concepto}
+                      </td>
+                      <td className="py-2.5 pr-3 text-right font-semibold text-emerald-700">
+                        {FMT(c.monto)}
+                      </td>
+                      <td className="py-2.5 pr-3 text-gray-500 text-xs capitalize">
+                        {c.tipo_pago === "efectivo" ? "Efectivo" : c.tipo_pago === "transferencia" ? "Transferencia" : "Depósito"}
+                      </td>
+                      <td className="py-2.5 text-center">
+                        {c.estado === "revisado" ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            <CheckCircle size={11} /> Revisado
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                            <Clock size={11} /> Pendiente
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
+
+      {modalComprobante && (
+        <ModalComprobante
+          getToken={getToken}
+          onClose={() => setModalComprobante(false)}
+          onEnviado={() => cargarComprobantes()}
+        />
+      )}
+
+      {comprobanteDetalle && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setComprobanteDetalle(null); }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            {/* Header */}
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Receipt size={18} className="text-white" />
+                <div>
+                  <p className="text-white font-bold text-base leading-tight">Comprobante digital</p>
+                  <p className="text-emerald-200 text-xs">
+                    {comprobanteDetalle.fecha
+                      ? String(comprobanteDetalle.fecha).split("T")[0].split("-").reverse().join("/")
+                      : ""}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setComprobanteDetalle(null)}
+                className="text-white/80 hover:text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-4">
+              {/* Miembro + monto */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide">Miembro</p>
+                  <p className="font-semibold text-gray-800">
+                    {comprobanteDetalle.miembro_nombre} {comprobanteDetalle.miembro_apellido}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-500 uppercase tracking-wide">Monto</p>
+                  <p className="text-2xl font-bold text-emerald-700">{FMT(comprobanteDetalle.monto)}</p>
+                </div>
+              </div>
+
+              {/* Detalles */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-xs text-gray-400 mb-0.5">Concepto</p>
+                  <p className="text-sm font-semibold text-gray-700">
+                    {comprobanteDetalle.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : comprobanteDetalle.concepto}
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-xs text-gray-400 mb-0.5">Tipo de pago</p>
+                  <p className="text-sm font-semibold text-gray-700 capitalize">
+                    {comprobanteDetalle.tipo_pago === "efectivo" ? "Efectivo"
+                      : comprobanteDetalle.tipo_pago === "transferencia" ? "Transferencia"
+                      : "Depósito"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Mensaje */}
+              {comprobanteDetalle.mensaje && (
+                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
+                  <p className="text-xs text-emerald-600 font-semibold mb-1">Mensaje enviado al miembro</p>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                    {comprobanteDetalle.mensaje}
+                  </p>
+                </div>
+              )}
+
+              {/* Estado */}
+              <div className="flex items-center justify-between pt-1">
+                <div>
+                  {comprobanteDetalle.estado === "revisado" ? (
+                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
+                      <CheckCircle size={14} /> Revisado por el miembro
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
+                      <Clock size={14} /> Pendiente de revisión
+                    </span>
+                  )}
+                  {comprobanteDetalle.revisado_at && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      Revisado el {String(comprobanteDetalle.revisado_at).split("T")[0].split("-").reverse().join("/")}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setComprobanteDetalle(null)}
+                  className="text-sm text-gray-500 hover:text-gray-700 font-medium"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editando && formEdit && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) setEditando(null); }}>

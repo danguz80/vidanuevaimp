@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
-import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X, Bell, Star, Mic, DoorOpen, CalendarOff, Plus, Trash2, Users, Music, Music2 } from "lucide-react";
+import { Eye, EyeOff, LogOut, Lock, Phone, Mail, MapPin, Calendar, ShieldCheck, Camera, PenLine, Check, X, Bell, Star, Mic, DoorOpen, CalendarOff, Plus, Trash2, Users, Music, Music2, Receipt, CheckCircle, Clock } from "lucide-react";
 import { useMemberAuth } from "../context/MemberAuthContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -304,6 +304,10 @@ export default function MiPortal() {
   const [errorBloqueo, setErrorBloqueo] = useState("");
   const [mostrarFormBloqueo, setMostrarFormBloqueo] = useState(false);
   const [saludosCumple, setSaludosCumple] = useState([]);
+
+  // Comprobantes de tesorería
+  const [comprobantes, setComprobantes] = useState([]);
+  const [marcandoRevisado, setMarcandoRevisado] = useState(null);
   const [togglingVisibilidad, setTogglingVisibilidad] = useState(null);
 
   useEffect(() => {
@@ -349,6 +353,12 @@ export default function MiPortal() {
     fetch(`${API_URL}/api/miembros/${miembro.id}/cumple-saludos`, { headers: { Authorization: `Bearer ${getToken()}` } })
       .then(r => r.ok ? r.json() : [])
       .then(d => setSaludosCumple(Array.isArray(d) ? d : []))
+      .catch(() => {});
+
+    // Cargar comprobantes de tesorería
+    fetch(`${API_URL}/api/miembro/comprobantes`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setComprobantes(Array.isArray(d) ? d : []))
       .catch(() => {});
   }, [miembro]);
 
@@ -455,6 +465,21 @@ export default function MiPortal() {
       setSaludosCumple(prev => prev.map(s => s.id === saludo.id ? { ...s, publico: !s.publico } : s));
     } catch { /* silencioso */ }
     finally { setTogglingVisibilidad(null); }
+  };
+
+  const marcarRevisado = async (id) => {
+    setMarcandoRevisado(id);
+    try {
+      const res = await fetch(`${API_URL}/api/miembro/comprobantes/${id}/revisar`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) return;
+      setComprobantes(prev =>
+        prev.map(c => c.id === id ? { ...c, estado: "revisado", revisado_at: new Date().toISOString() } : c)
+      );
+    } catch { /* silencioso */ }
+    finally { setMarcandoRevisado(null); }
   };
 
   const handleLogout = () => { logout(); adminLogout(); navigate("/portal/login"); };
@@ -807,6 +832,64 @@ export default function MiPortal() {
             </div>
           )}
         </div>
+
+        {/* Comprobantes de Tesorería */}
+        {comprobantes.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <Receipt size={14} className="text-emerald-600" /> Comprobantes de Tesorería
+            </h2>
+            <div className="space-y-3">
+              {comprobantes.map(c => (
+                <div
+                  key={c.id}
+                  className={`rounded-xl border p-4 ${
+                    c.estado === "revisado"
+                      ? "bg-gray-50 border-gray-200"
+                      : "bg-emerald-50 border-emerald-200"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-bold text-base text-emerald-700">
+                          ${Number(c.monto).toLocaleString("es-CL")}
+                        </p>
+                        <span className="text-xs text-gray-500">
+                          {c.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : c.concepto}
+                          {" · "}
+                          {c.tipo_pago === "efectivo" ? "Efectivo" : c.tipo_pago === "transferencia" ? "Transferencia" : "Depósito"}
+                        </span>
+                      </div>
+                      {c.mensaje && (
+                        <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{c.mensaje}</p>
+                      )}
+                      <p className="text-xs text-gray-400 mt-1">
+                        {c.fecha ? String(c.fecha).split("T")[0].split("-").reverse().join("/") : ""}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      {c.estado === "revisado" ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
+                          <CheckCircle size={12} /> Revisado
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => marcarRevisado(c.id)}
+                          disabled={marcandoRevisado === c.id}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-full transition disabled:opacity-50"
+                        >
+                          {marcandoRevisado === c.id ? <span className="animate-spin">⏳</span> : <Clock size={12} />}
+                          {marcandoRevisado === c.id ? "..." : "Marcar revisado"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Saludos de Cumpleaños */}
         {saludosCumple.length > 0 && (

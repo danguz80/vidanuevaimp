@@ -3874,6 +3874,108 @@ app.post("/api/tesoreria/saldo-inicial", authenticateToken, requireTesoreriaAcce
   }
 });
 
+// ─── COMPROBANTES DE TESORERÍA ───────────────────────────────────────────────
+
+const initComprobantes = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS comprobantes_tesoreria (
+      id              SERIAL PRIMARY KEY,
+      miembro_id      INTEGER NOT NULL REFERENCES miembros(id) ON DELETE CASCADE,
+      monto           DECIMAL(12,0) NOT NULL CHECK (monto > 0),
+      concepto        TEXT NOT NULL,
+      tipo_pago       TEXT NOT NULL CHECK (tipo_pago IN ('efectivo','transferencia','deposito')),
+      fecha           DATE NOT NULL DEFAULT CURRENT_DATE,
+      mensaje         TEXT,
+      estado          TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente','revisado')),
+      revisado_at     TIMESTAMP,
+      creado_por      INTEGER REFERENCES miembros(id),
+      created_at      TIMESTAMP DEFAULT NOW()
+    )
+  `);
+};
+
+// POST /api/tesoreria/comprobantes — crear comprobante
+app.post("/api/tesoreria/comprobantes", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { miembro_id, monto, concepto, tipo_pago, fecha, mensaje } = req.body;
+  if (!miembro_id) return res.status(400).json({ error: "Miembro requerido" });
+  if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
+  if (!concepto?.trim()) return res.status(400).json({ error: "Concepto requerido" });
+  if (!["efectivo","transferencia","deposito"].includes(tipo_pago)) return res.status(400).json({ error: "Tipo de pago inválido" });
+  try {
+    await initComprobantes();
+    const result = await pool.query(
+      `INSERT INTO comprobantes_tesoreria (miembro_id, monto, concepto, tipo_pago, fecha, mensaje, creado_por)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [miembro_id, Math.round(parseFloat(monto)), concepto.trim(), tipo_pago,
+       fecha || new Date().toISOString().split("T")[0], mensaje?.trim() || null, req.user.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error POST comprobantes:", err.message);
+    res.status(500).json({ error: "Error al crear comprobante" });
+  }
+});
+
+// GET /api/tesoreria/comprobantes — listar comprobantes (admin/tesorero)
+app.get("/api/tesoreria/comprobantes", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  try {
+    await initComprobantes();
+    const result = await pool.query(
+      `SELECT c.*,
+              m.nombre AS miembro_nombre, m.apellido AS miembro_apellido, m.foto_url AS miembro_foto,
+              cr.nombre AS creado_por_nombre, cr.apellido AS creado_por_apellido
+       FROM comprobantes_tesoreria c
+       LEFT JOIN miembros m  ON m.id  = c.miembro_id
+       LEFT JOIN miembros cr ON cr.id = c.creado_por
+       ORDER BY c.created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error GET comprobantes:", err.message);
+    res.status(500).json({ error: "Error al obtener comprobantes" });
+  }
+});
+
+// GET /api/miembro/comprobantes — comprobantes del miembro autenticado
+app.get("/api/miembro/comprobantes", authenticateMiembro, async (req, res) => {
+  try {
+    await initComprobantes();
+    const result = await pool.query(
+      `SELECT c.*,
+              cr.nombre AS creado_por_nombre, cr.apellido AS creado_por_apellido
+       FROM comprobantes_tesoreria c
+       LEFT JOIN miembros cr ON cr.id = c.creado_por
+       WHERE c.miembro_id = $1
+       ORDER BY c.created_at DESC`,
+      [req.miembro.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error GET miembro/comprobantes:", err.message);
+    res.status(500).json({ error: "Error al obtener comprobantes" });
+  }
+});
+
+// PUT /api/miembro/comprobantes/:id/revisar — el miembro marca el comprobante como revisado
+app.put("/api/miembro/comprobantes/:id/revisar", authenticateMiembro, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await initComprobantes();
+    const result = await pool.query(
+      `UPDATE comprobantes_tesoreria
+       SET estado = 'revisado', revisado_at = NOW()
+       WHERE id = $1 AND miembro_id = $2 AND estado = 'pendiente'
+       RETURNING *`,
+      [id, req.miembro.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Comprobante no encontrado o ya revisado" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error PUT revisar comprobante:", err.message);
+    res.status(500).json({ error: "Error al marcar como revisado" });
+  }
+});
+
 // ─── CHORDPRO ────────────────────────────────────────────────────────────────
 
 const initChordPro = async () => {
