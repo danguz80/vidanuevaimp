@@ -19,17 +19,21 @@ export default function PerfilPublicoMiembro() {
   const [perfil, setPerfil] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [saludos, setSaludos] = useState([]);
 
   useEffect(() => {
     if (!yo) { navigate("/portal/login"); return; }
     const cargar = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/miembros/${id}/publico`, {
-          headers: { Authorization: `Bearer ${getToken()}` },
-        });
-        if (!res.ok) { setError("Perfil no encontrado"); return; }
-        const data = await res.json();
+        const [resP, resS] = await Promise.all([
+          fetch(`${API_URL}/api/miembros/${id}/publico`, { headers: { Authorization: `Bearer ${getToken()}` } }),
+          fetch(`${API_URL}/api/miembros/${id}/cumple-saludos`, { headers: { Authorization: `Bearer ${getToken()}` } }),
+        ]);
+        if (!resP.ok) { setError("Perfil no encontrado"); return; }
+        const data = await resP.json();
         setPerfil(data);
+        const sal = await resS.json();
+        setSaludos(Array.isArray(sal) ? sal : []);
       } catch {
         setError("Error de conexión");
       } finally {
@@ -173,6 +177,26 @@ export default function PerfilPublicoMiembro() {
                   <span className="text-sm text-gray-700">{perfil.direccion}</span>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Saludos de cumpleaños públicos */}
+        {saludos.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <p className="text-xs font-semibold text-gray-400 tracking-widest uppercase mb-4">
+              🎂 Saludos de Cumpleaños
+            </p>
+            <div className="space-y-3">
+              {saludos.map(s => (
+                <div key={s.id} className="border border-pink-100 rounded-xl p-3 bg-pink-50">
+                  <p className="text-xs font-semibold text-pink-600 mb-1">💌 {s.de_nombre}</p>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{s.mensaje}</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {new Date(s.creado_en).toLocaleDateString("es-CL", { day: "numeric", month: "long", year: "numeric" })}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
         )}

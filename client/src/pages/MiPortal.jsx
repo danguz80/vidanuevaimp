@@ -303,6 +303,8 @@ export default function MiPortal() {
   const [guardandoBloqueo, setGuardandoBloqueo] = useState(false);
   const [errorBloqueo, setErrorBloqueo] = useState("");
   const [mostrarFormBloqueo, setMostrarFormBloqueo] = useState(false);
+  const [saludosCumple, setSaludosCumple] = useState([]);
+  const [togglingVisibilidad, setTogglingVisibilidad] = useState(null);
 
   useEffect(() => {
     if (!miembro) { navigate("/portal/login"); return; }
@@ -342,6 +344,12 @@ export default function MiPortal() {
       .then(r => r.json())
       .then(d => { setBloqueos(Array.isArray(d) ? d : []); setCargandoBloqueos(false); })
       .catch(() => setCargandoBloqueos(false));
+
+    // Cargar saludos de cumpleaños
+    fetch(`${API_URL}/api/miembros/${miembro.id}/cumple-saludos`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setSaludosCumple(Array.isArray(d) ? d : []))
+      .catch(() => {});
   }, [miembro]);
 
   const cambiarFoto = (file) => {
@@ -433,6 +441,20 @@ export default function MiPortal() {
     }
     const storageKey = `compromisos_vistos_${miembro.id}`;
     localStorage.setItem(storageKey, JSON.stringify([...notKeys]));
+  };
+
+  const toggleVisibilidadSaludo = async (saludo) => {
+    setTogglingVisibilidad(saludo.id);
+    try {
+      const res = await fetch(`${API_URL}/api/cumple-saludos/${saludo.id}/visibilidad`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ publico: !saludo.publico }),
+      });
+      if (!res.ok) return;
+      setSaludosCumple(prev => prev.map(s => s.id === saludo.id ? { ...s, publico: !s.publico } : s));
+    } catch { /* silencioso */ }
+    finally { setTogglingVisibilidad(null); }
   };
 
   const handleLogout = () => { logout(); adminLogout(); navigate("/portal/login"); };
@@ -785,6 +807,38 @@ export default function MiPortal() {
             </div>
           )}
         </div>
+
+        {/* Saludos de Cumpleaños */}
+        {saludosCumple.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">🎂 Saludos de Cumpleaños</h2>
+            <div className="space-y-3">
+              {saludosCumple.map(saludo => (
+                <div key={saludo.id} className="border border-pink-100 rounded-xl p-3 bg-pink-50">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-pink-600 mb-0.5">💌 De: {saludo.de_nombre}</p>
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{saludo.mensaje}</p>
+                      <p className="text-xs text-gray-400 mt-1">{new Date(saludo.creado_en).toLocaleDateString("es-CL", { day: "numeric", month: "long", year: "numeric" })}</p>
+                    </div>
+                    <button
+                      onClick={() => toggleVisibilidadSaludo(saludo)}
+                      disabled={togglingVisibilidad === saludo.id}
+                      title={saludo.publico ? "Hacer privado" : "Hacer público (visible en tu perfil)"}
+                      className={`shrink-0 text-xs px-2.5 py-1 rounded-full font-semibold transition disabled:opacity-50 ${
+                        saludo.publico
+                          ? "bg-green-100 text-green-700 hover:bg-green-200"
+                          : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                      }`}
+                    >
+                      {togglingVisibilidad === saludo.id ? "..." : saludo.publico ? "🌐 Público" : "🔒 Privado"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Acciones */}
         <div className="bg-white rounded-2xl shadow-sm p-5">

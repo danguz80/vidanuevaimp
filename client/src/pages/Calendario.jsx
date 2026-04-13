@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { useAuth } from "../context/AuthContext";
+import { useMemberAuth } from "../context/MemberAuthContext";
+import CumpleaniosModal from "../components/CumpleaniosModal";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
@@ -137,7 +140,67 @@ const normUrl = (url) => {
   return "/" + url;
 };
 
+function generarICS(eventos, mes, anio) {
+  const pad = n => String(n).padStart(2, "0");
+  const dtstamp = new Date().toISOString().replace(/[-:.Z]/g, "").slice(0, 15) + "Z";
+  const escape = str => str
+    ? str.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;")
+    : "";
+  const toICSDateTime = (dateStr) => {
+    const d = parseLocalDate(dateStr);
+    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
+  };
+
+  const lineas = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Iglesia//Calendario//ES",
+    `X-WR-CALNAME:Iglesia - ${MESES[mes]} ${anio}`,
+    "X-WR-TIMEZONE:America/Santiago",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+  ];
+
+  for (const ev of eventos) {
+    const d = parseLocalDate(ev.fecha_inicio);
+    const isAllDay = !d || (d.getHours() === 0 && d.getMinutes() === 0);
+    const diaStr = `${anio}${pad(mes+1)}${pad(ev._fecha.getDate())}`;
+
+    let dtstart, dtend;
+    if (isAllDay) {
+      dtstart = `DTSTART;VALUE=DATE:${diaStr}`;
+      const sig = new Date(ev._fecha);
+      sig.setDate(sig.getDate() + 1);
+      dtend = `DTEND;VALUE=DATE:${sig.getFullYear()}${pad(sig.getMonth()+1)}${pad(sig.getDate())}`;
+    } else {
+      dtstart = `DTSTART:${toICSDateTime(ev.fecha_inicio)}`;
+      dtend = ev.fecha_fin
+        ? `DTEND:${toICSDateTime(ev.fecha_fin)}`
+        : `DTEND:${toICSDateTime(ev.fecha_inicio)}`;
+    }
+
+    lineas.push(
+      "BEGIN:VEVENT",
+      `UID:ev-${ev.id}-${diaStr}@iglesia`,
+      `DTSTAMP:${dtstamp}`,
+      dtstart,
+      dtend,
+      `SUMMARY:${escape(ev.titulo)}`,
+    );
+    if (ev.descripcion) lineas.push(`DESCRIPTION:${escape(ev.descripcion)}`);
+    if (ev.lugar)       lineas.push(`LOCATION:${escape(ev.lugar)}`);
+    lineas.push("END:VEVENT");
+  }
+
+  lineas.push("END:VCALENDAR");
+  return lineas.join("\r\n");
+}
+
 export default function Calendario() {
+  const { user: adminUser, getToken } = useAuth();
+  const { miembro, getToken: getMiembroToken } = useMemberAuth();
+  const estaLogueado = !!(adminUser || miembro);
+
   const [eventos, setEventos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [hoy] = useState(new Date());
@@ -146,13 +209,61 @@ export default function Calendario() {
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   const [vistaEvento, setVistaEvento] = useState(null);
 
+  // Cumpleaños
+  const [cumpleanos, setCumpleanos] = useState([]);
+  const [modalCumple, setModalCumple] = useState(null);
+
   useEffect(() => {
-    fetch(`${API}/api/eventos/publicos`)
+    const token = adminUser ? getToken() : miembro ? getMiembroToken() : null;
+    const url = token ? `${API}/api/eventos/autenticados` : `${API}/api/eventos/publicos`;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch(url, { headers })
       .then(r => r.json())
       .then(data => setEventos(Array.isArray(data) ? data : []))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [adminUser, miembro]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const token = localStorage.getItem("token") || localStorage.getItem("miembro_token");
+    if (!token) { setCumpleanos([]); return; }
+    fetch(`${API}/api/cumpleanos/mes?mes=${mesActual + 1}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setCumpleanos(Array.isArray(data) ? data : []))
+      .catch(() => setCumpleanos([]));
+  }, [mesActual, estaLogueado]);
+
+  const cumpleaniosPorDia = useMemo(() => {
+    const mapa = {};
+    for (const m of cumpleanos) {
+      if (!m.fecha_nacimiento) continue;
+      const f = new Date(m.fecha_nacimiento);
+      const dia = f.getUTCDate();
+      if (!mapa[dia]) mapa[dia] = [];
+      mapa[dia].push(m);
+    }
+    return mapa;
+  }, [cumpleanos]);
+
+  const diasDesdeCumple = (m) => {
+    if (!m?.fecha_nacimiento) return 999;
+    const ahora = new Date();
+    const f = new Date(m.fecha_nacimiento);
+    const cumple = new Date(Date.UTC(ahora.getUTCFullYear(), f.getUTCMonth(), f.getUTCDate()));
+    const hoyUTC = new Date(Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth(), ahora.getUTCDate()));
+    let diff = Math.floor((hoyUTC - cumple) / 86400000);
+    if (diff < 0) {
+      const prev = new Date(Date.UTC(ahora.getUTCFullYear() - 1, f.getUTCMonth(), f.getUTCDate()));
+      diff = Math.floor((hoyUTC - prev) / 86400000);
+    }
+    return diff;
+  };
+
+  const cerrarModalCumple = () => {
+    setModalCumple(null);
+  };
 
   const mesAnterior = () => {
     if (mesActual === 0) { setMesActual(11); setAnioActual(a => a - 1); }
@@ -180,6 +291,20 @@ export default function Calendario() {
       return tA.localeCompare(tB);
     });
   }
+
+  const exportarICS = () => {
+    if (eventosExpandidos.length === 0) return;
+    const contenido = generarICS(eventosExpandidos, mesActual, anioActual);
+    const blob = new Blob([contenido], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `iglesia-${MESES[mesActual].toLowerCase()}-${anioActual}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const esHoy = (dia) =>
     dia === hoy.getDate() && mesActual === hoy.getMonth() && anioActual === hoy.getFullYear();
@@ -217,10 +342,21 @@ export default function Calendario() {
               <h2 className="text-xl font-bold text-gray-800">
                 {MESES[mesActual]} {anioActual}
               </h2>
-              <button
-                onClick={mesSiguiente}
-                className="p-2 hover:bg-gray-100 rounded-full transition text-xl"
-              >›</button>
+              <div className="flex items-center gap-1">
+                {eventosExpandidos.length > 0 && (
+                  <button
+                    onClick={exportarICS}
+                    title={`Exportar eventos de ${MESES[mesActual]} al calendario`}
+                    className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-2.5 py-1.5 rounded-lg transition font-medium border border-indigo-200"
+                  >
+                    📅 <span className="hidden sm:inline">Exportar .ics</span>
+                  </button>
+                )}
+                <button
+                  onClick={mesSiguiente}
+                  className="p-2 hover:bg-gray-100 rounded-full transition text-xl"
+                >›</button>
+              </div>
             </div>
 
             {/* Grilla */}
@@ -262,6 +398,16 @@ export default function Calendario() {
                         {evsDia.length > 3 && (
                           <div className="text-xs text-gray-400 pl-1">+{evsDia.length - 3} más</div>
                         )}
+                        {estaLogueado && (cumpleaniosPorDia[dia] || []).map(m => (
+                          <div
+                            key={`b-${m.id}`}
+                            onClick={e => { e.stopPropagation(); setModalCumple(m); }}
+                            className={`text-xs truncate rounded px-1 py-0.5 font-medium cursor-pointer transition ${m.sexo === 'masculino' ? 'bg-blue-100 text-blue-800 hover:bg-blue-200' : 'bg-pink-100 text-pink-700 hover:bg-pink-200'}`}
+                            title={`Cumpleaños: ${m.nombre} ${m.apellido}`}
+                          >
+                            🎂 {m.nombre} {m.apellido}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   );
@@ -275,6 +421,30 @@ export default function Calendario() {
                 <h3 className="font-bold text-gray-800 mb-3">
                   {diaSeleccionado} de {MESES[mesActual]} {anioActual}
                 </h3>
+                {estaLogueado && (cumpleaniosPorDia[diaSeleccionado] || []).length > 0 && (
+                  <div className="mb-3 border-b border-pink-100 pb-3">
+                    <p className="text-xs font-semibold text-pink-500 uppercase tracking-wide mb-1">🎂 Cumpleaños</p>
+                    <div className="space-y-1">
+                      {(cumpleaniosPorDia[diaSeleccionado] || []).map(m => (
+                        <div
+                          key={`bd-${m.id}`}
+                          className={`flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer hover:opacity-80 transition ${m.sexo === 'masculino' ? 'bg-blue-50' : 'bg-pink-50'}`}
+                          onClick={() => setModalCumple(m)}
+                        >
+                          {m.foto_url ? (
+                            <img src={m.foto_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                          ) : (
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${m.sexo === 'masculino' ? 'bg-blue-200 text-blue-700' : 'bg-pink-200 text-pink-600'}`}>
+                              {m.nombre[0]}{m.apellido?.[0]}
+                            </div>
+                          )}
+                          <span className="text-sm font-medium text-gray-800">{m.nombre} {m.apellido}</span>
+                          <span className={`ml-auto text-xs font-semibold ${m.sexo === 'masculino' ? 'text-blue-600' : 'text-pink-500'}`}>{m.edad} años</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {(eventosPorDia[diaSeleccionado] || []).length === 0 ? (
                   <p className="text-gray-400 text-sm">Sin eventos este día.</p>
                 ) : (
@@ -432,6 +602,30 @@ export default function Calendario() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Cumpleaños 🎉 */}
+      {modalCumple && (
+        <CumpleaniosModal
+          miembro={modalCumple}
+          diasDesde={diasDesdeCumple(modalCumple)}
+          onClose={cerrarModalCumple}
+          onEnviarSaludo={async (texto, deNombre) => {
+            const adminToken = localStorage.getItem("token");
+            const miembroToken = localStorage.getItem("miembro_token");
+            const token = adminToken || miembroToken;
+            const endpoint = adminToken ? "/api/cumple-saludos" : "/api/cumple-saludos/from-member";
+            const body = adminToken
+              ? { para_miembro_id: modalCumple.id, de_nombre: deNombre, mensaje: texto, publico: false }
+              : { para_miembro_id: modalCumple.id, mensaje: texto, publico: false };
+            const res = await fetch(`${API}${endpoint}`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || "Error al enviar"); }
+          }}
+        />
       )}
     </div>
   );

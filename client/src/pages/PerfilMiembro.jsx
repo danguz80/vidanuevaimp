@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import AdminNav from "../components/AdminNav";
+import EditarMiembroModal from "../components/EditarMiembroModal";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
@@ -37,8 +38,6 @@ export default function PerfilMiembro() {
 
   // Modal edición
   const [modalEditar, setModalEditar] = useState(false);
-  const [form, setForm] = useState({});
-  const [guardando, setGuardando] = useState(false);
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}` });
 
@@ -112,55 +111,7 @@ export default function PerfilMiembro() {
   };
 
   const abrirEditar = () => {
-    setForm({
-      nombre: miembro.nombre || "",
-      apellido: miembro.apellido || "",
-      fecha_nacimiento: miembro.fecha_nacimiento ? miembro.fecha_nacimiento.slice(0, 10) : "",
-      estado: miembro.estado || "activo",
-      celular: miembro.celular || "",
-      email: miembro.email || "",
-      direccion: miembro.direccion || "",
-      notas: miembro.notas || "",
-      acerca_de_mi: miembro.acerca_de_mi || "",
-      roles: miembro.roles || [],
-      bautizado: miembro.bautizado || false,
-      declaracion_fe: miembro.declaracion_fe || false,
-      estado_civil: miembro.estado_civil || "",
-      separado: miembro.separado || false,
-      nivel_discipulado: miembro.nivel_discipulado || null,
-    });
     setModalEditar(true);
-  };
-
-  const toggleRol = (rol) => {
-    setForm(prev => ({
-      ...prev,
-      roles: prev.roles.includes(rol)
-        ? prev.roles.filter(r => r !== rol)
-        : [...prev.roles, rol],
-    }));
-  };
-
-  const guardar = async () => {
-    if (!form.nombre.trim() || !form.apellido.trim()) {
-      alert("Nombre y apellido son obligatorios");
-      return;
-    }
-    setGuardando(true);
-    try {
-      const res = await fetch(`${API}/api/miembros/${id}`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-      if (!res.ok) throw new Error("Error al guardar");
-      await cargar();
-      setModalEditar(false);
-    } catch {
-      alert("Error al guardar el miembro");
-    } finally {
-      setGuardando(false);
-    }
   };
 
   if (loading) {
@@ -385,224 +336,11 @@ export default function PerfilMiembro() {
 
       {/* Modal editar */}
       {modalEditar && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-xl max-h-[92vh] flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b">
-              <h2 className="text-lg font-bold text-gray-800">Editar miembro</h2>
-              <button onClick={() => setModalEditar(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-            </div>
-
-            <div className="overflow-y-auto px-6 py-4 space-y-4">
-              {/* Nombre / Apellido */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Nombre</label>
-                  <input type="text" value={form.nombre} onChange={e => setForm(p => ({ ...p, nombre: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Apellido</label>
-                  <input type="text" value={form.apellido} onChange={e => setForm(p => ({ ...p, apellido: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
-                </div>
-              </div>
-
-              {/* Fecha / Estado */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Fecha de nacimiento</label>
-                  <input type="date" value={form.fecha_nacimiento} onChange={e => setForm(p => ({ ...p, fecha_nacimiento: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Estado</label>
-                  <select value={form.estado} onChange={e => setForm(p => ({ ...p, estado: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm">
-                    <option value="activo">Activo</option>
-                    <option value="inactivo">Inactivo</option>
-                    <option value="visita">Visita</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Celular / Email */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Celular</label>
-                  <input type="tel" value={form.celular} onChange={e => setForm(p => ({ ...p, celular: e.target.value }))}
-                    placeholder="+56 9 XXXX XXXX"
-                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Email</label>
-                  <input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
-                </div>
-              </div>
-
-              {/* Dirección */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Dirección</label>
-                <input type="text" value={form.direccion} onChange={e => setForm(p => ({ ...p, direccion: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />
-              </div>
-
-              {/* Roles */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Roles</label>
-                <div className="flex flex-wrap gap-2">
-                  {ROLES_DISPONIBLES.map(rol => (
-                    <button key={rol} type="button" onClick={() => toggleRol(rol)}
-                      className={`text-xs px-3 py-1.5 rounded-full border transition font-medium ${
-                        form.roles.includes(rol)
-                          ? "bg-blue-600 text-white border-blue-600"
-                          : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
-                      }`}>
-                      {rol}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Notas */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Notas</label>
-                <textarea rows={3} value={form.notas} onChange={e => setForm(p => ({ ...p, notas: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none"
-                  placeholder="Información adicional..." />
-              </div>
-
-              {/* Acerca de mí */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Acerca de mí</label>
-                <textarea rows={3} value={form.acerca_de_mi} onChange={e => setForm(p => ({ ...p, acerca_de_mi: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none"
-                  placeholder="De dónde es, cuántos años en la iglesia, a qué se dedica, saludo..." />
-              </div>
-
-              {/* Bautizado / Declaración de Fe */}
-              <div className="flex flex-wrap gap-6">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={form.bautizado}
-                    onChange={e => setForm(p => ({ ...p, bautizado: e.target.checked }))}
-                    className="w-4 h-4 rounded accent-blue-600"
-                  />
-                  <span className="text-sm font-semibold text-gray-700">Bautizado/a</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={form.declaracion_fe}
-                    onChange={e => setForm(p => ({ ...p, declaracion_fe: e.target.checked }))}
-                    className="w-4 h-4 rounded accent-blue-600"
-                  />
-                  <span className="text-sm font-semibold text-gray-700">Declaración de Fe</span>
-                </label>
-              </div>
-
-              {/* Estado civil */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Estado civil</label>
-                <div className="flex flex-wrap gap-4">
-                  {[
-                    { value: "soltero",    label: "Soltero/a" },
-                    { value: "casado",     label: "Casado/a" },
-                    { value: "viudo",      label: "Viudo/a" },
-                    { value: "divorciado", label: "Divorciado/a" },
-                  ].map(({ value, label }) => (
-                    <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="radio"
-                        name="estado_civil_perfil"
-                        value={value}
-                        checked={form.estado_civil === value}
-                        onChange={() => setForm(p => ({
-                          ...p,
-                          estado_civil: value,
-                          separado: value === "casado" ? p.separado : false,
-                        }))}
-                        className="accent-blue-600"
-                      />
-                      <span className="text-sm text-gray-700">{label}</span>
-                    </label>
-                  ))}
-                  {form.estado_civil && (
-                    <button
-                      type="button"
-                      onClick={() => setForm(p => ({ ...p, estado_civil: "", separado: false }))}
-                      className="text-xs text-gray-400 underline"
-                    >
-                      Limpiar
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Separado/a (solo si Casado/a) */}
-              {form.estado_civil === "casado" && (
-                <div className="ml-2">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={form.separado}
-                      onChange={e => setForm(p => ({ ...p, separado: e.target.checked }))}
-                      className="w-4 h-4 rounded accent-blue-600"
-                    />
-                    <span className="text-sm text-gray-700">Separado/a</span>
-                    <span className="text-xs text-gray-400">(casado/a pero separado/a)</span>
-                  </label>
-                </div>
-              )}
-
-              {/* Nivel de Discipulado */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Nivel de Discipulado</label>
-                <div className="flex flex-wrap gap-3">
-                  {[
-                    { value: 1, label: "Nivel 1 — Fundamentos" },
-                    { value: 2, label: "Nivel 2 — Crecimiento" },
-                    { value: 3, label: "Nivel 3 — Servicio" },
-                    { value: 4, label: "Nivel 4 — Liderazgo" },
-                  ].map(({ value, label }) => (
-                    <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="radio"
-                        name="nivel_discipulado_perfil"
-                        value={value}
-                        checked={form.nivel_discipulado === value}
-                        onChange={() => setForm(p => ({ ...p, nivel_discipulado: value }))}
-                        className="accent-blue-600"
-                      />
-                      <span className="text-sm text-gray-700">{label}</span>
-                    </label>
-                  ))}
-                </div>
-                {form.nivel_discipulado && (
-                  <button
-                    type="button"
-                    onClick={() => setForm(p => ({ ...p, nivel_discipulado: null }))}
-                    className="mt-1 text-xs text-gray-400 hover:text-red-500 underline"
-                  >
-                    Limpiar selección
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl shrink-0">
-              <button onClick={() => setModalEditar(false)}
-                className="flex-1 border border-gray-300 text-gray-600 hover:bg-gray-100 font-medium text-sm rounded-lg py-2.5">
-                Cancelar
-              </button>
-              <button onClick={guardar} disabled={guardando}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm disabled:opacity-50">
-                {guardando ? "Guardando..." : "Guardar cambios"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditarMiembroModal
+          miembro={miembro}
+          onClose={() => setModalEditar(false)}
+          onGuardado={cargar}
+        />
       )}
     </>
   );

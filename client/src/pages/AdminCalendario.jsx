@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import AdminNav from "../components/AdminNav";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+import CumpleaniosModal from "../components/CumpleaniosModal";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
@@ -218,6 +219,8 @@ export default function AdminCalendario() {
   const [guardando, setGuardando] = useState(false);
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   const [vistaEvento, setVistaEvento] = useState(null);
+  const [modalCumple, setModalCumple] = useState(null); // { miembro, edad }
+  const [saludoDeNombre, setSaludoDeNombre] = useState("Iglesia Vida Nueva IMP");
   const [ocForm, setOcForm] = useState({ encargado_id: "", coordinador_id: "", predicador_id: "", notas: "" });
   const [guardandoOc, setGuardandoOc] = useState(false);
 
@@ -321,6 +324,26 @@ export default function AdminCalendario() {
     } catch {
       setBloqueadosPorFecha(new Set());
     }
+  };
+
+  const cerrarModalCumple = () => {
+    setModalCumple(null);
+  };
+
+  // Días transcurridos desde el cumpleaños de un miembro (0 = hoy, 1-7 = ventana)
+  const diasDesdeCumple = (m) => {
+    if (!m?.fecha_nacimiento) return 999;
+    const hoy = new Date();
+    const f = new Date(m.fecha_nacimiento);
+    const cumple = new Date(Date.UTC(hoy.getUTCFullYear(), f.getUTCMonth(), f.getUTCDate()));
+    const hoyUTC = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), hoy.getUTCDate()));
+    let diff = Math.floor((hoyUTC - cumple) / 86400000);
+    if (diff < 0) {
+      // cumpleaños es el año anterior
+      const cumplePrev = new Date(Date.UTC(hoy.getUTCFullYear() - 1, f.getUTCMonth(), f.getUTCDate()));
+      diff = Math.floor((hoyUTC - cumplePrev) / 86400000);
+    }
+    return diff;
   };
 
   const guardarPortero = async (miembro_id) => {
@@ -494,9 +517,10 @@ export default function AdminCalendario() {
       doc.text(`CALENDARIO ${MESES[mesActual].toUpperCase()} ${anioActual}`, W / 2, 30, { align: "center" });
 
       if (portero?.nombre) {
-        const fotoPortero = portero.foto_url ? fotosCache[portero.foto_url] : null;
+        const fotoPorteroRaw = portero.foto_url ? fotosCache[portero.foto_url] : null;
+        const fotoPortero = fotoPorteroRaw ? await recortarCirculo(fotoPorteroRaw) : null;
         const fotoW = 36;
-        if (fotoPortero) doc.addImage(fotoPortero, "JPEG", W - margen - fotoW, 4, fotoW, fotoW);
+        if (fotoPortero) doc.addImage(fotoPortero, "PNG", W - margen - fotoW, 4, fotoW, fotoW);
         const xTxt = W - margen - (fotoPortero ? fotoW + 4 : 0);
         doc.setFontSize(12);
         doc.setFont("helvetica", "normal");
@@ -591,6 +615,25 @@ export default function AdminCalendario() {
 
         const evs = eventosPorDiaPDF[dia] || [];
         let oy = y + OY_INI;
+
+        // Cumpleaños del día (jsPDF no soporta emoji, usamos texto plano)
+        const cumplesPDF = miembros.filter(m => {
+          if (!m.fecha_nacimiento) return false;
+          const f = new Date(m.fecha_nacimiento);
+          return f.getUTCMonth() === mesActual && f.getUTCDate() === dia;
+        });
+        if (cumplesPDF.length > 0 && oy + cumplesPDF.length * 13 < y + altoCelda - 2) {
+          cumplesPDF.forEach(m => {
+            const edad = anioActual - new Date(m.fecha_nacimiento).getUTCFullYear();
+            doc.setFontSize(14);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(219, 39, 119); // rosa
+            const texto = `Cumpleanios: ${m.nombre} ${m.apellido} (${edad} anos)`;
+            doc.text(texto, x + PAD, oy + 7, { maxWidth: cw - PAD * 2 - 2 });
+            oy += 13;
+          });
+          oy += 3;
+        }
 
         for (const ev of evs) {
           // Hora
@@ -738,6 +781,28 @@ export default function AdminCalendario() {
     };
     img.onerror = () => resolve(null);
     img.src = url.startsWith("/") ? window.location.origin + url : url;
+  });
+
+  // Recorta una imagen base64 en círculo y devuelve nuevo base64 PNG
+  const recortarCirculo = (base64) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const size = Math.min(img.naturalWidth, img.naturalHeight);
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      const ox = (img.naturalWidth  - size) / 2;
+      const oy = (img.naturalHeight - size) / 2;
+      ctx.drawImage(img, -ox, -oy);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = () => resolve(null);
+    img.src = base64;
   });
 
   // Convierte hex a [r,g,b]
@@ -901,6 +966,22 @@ export default function AdminCalendario() {
   const celdasVacias = Array(primerDia).fill(null);
   const dias = Array.from({ length: totalDias }, (_, i) => i + 1);
 
+  // Cumpleaños del mes actual
+  const cumpleaniosPorDia = React.useMemo(() => {
+    const map = {};
+    miembros.forEach(m => {
+      if (!m.fecha_nacimiento) return;
+      const f = new Date(m.fecha_nacimiento);
+      const mes = f.getUTCMonth();
+      const dia = f.getUTCDate();
+      if (mes !== mesActual) return;
+      if (!map[dia]) map[dia] = [];
+      const edad = anioActual - f.getUTCFullYear();
+      map[dia].push({ ...m, edad });
+    });
+    return map;
+  }, [miembros, mesActual, anioActual]);
+
   const esHoy = (dia) =>
     dia === hoy.getDate() && mesActual === hoy.getMonth() && anioActual === hoy.getFullYear();
 
@@ -1029,6 +1110,7 @@ export default function AdminCalendario() {
                 ))}
                 {dias.map(dia => {
                   const evsDia = eventosPorDia[dia] || [];
+                  const cumplesDia = cumpleaniosPorDia[dia] || [];
                   const activo = diaSeleccionado === dia;
                   return (
                     <div
@@ -1055,6 +1137,16 @@ export default function AdminCalendario() {
                         {evsDia.length > 3 && (
                           <div className="text-xs text-gray-400 pl-1">+{evsDia.length - 3} más</div>
                         )}
+                        {cumplesDia.map(m => (
+                          <div
+                            key={`b-${m.id}`}
+                            onClick={e => { e.stopPropagation(); setModalCumple(m); }}
+                            className={`text-xs truncate rounded px-1 py-0.5 font-medium cursor-pointer transition ${m.sexo === 'masculino' ? 'bg-blue-100 text-blue-800 hover:bg-blue-200' : 'bg-pink-100 text-pink-700 hover:bg-pink-200'}`}
+                            title={`Cumpleaños: ${m.nombre} ${m.apellido} (${m.edad} años)`}
+                          >
+                            🎂 {m.nombre} {m.apellido}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   );
@@ -1076,7 +1168,7 @@ export default function AdminCalendario() {
                     + Agregar evento
                   </button>
                 </div>
-                {(eventosPorDia[diaSeleccionado] || []).length === 0 ? (
+                {(eventosPorDia[diaSeleccionado] || []).length === 0 && (cumpleaniosPorDia[diaSeleccionado] || []).length === 0 ? (
                   <p className="text-gray-400 text-sm">Sin eventos este día.</p>
                 ) : (
                   <div className="space-y-2">
@@ -1096,6 +1188,30 @@ export default function AdminCalendario() {
                         </span>
                       </div>
                     ))}
+                    {(cumpleaniosPorDia[diaSeleccionado] || []).length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-pink-100">
+                        <p className="text-xs font-semibold text-pink-500 uppercase tracking-wide mb-1">🎂 Cumpleaños</p>
+                        <div className="space-y-1">
+                          {(cumpleaniosPorDia[diaSeleccionado] || []).map(m => (
+                            <div
+                              key={m.id}
+                              className={`flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer hover:opacity-80 transition ${m.sexo === 'masculino' ? 'bg-blue-50' : 'bg-pink-50'}`}
+                              onClick={() => setModalCumple(m)}
+                            >
+                              {m.foto_url ? (
+                                <img src={m.foto_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                              ) : (
+                                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${m.sexo === 'masculino' ? 'bg-blue-200 text-blue-700' : 'bg-pink-200 text-pink-600'}`}>
+                                  {m.nombre[0]}{m.apellido?.[0]}
+                                </div>
+                              )}
+                              <span className="text-sm font-medium text-gray-800">{m.nombre} {m.apellido}</span>
+                              <span className={`ml-auto text-xs font-semibold ${m.sexo === 'masculino' ? 'text-blue-600' : 'text-pink-500'}`}>{m.edad} años</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1645,6 +1761,30 @@ export default function AdminCalendario() {
           </div>
         </div>
       )}
+      {/* Modal Cumpleaños 🎉 */}
+      {modalCumple && (
+        <CumpleaniosModal
+          miembro={modalCumple}
+          diasDesde={diasDesdeCumple(modalCumple)}
+          onClose={cerrarModalCumple}
+          onEnviarSaludo={async (texto, deNombre) => {
+            const res = await fetch(`${API}/api/cumple-saludos`, {
+              method: "POST",
+              headers: { ...headers(), "Content-Type": "application/json" },
+              body: JSON.stringify({
+                para_miembro_id: modalCumple.id,
+                de_nombre: deNombre,
+                mensaje: texto,
+                publico: false,
+              }),
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error || "Error al enviar"); }
+          }}
+          conCampoDe
+          deNombreInicial={saludoDeNombre}
+        />
+      )}
+
     </>
   );
 }

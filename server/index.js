@@ -2114,14 +2114,14 @@ app.get("/api/miembros/:id", authenticateToken, async (req, res) => {
 
 // POST /api/miembros — crear miembro
 app.post("/api/miembros", authenticateToken, async (req, res) => {
-  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado } = req.body;
+  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado, sexo } = req.body;
   if (!nombre || !apellido) return res.status(400).json({ error: "Nombre y apellido son obligatorios" });
   try {
     const client = await pool.connect();
     const result = await client.query(
-      `INSERT INTO miembros (nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, bautizado || false, declaracion_fe || false, estado_civil || null, separado || false, nivel_discipulado || null]
+      `INSERT INTO miembros (nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado, sexo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [nombre, apellido, foto_url || null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, bautizado || false, declaracion_fe || false, estado_civil || null, separado || false, nivel_discipulado || null, sexo || null]
     );
     const miembro = result.rows[0];
     if (Array.isArray(roles) && roles.length > 0) {
@@ -2142,15 +2142,15 @@ app.post("/api/miembros", authenticateToken, async (req, res) => {
 
 // PUT /api/miembros/:id — actualizar miembro
 app.put("/api/miembros/:id", authenticateToken, async (req, res) => {
-  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles, acerca_de_mi, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado } = req.body;
+  const { nombre, apellido, foto_url, fecha_nacimiento, celular, email, direccion, estado, notas, roles, acerca_de_mi, bautizado, declaracion_fe, estado_civil, separado, nivel_discipulado, sexo } = req.body;
   try {
     const client = await pool.connect();
     const result = await client.query(
       `UPDATE miembros SET nombre=$1, apellido=$2,
        foto_url = COALESCE(NULLIF($3::text, ''), foto_url),
-       fecha_nacimiento=$4, celular=$5, 
-       email=$6, direccion=$7, estado=$8, notas=$9, acerca_de_mi=$10, bautizado=$11, declaracion_fe=$12, estado_civil=$13, separado=$14, nivel_discipulado=$15 WHERE id=$16 RETURNING *`,
-      [nombre, apellido, foto_url ?? null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, acerca_de_mi || null, bautizado || false, declaracion_fe || false, estado_civil || null, separado || false, nivel_discipulado || null, req.params.id]
+       fecha_nacimiento=$4, celular=$5,
+       email=$6, direccion=$7, estado=$8, notas=$9, acerca_de_mi=$10, bautizado=$11, declaracion_fe=$12, estado_civil=$13, separado=$14, nivel_discipulado=$15, sexo=$16 WHERE id=$17 RETURNING *`,
+      [nombre, apellido, foto_url ?? null, fecha_nacimiento || null, celular || null, email || null, direccion || null, estado || "activo", notas || null, acerca_de_mi || null, bautizado || false, declaracion_fe || false, estado_civil || null, separado || false, nivel_discipulado || null, sexo || null, req.params.id]
     );
     if (result.rows.length === 0) { client.release(); return res.status(404).json({ error: "Miembro no encontrado" }); }
     if (Array.isArray(roles)) {
@@ -4170,9 +4170,198 @@ app.delete("/api/admin/galeria/albums/:id", authenticateToken, async (req, res) 
   }
 });
 
+// ---------------------------------------------------------------------------
+// Saludos de Cumpleaños
+// ---------------------------------------------------------------------------
+
+// POST /api/cumple-saludos — admin envía saludo
+app.post("/api/cumple-saludos", authenticateToken, async (req, res) => {
+  const { para_miembro_id, de_nombre, mensaje, publico } = req.body;
+  if (!para_miembro_id || !mensaje?.trim()) {
+    return res.status(400).json({ error: "Faltan datos obligatorios" });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO cumple_saludos (para_miembro_id, de_nombre, mensaje, publico)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [para_miembro_id, (de_nombre || "Iglesia").trim(), mensaje.trim(), !!publico]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("Error POST cumple-saludos:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cumple-saludos/from-member — portal member envía saludo (nombre auto desde perfil)
+app.post("/api/cumple-saludos/from-member", authenticateMiembro, async (req, res) => {
+  const { para_miembro_id, mensaje, publico } = req.body;
+  if (!para_miembro_id || !mensaje?.trim()) {
+    return res.status(400).json({ error: "Faltan datos obligatorios" });
+  }
+  try {
+    const mRes = await pool.query("SELECT nombre, apellido FROM miembros WHERE id = $1", [req.miembro.id]);
+    const de_nombre = mRes.rows.length > 0
+      ? `${mRes.rows[0].nombre} ${mRes.rows[0].apellido}`
+      : "Un miembro";
+    const result = await pool.query(
+      `INSERT INTO cumple_saludos (para_miembro_id, de_nombre, mensaje, publico)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [para_miembro_id, de_nombre, mensaje.trim(), !!publico]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error("Error POST cumple-saludos from-member:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cumpleanos/activos — miembros con cumpleaños hoy o en los últimos 7 días (cualquier token válido)
+app.get("/api/cumpleanos/activos", async (req, res) => {
+  const token = req.headers["authorization"]?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "Token requerido" });
+  try {
+    jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return res.status(403).json({ error: "Token inválido" });
+  }
+  try {
+    const hoy = new Date();
+    const mesHoy = hoy.getUTCMonth() + 1;  // 1-12
+    const diaHoy = hoy.getUTCDate();
+    // Devolver miembros activos cuyo (mes, día) de nacimiento esté en el rango [hoy-7 días, hoy]
+    const result = await pool.query(
+      `SELECT id, nombre, apellido, foto_url, fecha_nacimiento, sexo
+       FROM miembros
+       WHERE estado = 'activo' AND fecha_nacimiento IS NOT NULL`
+    );
+    const VENTANA = 7;
+    const activos = result.rows.filter(m => {
+      const f = new Date(m.fecha_nacimiento);
+      const mesNac = f.getUTCMonth() + 1;
+      const diaNac = f.getUTCDate();
+      // Construir fecha de cumpleaños este año (en UTC)
+      const cumpleEsteAnio = new Date(Date.UTC(hoy.getUTCFullYear(), mesNac - 1, diaNac));
+      const cumplePrevAnio = new Date(Date.UTC(hoy.getUTCFullYear() - 1, mesNac - 1, diaNac));
+      const hoyUTC = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), hoy.getUTCDate()));
+      // Diferencia en días (puede ser negativa si cumpleaños es en el futuro)
+      const diffEste = Math.floor((hoyUTC - cumpleEsteAnio) / 86400000);
+      const diffPrev = Math.floor((hoyUTC - cumplePrevAnio) / 86400000);
+      const diff = diffEste >= 0 ? diffEste : diffPrev;
+      return diff >= 0 && diff <= VENTANA;
+    });
+    res.json(activos.map(m => {
+      const f = new Date(m.fecha_nacimiento);
+      const edad = hoy.getUTCFullYear() - f.getUTCFullYear();
+      return { ...m, edad };
+    }));
+  } catch (err) {
+    console.error("Error GET cumpleanos/activos:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cumpleanos/mes?mes=X — miembros con cumpleaños en el mes indicado (cualquier token válido)
+app.get("/api/cumpleanos/mes", async (req, res) => {
+  const token = req.headers["authorization"]?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "Token requerido" });
+  try {
+    jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return res.status(403).json({ error: "Token inválido" });
+  }
+  const mes = parseInt(req.query.mes, 10); // 1-12
+  if (!mes || mes < 1 || mes > 12) return res.status(400).json({ error: "Mes inválido (1-12)" });
+  try {
+    const result = await pool.query(
+      `SELECT id, nombre, apellido, foto_url, fecha_nacimiento, sexo
+       FROM miembros
+       WHERE estado = 'activo' AND fecha_nacimiento IS NOT NULL
+         AND EXTRACT(MONTH FROM fecha_nacimiento) = $1`,
+      [mes]
+    );
+    const anio = new Date().getUTCFullYear();
+    res.json(result.rows.map(m => {
+      const f = new Date(m.fecha_nacimiento);
+      const edad = anio - f.getUTCFullYear();
+      return { ...m, edad };
+    }));
+  } catch (err) {
+    console.error("Error GET cumpleanos/mes:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/miembros/:id/cumple-saludos — obtener saludos (admin ve todos, miembro ve propios, público ve públicos)
+app.get("/api/miembros/:id/cumple-saludos", async (req, res) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader?.split(" ")[1];
+  let isAdmin = false;
+  let isSelf = false;
+  if (token) {
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      if (payload.tipo !== "miembro") isAdmin = true;
+      else if (String(payload.id) === String(req.params.id)) isSelf = true;
+    } catch { /* token inválido → solo públicos */ }
+  }
+  try {
+    let result;
+    if (isAdmin || isSelf) {
+      result = await pool.query(
+        "SELECT * FROM cumple_saludos WHERE para_miembro_id = $1 ORDER BY creado_en DESC",
+        [req.params.id]
+      );
+    } else {
+      result = await pool.query(
+        "SELECT id, de_nombre, mensaje, publico, creado_en FROM cumple_saludos WHERE para_miembro_id = $1 AND publico = true ORDER BY creado_en DESC",
+        [req.params.id]
+      );
+    }
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error GET cumple-saludos:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/cumple-saludos/:id/visibilidad — el miembro festejado cambia público/privado
+app.patch("/api/cumple-saludos/:id/visibilidad", authenticateMiembro, async (req, res) => {
+  const { publico } = req.body;
+  try {
+    const check = await pool.query(
+      "SELECT id FROM cumple_saludos WHERE id = $1 AND para_miembro_id = $2",
+      [req.params.id, req.miembro.id]
+    );
+    if (check.rows.length === 0) return res.status(403).json({ error: "Sin permiso" });
+    await pool.query("UPDATE cumple_saludos SET publico = $1 WHERE id = $2", [!!publico, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error PATCH cumple-saludos visibilidad:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   await initFamiliasTables();
+  // Migración: tabla cumple_saludos
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cumple_saludos (
+        id              SERIAL PRIMARY KEY,
+        para_miembro_id INTEGER NOT NULL REFERENCES miembros(id) ON DELETE CASCADE,
+        de_nombre       TEXT    NOT NULL DEFAULT 'Iglesia',
+        mensaje         TEXT    NOT NULL,
+        publico         BOOLEAN NOT NULL DEFAULT false,
+        creado_en       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_cumple_saludos_para ON cumple_saludos(para_miembro_id)");
+    console.log("[DB] Tabla cumple_saludos lista.");
+  } catch (err) {
+    console.error("[DB] Error al migrar cumple_saludos:", err.message);
+  }
   // Migración: columna evento_id en hero_slides
   try {
     await pool.query(
@@ -4315,6 +4504,13 @@ app.listen(PORT, async () => {
     console.log("[DB] Tabla galeria_albums lista.");
   } catch (err) {
     console.error("[DB] Error al migrar tabla galería:", err.message);
+  }
+  // Migración: columna sexo en miembros
+  try {
+    await pool.query("ALTER TABLE miembros ADD COLUMN IF NOT EXISTS sexo TEXT");
+    console.log("[DB] Columna sexo en miembros lista.");
+  } catch (err) {
+    console.error("[DB] Error al migrar columna sexo:", err.message);
   }
 });
 

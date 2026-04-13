@@ -46,6 +46,7 @@ import AdminTesoreria from "./pages/AdminTesoreria";
 import CancionesCifrado from "./pages/CancionesCifrado";
 import AdminGaleria from "./pages/AdminGaleria";
 import Calendario from "./pages/Calendario";
+import BirthdayCelebration from "./components/BirthdayCelebration";
 
 export default function App() {
   return (
@@ -53,6 +54,7 @@ export default function App() {
     <Router>
       <AuthProvider>
         <MemberAuthProvider>
+        <BirthdayCelebration />
         <div className="min-h-screen flex flex-col">
           <Header />
           <main className="flex-grow">
