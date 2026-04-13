@@ -181,6 +181,14 @@ function generarICS(rawEventos, mes, anio) {
         dtend = `DTEND:${diaStr}T${hh}${mn}00`;
       }
     }
+    // Construir DESCRIPTION con descripción + personas + zoom
+    const partesDesc = [];
+    if (ev.descripcion) partesDesc.push(ev.descripcion);
+    if (ev.encargado_nombre)   partesDesc.push(`Encargado/a: ${ev.encargado_nombre} ${ev.encargado_apellido || ""} `.trim());
+    if (ev.coordinador_nombre) partesDesc.push(`Coordinador/a: ${ev.coordinador_nombre} ${ev.coordinador_apellido || ""} `.trim());
+    if (ev.predicador_nombre)  partesDesc.push(`Predicador/a: ${ev.predicador_nombre} ${ev.predicador_apellido || ""} `.trim());
+    if (ev.zoom_link)          partesDesc.push(`Zoom: ${ev.zoom_link}`);
+
     lineas.push(
       "BEGIN:VEVENT",
       `UID:ev-${ev.id}-${diaStr}@iglesia`,
@@ -188,8 +196,9 @@ function generarICS(rawEventos, mes, anio) {
       dtstart, dtend,
       `SUMMARY:${escape(ev.titulo)}`,
     );
-    if (ev.descripcion) lineas.push(`DESCRIPTION:${escape(ev.descripcion)}`);
-    if (ev.lugar)       lineas.push(`LOCATION:${escape(ev.lugar)}`);
+    if (partesDesc.length > 0) lineas.push(`DESCRIPTION:${escape(partesDesc.join("\n"))}`);
+    if (ev.lugar)     lineas.push(`LOCATION:${escape(ev.lugar)}`);
+    if (ev.zoom_link) lineas.push(`URL:${ev.zoom_link}`);
     lineas.push("END:VEVENT");
   };
 
@@ -392,7 +401,7 @@ export default function Calendario() {
                 {MESES[mesActual]} {anioActual}
               </h2>
               <div className="flex items-center gap-1">
-                {eventosExpandidos.length > 0 && (
+                {estaLogueado && eventosExpandidos.length > 0 && (
                   <button
                     onClick={exportarICS}
                     title={`Exportar eventos de ${MESES[mesActual]} al calendario`}
