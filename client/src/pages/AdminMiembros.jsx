@@ -51,6 +51,8 @@ const FORM_INICIAL = {
   nivel_discipulado: null,
 };
 
+const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
 const PARENTESCOS = [
   "cónyuge", "padre", "madre", "hijo", "hija",
   "hermano", "hermana", "abuelo", "abuela",
@@ -64,7 +66,11 @@ export default function AdminMiembros() {
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("todos");
-  const [filtroRol, setFiltroRol] = useState("todos");
+  const [filtroRol, setFiltroRol] = useState([]);
+  const [filtroBautizado, setFiltroBautizado] = useState("todos");
+  const [filtroDeclaracionFe, setFiltroDeclaracionFe] = useState("todos");
+  const [filtroDiscipulado, setFiltroDiscipulado] = useState("todos");
+  const [vistaActual, setVistaActual] = useState("lista");
   const [modalAbierto, setModalAbierto] = useState(false);
   const [editando, setEditando] = useState(null);
   const [form, setForm] = useState(FORM_INICIAL);
@@ -314,9 +320,33 @@ export default function AdminMiembros() {
       (m.email || "").toLowerCase().includes(busqueda.toLowerCase()) ||
       (m.celular || "").includes(busqueda);
     const coincideEstado = filtroEstado === "todos" || m.estado === filtroEstado;
-    const coincideRol = filtroRol === "todos" || (m.roles || []).includes(filtroRol);
-    return coincideBusqueda && coincideEstado && coincideRol;
+    const coincideRol = filtroRol.length === 0 || filtroRol.every(r => (m.roles || []).includes(r));
+    const coincideBautizado = filtroBautizado === "todos" || (filtroBautizado === "si" ? m.bautizado : !m.bautizado);
+    const coincideDeclaracion = filtroDeclaracionFe === "todos" || (filtroDeclaracionFe === "si" ? m.declaracion_fe : !m.declaracion_fe);
+    const coincideDiscipulado = filtroDiscipulado === "todos" || String(m.nivel_discipulado) === filtroDiscipulado;
+    return coincideBusqueda && coincideEstado && coincideRol && coincideBautizado && coincideDeclaracion && coincideDiscipulado;
   });
+
+  const cumpleaniosPorMes = React.useMemo(() => {
+    const hoy = new Date();
+    const diaHoy = hoy.getDate();
+    const mesHoy = hoy.getMonth();
+    const grupos = Array.from({ length: 12 }, (_, i) => ({ mes: i, nombre: MESES[i], miembros: [] }));
+    miembros.forEach(m => {
+      if (!m.fecha_nacimiento) return;
+      const f = new Date(m.fecha_nacimiento);
+      const mes = f.getUTCMonth();
+      const dia = f.getUTCDate();
+      const edad = hoy.getFullYear() - f.getUTCFullYear() -
+        (mesHoy < mes || (mesHoy === mes && diaHoy < dia) ? 1 : 0);
+      const esCumpleHoy = mes === mesHoy && dia === diaHoy;
+      const diff = (mes * 31 + dia) - (mesHoy * 31 + diaHoy);
+      const esCumpleProximo = diff > 0 && diff <= 10;
+      grupos[mes].miembros.push({ ...m, dia, edad, esCumpleHoy, esCumpleProximo });
+    });
+    grupos.forEach(g => g.miembros.sort((a, b) => a.dia - b.dia));
+    return grupos;
+  }, [miembros]);
 
   const idxActual = editando ? miembrosFiltrados.findIndex(m => m.id === editando) : -1;
   const navAnterior = () => { if (idxActual > 0) abrirEditar(miembrosFiltrados[idxActual - 1]); };
@@ -343,8 +373,8 @@ export default function AdminMiembros() {
     const W = PAGE_W - 2 * M;            // 186mm
     const HEADER_H = 14;                  // altura cabecera de página
     const FOOTER_H = 8;
-    const FICHAS = 2;                     // fichas por página
-    const FICHA_H = (PAGE_H - HEADER_H - FOOTER_H) / FICHAS; // ~137mm cada una
+    const FICHAS = 3;                     // fichas por página
+    const FICHA_H = (PAGE_H - HEADER_H - FOOTER_H) / FICHAS; // ~91mm cada una
     const FIELD_H = 9;                    // altura por campo
     const HALF = W / 2 - 2;              // ancho de cada columna de campos
 
@@ -602,8 +632,6 @@ export default function AdminMiembros() {
     const CHECK_FIELDS = [
       "Bautizado/a en Agua",
       "Declaración de Fe",
-      "Consagrado/a",
-      "Lleno del Espíritu Santo",
     ];
     const cw = W / CHECK_FIELDS.length;
     CHECK_FIELDS.forEach((cf, i) => {
@@ -691,43 +719,210 @@ export default function AdminMiembros() {
           </div>
         </div>
 
-        {/* Filtros */}
-        <div className="flex flex-col md:flex-row gap-3 mb-6">
-          <input
-            type="text"
-            placeholder="Buscar por nombre, email o teléfono..."
-            value={busqueda}
-            onChange={e => setBusqueda(e.target.value)}
-            className="border rounded-lg px-4 py-2 flex-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          <select
-            value={filtroEstado}
-            onChange={e => setFiltroEstado(e.target.value)}
-            className="border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+        {/* Tabs vista */}
+        <div className="flex gap-2 mb-5">
+          <button
+            onClick={() => setVistaActual("lista")}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+              vistaActual === "lista"
+                ? "bg-blue-600 text-white shadow"
+                : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"
+            }`}
           >
-            <option value="todos">Todos los estados</option>
-            <option value="activo">Activo</option>
-            <option value="inactivo">Inactivo</option>
-            <option value="visita">Visita</option>
-          </select>
-          <select
-            value={filtroRol}
-            onChange={e => setFiltroRol(e.target.value)}
-            className="border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            👥 Lista de Miembros
+          </button>
+          <button
+            onClick={() => setVistaActual("cumpleanios")}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+              vistaActual === "cumpleanios"
+                ? "bg-pink-600 text-white shadow"
+                : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"
+            }`}
           >
-            <option value="todos">Todos los roles</option>
-            {ROLES_DISPONIBLES.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+            🎂 Cumpleaños
+          </button>
         </div>
 
+        {/* Filtros (solo en vista lista) */}
+        {vistaActual === "lista" && (
+          <div className="flex flex-col gap-3 mb-6">
+            <div className="flex flex-col md:flex-row gap-3">
+              <input
+                type="text"
+                placeholder="Buscar por nombre, email o teléfono..."
+                value={busqueda}
+                onChange={e => setBusqueda(e.target.value)}
+                className="border rounded-lg px-4 py-2 flex-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <select
+                value={filtroEstado}
+                onChange={e => setFiltroEstado(e.target.value)}
+                className="border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="todos">Todos los estados</option>
+                <option value="activo">Activo</option>
+                <option value="inactivo">Inactivo</option>
+                <option value="visita">Visita</option>
+              </select>
+              <select
+                value={filtroDiscipulado}
+                onChange={e => setFiltroDiscipulado(e.target.value)}
+                className="border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="todos">Todos los niveles</option>
+                <option value="1">Nivel 1 — Fundamentos</option>
+                <option value="2">Nivel 2 — Crecimiento</option>
+                <option value="3">Nivel 3 — Servicio</option>
+                <option value="4">Nivel 4 — Liderazgo</option>
+              </select>
+            </div>
+            {/* Chips de roles */}
+            <div className="flex flex-wrap gap-1.5 items-center">
+              <span className="text-sm text-gray-500 font-medium mr-1">Roles:</span>
+              {ROLES_DISPONIBLES.map(r => (
+                <button
+                  key={r}
+                  onClick={() => setFiltroRol(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r])}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition ${
+                    filtroRol.includes(r)
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+              {filtroRol.length > 0 && (
+                <button onClick={() => setFiltroRol([])} className="text-xs text-red-400 hover:text-red-600 underline ml-1">Limpiar</button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-3 items-center">
+              <span className="text-sm text-gray-500 font-medium">Filtros espirituales:</span>
+              {/* Bautismo */}
+              <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                {[["todos","Todos"],["si","💧 Bautizados"],["no","No bautizados"]].map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setFiltroBautizado(val)}
+                    className={`px-3 py-1.5 font-medium transition ${
+                      filtroBautizado === val
+                        ? "bg-sky-600 text-white"
+                        : "bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {/* Declaración de Fe */}
+              <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                {[["todos","Todos"],["si","✝️ Con declaración"],["no","Sin declaración"]].map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setFiltroDeclaracionFe(val)}
+                    className={`px-3 py-1.5 font-medium transition ${
+                      filtroDeclaracionFe === val
+                        ? "bg-amber-500 text-white"
+                        : "bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {(filtroBautizado !== "todos" || filtroDeclaracionFe !== "todos" || filtroDiscipulado !== "todos" || filtroRol.length > 0) && (
+                <button
+                  onClick={() => { setFiltroBautizado("todos"); setFiltroDeclaracionFe("todos"); setFiltroDiscipulado("todos"); setFiltroRol([]); }}
+                  className="text-xs text-red-400 hover:text-red-600 underline"
+                >
+                  Limpiar filtros
+                </button>
+              )}
+              <span className="ml-auto text-sm text-gray-400">{miembrosFiltrados.length} resultado{miembrosFiltrados.length !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Vista Cumpleaños */}
+        {vistaActual === "cumpleanios" && (
+          <div className="space-y-6">
+            {(() => {
+              const hoy = new Date();
+              const mesHoy = hoy.getMonth();
+              const orden = Array.from({ length: 12 }, (_, i) => (mesHoy + i) % 12);
+              const conMiembros = orden.filter(i => cumpleaniosPorMes[i].miembros.length > 0);
+              if (conMiembros.length === 0) return (
+                <div className="text-center py-20 text-gray-400">Ningún miembro tiene fecha de nacimiento registrada.</div>
+              );
+              return orden.map(i => {
+                const grupo = cumpleaniosPorMes[i];
+                if (grupo.miembros.length === 0) return null;
+                const esMesActual = i === mesHoy;
+                return (
+                  <div key={i} className={`rounded-xl overflow-hidden shadow-sm border ${
+                    esMesActual ? "border-pink-300 ring-2 ring-pink-200" : "border-gray-200"
+                  }`}>
+                    <div className={`px-5 py-3 flex items-center gap-2 ${
+                      esMesActual ? "bg-pink-600 text-white" : "bg-gray-100 text-gray-700"
+                    }`}>
+                      <span className="text-lg">{esMesActual ? "🎂" : "📅"}</span>
+                      <h3 className="font-bold text-base tracking-wide">{grupo.nombre.toUpperCase()}</h3>
+                      <span className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-full ${
+                        esMesActual ? "bg-white/20 text-white" : "bg-gray-300 text-gray-600"
+                      }`}>
+                        {grupo.miembros.length} cumpleaños
+                      </span>
+                    </div>
+                    <div className="bg-white divide-y">
+                      {grupo.miembros.map(m => (
+                        <div key={m.id} className={`flex items-center gap-3 px-5 py-3 ${
+                          m.esCumpleHoy ? "bg-pink-50" : m.esCumpleProximo ? "bg-amber-50" : ""
+                        }`}>
+                          {m.foto_url ? (
+                            <img src={m.foto_url} alt={m.nombre} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                              <span className="text-blue-600 font-bold text-sm">{m.nombre[0]}{m.apellido[0]}</span>
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <button
+                              onClick={() => navigate(`/admin/miembros/${m.id}`)}
+                              className="font-semibold text-gray-800 hover:text-blue-700 transition text-sm"
+                            >
+                              {m.nombre} {m.apellido}
+                            </button>
+                            <p className="text-xs text-gray-400">{m.celular || m.email || ""}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className={`text-sm font-bold ${
+                              m.esCumpleHoy ? "text-pink-600" : "text-gray-700"
+                            }`}>
+                              {m.esCumpleHoy ? "🎉 ¡Hoy!" : `${m.dia} de ${grupo.nombre}`}
+                            </p>
+                            <p className="text-xs text-gray-400">{m.edad} años</p>
+                          </div>
+                          {m.esCumpleProximo && !m.esCumpleHoy && (
+                            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium shrink-0">Próximo</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        )}
+
         {/* Tabla */}
-        {loading ? (
+        {vistaActual === "lista" && loading ? (
           <div className="text-center py-20 text-gray-500">Cargando miembros...</div>
-        ) : miembrosFiltrados.length === 0 ? (
+        ) : vistaActual === "lista" && miembrosFiltrados.length === 0 ? (
           <div className="text-center py-20 text-gray-400">
             {miembros.length === 0 ? "No hay miembros registrados aún." : "No se encontraron resultados."}
           </div>
-        ) : (
+        ) : vistaActual === "lista" ? (
           <div className="overflow-x-auto rounded-xl shadow">
             <table className="w-full text-left bg-white">
               <thead className="bg-gray-100 text-gray-600 text-sm uppercase">
@@ -774,7 +969,14 @@ export default function AdminMiembros() {
                     <td className="px-4 py-3 hidden lg:table-cell">
                       <div className="flex flex-wrap gap-1">
                         {(m.roles || []).slice(0, 3).map(r => (
-                          <span key={r} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">{r}</span>
+                          <button
+                            key={r}
+                            onClick={e => { e.stopPropagation(); setFiltroRol(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]); }}
+                            className={`text-xs px-2 py-0.5 rounded-full transition ${filtroRol.includes(r) ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"}`}
+                            title={filtroRol.includes(r) ? "Quitar filtro" : `Filtrar por "${r}"`}
+                          >
+                            {r}
+                          </button>
                         ))}
                         {(m.roles || []).length > 3 && (
                           <span className="text-xs text-gray-400">+{m.roles.length - 3}</span>
@@ -816,7 +1018,7 @@ export default function AdminMiembros() {
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Modal */}
