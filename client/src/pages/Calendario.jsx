@@ -184,21 +184,21 @@ function generarICS(rawEventos, mes, anio) {
     const nombreCompleto = (n, a) => [n, a].filter(Boolean).join(" ");
     const escHtml = s => s ? s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : "";
 
-    // DESCRIPTION — texto plano para clientes sin soporte HTML
+    // DESCRIPTION — texto plano (Google Calendar Android, Outlook, etc.)
     const partesPlano = [];
     if (ev.descripcion)        partesPlano.push(ev.descripcion);
-    if (ev.encargado_nombre)   partesPlano.push(`\nEncargado/a: ${nombreCompleto(ev.encargado_nombre, ev.encargado_apellido)}`);
-    if (ev.coordinador_nombre) partesPlano.push(`\nCoordinador/a: ${nombreCompleto(ev.coordinador_nombre, ev.coordinador_apellido)}`);
-    if (ev.predicador_nombre)  partesPlano.push(`\nPredicador/a: ${nombreCompleto(ev.predicador_nombre, ev.predicador_apellido)}`);
-    if (ev.zoom_link)          partesPlano.push(`\nIr a Zoom: ${ev.zoom_link}`);
+    if (ev.encargado_nombre)   partesPlano.push(`Encargado/a: ${nombreCompleto(ev.encargado_nombre, ev.encargado_apellido)}`);
+    if (ev.coordinador_nombre) partesPlano.push(`Coordinador/a: ${nombreCompleto(ev.coordinador_nombre, ev.coordinador_apellido)}`);
+    if (ev.predicador_nombre)  partesPlano.push(`Predicador/a: ${nombreCompleto(ev.predicador_nombre, ev.predicador_apellido)}`);
+    if (ev.zoom_link)          partesPlano.push(`Ir a Zoom: ${ev.zoom_link}`);
 
-    // X-ALT-DESC — versión HTML con formato enriquecido (Google Calendar, iOS Calendar)
+    // X-ALT-DESC — HTML enriquecido solo para Apple Calendar (iOS/macOS)
     const partesHtml = [];
-    if (ev.descripcion)        partesHtml.push(escHtml(ev.descripcion).replace(/\n/g, "<br>"));
-    if (ev.encargado_nombre)   partesHtml.push(`<br><b>Encargado/a:</b> <b>${escHtml(nombreCompleto(ev.encargado_nombre, ev.encargado_apellido))}</b>`);
-    if (ev.coordinador_nombre) partesHtml.push(`<br><b>Coordinador/a:</b> <b>${escHtml(nombreCompleto(ev.coordinador_nombre, ev.coordinador_apellido))}</b>`);
-    if (ev.predicador_nombre)  partesHtml.push(`<br><b>Predicador/a:</b> <b>${escHtml(nombreCompleto(ev.predicador_nombre, ev.predicador_apellido))}</b>`);
-    if (ev.zoom_link)          partesHtml.push(`<br><b><i><a href="${ev.zoom_link}">Ir a Zoom</a></i></b>`);
+    if (ev.descripcion)        partesHtml.push(`<p>${escHtml(ev.descripcion).replace(/\n/g, "<br>")}</p>`);
+    if (ev.encargado_nombre)   partesHtml.push(`<p><b>Encargado/a:</b> <b>${escHtml(nombreCompleto(ev.encargado_nombre, ev.encargado_apellido))}</b></p>`);
+    if (ev.coordinador_nombre) partesHtml.push(`<p><b>Coordinador/a:</b> <b>${escHtml(nombreCompleto(ev.coordinador_nombre, ev.coordinador_apellido))}</b></p>`);
+    if (ev.predicador_nombre)  partesHtml.push(`<p><b>Predicador/a:</b> <b>${escHtml(nombreCompleto(ev.predicador_nombre, ev.predicador_apellido))}</b></p>`);
+    if (ev.zoom_link)          partesHtml.push(`<p><b><i><a href="${ev.zoom_link}">Ir a Zoom</a></i></b></p>`);
 
     lineas.push(
       "BEGIN:VEVENT",
@@ -207,7 +207,7 @@ function generarICS(rawEventos, mes, anio) {
       dtstart, dtend,
       `SUMMARY:${escape(ev.titulo)}`,
     );
-    if (partesPlano.length > 0) lineas.push(`DESCRIPTION:${escape(partesPlano.join(""))}`);
+    if (partesPlano.length > 0) lineas.push(`DESCRIPTION:${escape(partesPlano.join("\n"))}`);
     if (partesHtml.length > 0)  lineas.push(`X-ALT-DESC;FMTTYPE=text/html:<html><body>${partesHtml.join("")}</body></html>`);
     if (ev.lugar)     lineas.push(`LOCATION:${escape(ev.lugar)}`);
     if (ev.zoom_link) lineas.push(`URL:${ev.zoom_link}`);
@@ -263,7 +263,28 @@ function generarICS(rawEventos, mes, anio) {
   }
 
   lineas.push("END:VCALENDAR");
-  return lineas.join("\r\n");
+  // RFC 5545: plegar líneas que superen 75 octetos (CRLF + 1 espacio de continuación)
+  const fold = line => {
+    const bytes = new TextEncoder().encode(line);
+    if (bytes.length <= 75) return line;
+    const chars = [...line]; // iterar por codepoints, no por bytes
+    let resultado = "";
+    let lineaActual = "";
+    let bytesCont = 0;
+    for (const ch of chars) {
+      const chBytes = new TextEncoder().encode(ch).length;
+      if (bytesCont + chBytes > 75) {
+        resultado += lineaActual + "\r\n ";
+        lineaActual = ch;
+        bytesCont = 1 + chBytes; // 1 por el espacio de continuación
+      } else {
+        lineaActual += ch;
+        bytesCont += chBytes;
+      }
+    }
+    return resultado + lineaActual;
+  };
+  return lineas.map(fold).join("\r\n");
 }
 
 export default function Calendario() {
