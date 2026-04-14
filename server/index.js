@@ -3892,8 +3892,9 @@ const initComprobantes = async () => {
       created_at      TIMESTAMP DEFAULT NOW()
     )
   `);
-  // Secuencia de folios para comprobantes de ingreso (I-00001, I-00002, ...)
+  // Secuencia de folios para comprobantes de ingreso (I-00001, ...) y egreso (E-00001, ...)
   await pool.query(`CREATE SEQUENCE IF NOT EXISTS folio_comprobante_i_seq START 1`);
+  await pool.query(`CREATE SEQUENCE IF NOT EXISTS folio_comprobante_e_seq START 1`);
   // Columna folio — única por comprobante, puede ser NULL en registros anteriores
   await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS folio TEXT UNIQUE`);
   await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS movimiento_id INTEGER REFERENCES tesoreria_movimientos(id) ON DELETE SET NULL`);
@@ -3902,20 +3903,24 @@ const initComprobantes = async () => {
 
 // POST /api/tesoreria/comprobantes — crear comprobante
 app.post("/api/tesoreria/comprobantes", authenticateToken, requireTesoreriaAccess, async (req, res) => {
-  const { miembro_id, monto, concepto, tipo_pago, fecha, mensaje, movimiento_id, notas } = req.body;
+  const { miembro_id, monto, concepto, tipo_pago, fecha, mensaje, movimiento_id, notas, tipo_comprobante } = req.body;
   if (!miembro_id) return res.status(400).json({ error: "Miembro requerido" });
   if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
   if (!concepto?.trim()) return res.status(400).json({ error: "Concepto requerido" });
   if (!["efectivo","transferencia","deposito"].includes(tipo_pago)) return res.status(400).json({ error: "Tipo de pago inválido" });
+  const esEgreso = tipo_comprobante === "egreso";
+  const seqName = esEgreso ? "folio_comprobante_e_seq" : "folio_comprobante_i_seq";
+  const prefijo = esEgreso ? "E-" : "I-";
   try {
     await initComprobantes();
     const result = await pool.query(
       `INSERT INTO comprobantes_tesoreria (miembro_id, monto, concepto, tipo_pago, fecha, mensaje, creado_por, folio, movimiento_id, notas)
        VALUES ($1, $2, $3, $4, $5, $6, $7,
-               'I-' || LPAD(nextval('folio_comprobante_i_seq')::text, 5, '0'), $8, $9)
+               $8 || LPAD(nextval($9)::text, 5, '0'), $10, $11)
        RETURNING *`,
       [miembro_id, Math.round(parseFloat(monto)), concepto.trim(), tipo_pago,
-       fecha || new Date().toISOString().split("T")[0], mensaje?.trim() || null, req.user.id, movimiento_id || null, notas?.trim() || null]
+       fecha || new Date().toISOString().split("T")[0], mensaje?.trim() || null, req.user.id,
+       prefijo, seqName, movimiento_id || null, notas?.trim() || null]
     );
     res.json(result.rows[0]);
   } catch (err) {

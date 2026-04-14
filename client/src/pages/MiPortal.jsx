@@ -842,20 +842,22 @@ export default function MiPortal() {
             </h2>
             <div className="space-y-3">
               {/* Pendientes — expandidos con firma */}
-              {comprobantes.filter(c => c.estado !== "revisado").map(c => (
+              {comprobantes.filter(c => c.estado !== "revisado").map(c => {
+                const esEgresoC = c.folio?.startsWith("E-");
+                return (
                 <div
                   key={c.id}
-                  className="rounded-xl border p-4 bg-emerald-50 border-emerald-200"
+                  className={`rounded-xl border p-4 ${esEgresoC ? "bg-red-50 border-red-200" : "bg-emerald-50 border-emerald-200"}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         {c.folio && (
-                          <span className="font-mono text-xs font-bold text-emerald-800 bg-white border border-emerald-300 px-2 py-0.5 rounded">
+                          <span className={`font-mono text-xs font-bold bg-white px-2 py-0.5 rounded border ${esEgresoC ? "text-red-800 border-red-300" : "text-emerald-800 border-emerald-300"}`}>
                             {c.folio}
                           </span>
                         )}
-                        <p className="font-bold text-base text-emerald-700">
+                        <p className={`font-bold text-base ${esEgresoC ? "text-red-700" : "text-emerald-700"}`}>
                           ${Number(c.monto).toLocaleString("es-CL")}
                         </p>
                         <span className="text-xs text-gray-500">
@@ -900,7 +902,8 @@ export default function MiPortal() {
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
 
               {/* Revisados — contraídos en lista */}
               {comprobantes.filter(c => c.estado === "revisado").length > 0 && (
@@ -942,24 +945,26 @@ export default function MiPortal() {
         )}
 
         {/* Modal detalle comprobante revisado */}
-        {comprobanteModal && (
+        {comprobanteModal && (() => {
+          const esEgresoM = comprobanteModal.folio?.startsWith("E-");
+          return (
           <div
             className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
             onClick={e => { if (e.target === e.currentTarget) setComprobanteModal(null); }}
           >
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between shrink-0">
+              <div className={`${esEgresoM ? "bg-red-600" : "bg-emerald-600"} px-6 py-4 flex items-center justify-between shrink-0`}>
                 <div className="flex items-center gap-3">
                   <Receipt size={18} className="text-white" />
                   <div>
                     <p className="text-white font-bold text-base leading-tight">Comprobante digital</p>
                     <div className="flex items-center gap-2">
                       {comprobanteModal.folio && (
-                        <span className="font-mono text-xs font-bold text-emerald-900 bg-white/90 px-2 py-0.5 rounded">
+                        <span className={`font-mono text-xs font-bold ${esEgresoM ? "text-red-900" : "text-emerald-900"} bg-white/90 px-2 py-0.5 rounded`}>
                           {comprobanteModal.folio}
                         </span>
                       )}
-                      <p className="text-emerald-200 text-xs">
+                      <p className={`${esEgresoM ? "text-red-200" : "text-emerald-200"} text-xs`}>
                         {comprobanteModal.fecha ? String(comprobanteModal.fecha).split("T")[0].split("-").reverse().join("/") : ""}
                       </p>
                     </div>
@@ -977,14 +982,14 @@ export default function MiPortal() {
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-gray-500 uppercase tracking-wide">Monto</p>
-                    <p className="text-2xl font-bold text-emerald-700">${Number(comprobanteModal.monto).toLocaleString("es-CL")}</p>
+                    <p className={`text-2xl font-bold ${esEgresoM ? "text-red-700" : "text-emerald-700"}`}>${Number(comprobanteModal.monto).toLocaleString("es-CL")}</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   {comprobanteModal.folio && (
-                    <div className="bg-emerald-50 rounded-xl p-3 col-span-2">
+                    <div className={`${esEgresoM ? "bg-red-50" : "bg-emerald-50"} rounded-xl p-3 col-span-2`}>
                       <p className="text-xs text-gray-400 mb-0.5">Nº Comprobante</p>
-                      <p className="font-mono text-base font-bold text-emerald-700">{comprobanteModal.folio}</p>
+                      <p className={`font-mono text-base font-bold ${esEgresoM ? "text-red-700" : "text-emerald-700"}`}>{comprobanteModal.folio}</p>
                     </div>
                   )}
                   <div className="bg-gray-50 rounded-xl p-3">
@@ -1007,8 +1012,8 @@ export default function MiPortal() {
                   </div>
                 )}
                 {comprobanteModal.mensaje && (
-                  <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
-                    <p className="text-xs text-emerald-600 font-semibold mb-1">Mensaje</p>
+                  <div className={`${esEgresoM ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-100"} border rounded-xl p-4`}>
+                    <p className={`text-xs ${esEgresoM ? "text-red-600" : "text-emerald-600"} font-semibold mb-1`}>Mensaje</p>
                     <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{comprobanteModal.mensaje}</p>
                   </div>
                 )}
@@ -1021,15 +1026,24 @@ export default function MiPortal() {
                   </div>
                 </div>
                 <div className="flex items-center justify-between pt-1">
-                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
-                    <CheckCircle size={14} /> Revisado
-                  </span>
+                  <div className="space-y-1">
+                    {esEgresoM ? (
+                      <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-red-700 bg-red-50 border border-red-200 px-3 py-1 rounded-full">
+                        <CheckCircle size={14} /> Revisado y Aceptado por el destinatario
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
+                        <CheckCircle size={14} /> Revisado
+                      </span>
+                    )}
+                  </div>
                   <button onClick={() => setComprobanteModal(null)} className="text-sm text-gray-500 hover:text-gray-700 font-medium">Cerrar</button>
                 </div>
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Saludos de Cumpleaños */}
         {saludosCumple.length > 0 && (

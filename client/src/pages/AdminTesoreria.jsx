@@ -22,6 +22,8 @@ const CATEGORIAS_EGRESO = [
   { value: "gastos_comunes",          label: "Gastos comunes" },
   { value: "materiales_construccion", label: "Materiales construcción" },
   { value: "insumos",                 label: "Insumos" },
+  { value: "diezmo",                  label: "Diezmo" },
+  { value: "granero",                 label: "Granero" },
   { value: "otros",                   label: "Otros" },
 ];
 
@@ -37,11 +39,22 @@ const FORM_VACIO = { tipo: "ingreso", categoria: "", monto: "", descripcion: "",
 
 // Categorías de ingreso que generan comprobante digital
 const CATEGORIAS_CON_COMPROBANTE = ["cuotas_diezmos", "otros"];
+// Categorías de egreso que generan comprobante digital
+const CATEGORIAS_CON_COMPROBANTE_EGRESO = ["diezmo", "granero", "otros"];
 
-const CONCEPTO_LABELS_COMP = { cuotas_diezmos: "Cuotas / Diezmos", otros: "Otros" };
+const CONCEPTO_LABELS_COMP = { cuotas_diezmos: "Cuotas / Diezmos", otros: "Otros", diezmo: "Diezmo", granero: "Granero" };
 
 const mensajeDefecto = (concepto, nombreMiembro) =>
   `Estimado/a ${nombreMiembro},\n\nLa iglesia Misión Pentecostés Templo Vida Nueva, a través de su Tesorera, nuestra hna. Priscilla Vásquez Núñez, acredita que Ud. ha realizado un aporte en dinero por concepto de ${CONCEPTO_LABELS_COMP[concepto] || concepto}.\n\nSu donación es bien recibida y se agradece profundamente su cooperación. Que Dios le bendiga grandemente.\n\n"El que siembra escasamente, también segará escasamente; y el que siembra generosamente, generosamente también segará." — 2 Corintios 9:6`;
+
+const TIPO_PAGO_LABELS = { efectivo: "Efectivo", transferencia: "Transferencia online", deposito: "Depósito en banco" };
+
+const mensajeDefectoEgreso = (concepto, nombreMiembro, tipoPago, monto, detalle) => {
+  const tipoPagoLabel = TIPO_PAGO_LABELS[tipoPago] || tipoPago;
+  const montoFmt = monto ? `$${Math.round(parseFloat(monto)).toLocaleString("es-CL")}` : "[Monto]";
+  const categoriaLabel = concepto === "otros" && detalle ? detalle : (CONCEPTO_LABELS_COMP[concepto] || concepto);
+  return `Estimado/a ${nombreMiembro},\n\nLa iglesia Misión Pentecostés Templo Vida Nueva, a través de su Tesorera, nuestra hna. Priscilla Vásquez Núñez, acredita que le ha entregado a Ud. un monto en ${tipoPagoLabel} equivalente a ${montoFmt}, correspondiente a ${categoriaLabel}.\n\nSu revisión y/o firma de este comprobante certifica su validez.\n\n"Pero todo debe hacerse de una manera apropiada y con orden." — 1 Corintios 14:40`;
+};
 
 const FORM_COMP_VACIO = { miembro_id: "", tipo_pago: "efectivo", mensaje: "" };
 
@@ -293,9 +306,13 @@ export default function AdminTesoreria() {
     const W = 210;
     const margin = 20;
     let y = 20;
+    const esEgreso = c.folio?.startsWith("E-");
+    // Color primario: rojo para egreso, verde para ingreso
+    const [cr, cg, cb] = esEgreso ? [220, 38, 38] : [5, 150, 105];
+    const [bgR, bgG, bgB] = esEgreso ? [254, 242, 242] : [240, 253, 244];
 
-    // Cabecera verde
-    doc.setFillColor(5, 150, 105);
+    // Cabecera
+    doc.setFillColor(cr, cg, cb);
     doc.rect(0, 0, W, 28, "F");
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
@@ -319,7 +336,7 @@ export default function AdminTesoreria() {
     doc.setFontSize(13);
     doc.setFont("helvetica", "bold");
     doc.text(`${c.miembro_nombre} ${c.miembro_apellido}`, margin, y);
-    doc.setTextColor(5, 150, 105);
+    doc.setTextColor(cr, cg, cb);
     doc.text(FMT(c.monto), W - margin, y, { align: "right" });
     y += 10;
 
@@ -361,11 +378,11 @@ export default function AdminTesoreria() {
 
     // Mensaje
     if (c.mensaje) {
-      doc.setFillColor(240, 253, 244);
+      doc.setFillColor(bgR, bgG, bgB);
       const msgLines = doc.splitTextToSize(c.mensaje, W - margin * 2 - 8);
       const boxH = msgLines.length * 5 + 10;
       doc.roundedRect(margin, y, W - margin * 2, boxH, 3, 3, "F");
-      doc.setTextColor(5, 150, 105);
+      doc.setTextColor(cr, cg, cb);
       doc.setFontSize(8);
       doc.setFont("helvetica", "bold");
       doc.text("Mensaje al miembro", margin + 4, y + 6);
@@ -410,6 +427,28 @@ export default function AdminTesoreria() {
     doc.text("Firma Tesorero/a:", W / 2 + 12, y + 5, { align: "center" });
     doc.setFont("helvetica", "normal");
     doc.text("Priscilla Vásquez Núñez", W / 2 + 12, y + 10, { align: "center" });
+
+    // Sección firma destinatario (solo egresos)
+    if (esEgreso) {
+      y += 20;
+      doc.setDrawColor(cr, cg, cb);
+      doc.setFillColor(bgR, bgG, bgB);
+      doc.roundedRect(margin, y, W - margin * 2, 28, 3, 3, "FD");
+      doc.setTextColor(cr, cg, cb);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("NOMBRE Y FIRMA DEL DESTINATARIO", margin + 4, y + 6);
+      // Línea nombre
+      doc.setDrawColor(180, 180, 180);
+      doc.setTextColor(150, 150, 150);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text("Nombre:", margin + 4, y + 13);
+      doc.line(margin + 22, y + 13, W - margin - 4, y + 13);
+      // Línea firma
+      doc.text("Firma:", margin + 4, y + 22);
+      doc.line(margin + 18, y + 22, (W - margin * 2) / 2 + margin, y + 22);
+    }
 
     doc.save(`Comprobante-${c.folio || c.id}.pdf`);
   };
@@ -461,13 +500,18 @@ export default function AdminTesoreria() {
       .catch(() => {});
   }, []); // eslint-disable-line
 
-  // Auto-generar mensaje cuando cambia miembro o categoría (comprobante integrado)
+  // Auto-generar mensaje cuando cambia miembro, categoría, tipo de pago, monto o detalle
   useEffect(() => {
     if (!formComp.miembro_id) return;
     const m = miembros.find(m => String(m.id) === String(formComp.miembro_id));
     if (!m) return;
-    setFormComp(p => ({ ...p, mensaje: mensajeDefecto(form.categoria, `${m.nombre} ${m.apellido}`) }));
-  }, [formComp.miembro_id, form.categoria, miembros]); // eslint-disable-line
+    const nombreMiembro = `${m.nombre} ${m.apellido}`;
+    if (tabActiva === "egreso" && CATEGORIAS_CON_COMPROBANTE_EGRESO.includes(form.categoria)) {
+      setFormComp(p => ({ ...p, mensaje: mensajeDefectoEgreso(form.categoria, nombreMiembro, p.tipo_pago, form.monto, form.notas) }));
+    } else {
+      setFormComp(p => ({ ...p, mensaje: mensajeDefecto(form.categoria, nombreMiembro) }));
+    }
+  }, [formComp.miembro_id, form.categoria, formComp.tipo_pago, form.monto, form.notas, tabActiva, miembros]); // eslint-disable-line
 
   useEffect(() => {
     if (tieneAcceso) {
@@ -486,7 +530,7 @@ export default function AdminTesoreria() {
   const handleForm = (campo, valor) => {
     setForm(p => ({ ...p, [campo]: valor }));
     // Si cambia la categoría y ya no aplica comprobante, limpiar formComp
-    if (campo === "categoria" && !CATEGORIAS_CON_COMPROBANTE.includes(valor)) {
+    if (campo === "categoria" && !CATEGORIAS_CON_COMPROBANTE.includes(valor) && !CATEGORIAS_CON_COMPROBANTE_EGRESO.includes(valor)) {
       setFormComp(FORM_COMP_VACIO);
     }
   };
@@ -503,7 +547,8 @@ export default function AdminTesoreria() {
     if (tabActiva === "ingreso" && !form.tipo_culto && !CATEGORIAS_CON_COMPROBANTE.includes(form.categoria)) { setMensaje({ tipo: "error", texto: "Selecciona el tipo de ingreso" }); return; }
 
     const emiteComprobante = tabActiva === "ingreso" && CATEGORIAS_CON_COMPROBANTE.includes(form.categoria);
-    if (emiteComprobante && !formComp.miembro_id) {
+    const emiteComprobanteEgreso = tabActiva === "egreso" && CATEGORIAS_CON_COMPROBANTE_EGRESO.includes(form.categoria);
+    if ((emiteComprobante || emiteComprobanteEgreso) && !formComp.miembro_id) {
       setMensaje({ tipo: "error", texto: "Selecciona el miembro para emitir el comprobante" }); return;
     }
 
@@ -524,7 +569,7 @@ export default function AdminTesoreria() {
       if (!res.ok) throw new Error((await res.json()).error || "Error");
 
       // Emitir comprobante digital si la categoría lo requiere
-      if (emiteComprobante) {
+      if (emiteComprobante || emiteComprobanteEgreso) {
         const movData = await res.json();
         const compRes = await fetch(`${API}/api/tesoreria/comprobantes`, {
           method: "POST",
@@ -538,11 +583,13 @@ export default function AdminTesoreria() {
             mensaje: formComp.mensaje?.trim() || null,
             movimiento_id: movData.id,
             notas: form.notas?.trim() || null,
+            tipo_comprobante: emiteComprobanteEgreso ? "egreso" : "ingreso",
           }),
         });
         const compData = await compRes.json();
         const folio = compData.folio || "";
-        setMensaje({ tipo: "ok", texto: `Ingreso registrado y comprobante emitido${folio ? ` (${folio})` : ""}.` });
+        const tipoLabel = emiteComprobanteEgreso ? "Egreso" : "Ingreso";
+        setMensaje({ tipo: "ok", texto: `${tipoLabel} registrado y comprobante emitido${folio ? ` (${folio})` : ""}.` });
         cargarComprobantes();
       } else {
         setMensaje({ tipo: "ok", texto: `${tabActiva === "ingreso" ? "Ingreso" : "Egreso"} registrado correctamente.` });
@@ -867,7 +914,7 @@ export default function AdminTesoreria() {
             </div>
 
             {/* Descripción / Tipo culto */}
-            {!CATEGORIAS_CON_COMPROBANTE.includes(form.categoria) && (
+            {!CATEGORIAS_CON_COMPROBANTE.includes(form.categoria) && !(tabActiva === "egreso" && CATEGORIAS_CON_COMPROBANTE_EGRESO.includes(form.categoria)) && (
               tabActiva === "ingreso" ? (
                 <div>
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">Descripción *</label>
@@ -979,6 +1026,62 @@ export default function AdminTesoreria() {
             </div>
           )}
 
+          {/* Campos de comprobante integrado — EGRESO (diezmo, granero, otros) */}
+          {tabActiva === "egreso" && CATEGORIAS_CON_COMPROBANTE_EGRESO.includes(form.categoria) && (
+            <div className="mt-4 border border-red-200 rounded-xl bg-red-50 p-4 space-y-4">
+              <p className="text-xs font-bold text-red-700 uppercase tracking-wide flex items-center gap-1.5">
+                <Receipt size={13} /> Comprobante digital — datos del miembro
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Miembro */}
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Miembro *</label>
+                  <select
+                    value={formComp.miembro_id}
+                    onChange={e => setFormComp(p => ({ ...p, miembro_id: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
+                  >
+                    <option value="">Seleccionar miembro...</option>
+                    {[...miembros]
+                      .sort((a, b) => a.apellido.localeCompare(b.apellido))
+                      .map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.apellido}, {m.nombre}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                {/* Tipo de pago */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Tipo de pago *</label>
+                  <select
+                    value={formComp.tipo_pago}
+                    onChange={e => setFormComp(p => ({ ...p, tipo_pago: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
+                  >
+                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia online</option>
+                    <option value="deposito">Depósito en banco</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Mensaje al miembro */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Mensaje al miembro</label>
+                <textarea
+                  rows={5}
+                  value={formComp.mensaje}
+                  onChange={e => setFormComp(p => ({ ...p, mensaje: e.target.value }))}
+                  placeholder="El mensaje se genera automáticamente al seleccionar el miembro..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none bg-white"
+                />
+              </div>
+            </div>
+          )}
+
           {mensaje && (
             <p className={`text-sm mt-3 font-medium ${mensaje.tipo === "ok" ? "text-emerald-600" : "text-red-600"}`}>
               {mensaje.tipo === "ok" ? "✓" : "✗"} {mensaje.texto}
@@ -993,7 +1096,8 @@ export default function AdminTesoreria() {
             <PlusCircle size={16} />
             {guardando
               ? "Guardando..."
-              : tabActiva === "ingreso" && CATEGORIAS_CON_COMPROBANTE.includes(form.categoria)
+              : (tabActiva === "ingreso" && CATEGORIAS_CON_COMPROBANTE.includes(form.categoria)) ||
+                (tabActiva === "egreso" && CATEGORIAS_CON_COMPROBANTE_EGRESO.includes(form.categoria))
                 ? "Registrar y Emitir Comprobante"
                 : `Registrar ${tabActiva === "ingreso" ? "ingreso" : "egreso"}`}
           </button>
@@ -1100,12 +1204,12 @@ export default function AdminTesoreria() {
                   {comprobantes.map(c => (
                     <tr
                       key={c.id}
-                      className="hover:bg-emerald-50 cursor-pointer transition"
+                      className={`cursor-pointer transition ${c.folio?.startsWith("E-") ? "hover:bg-red-50" : "hover:bg-emerald-50"}`}
                       onClick={() => setComprobanteDetalle(c)}
                     >
                       <td className="py-2.5 pr-3 whitespace-nowrap">
                         {c.folio ? (
-                          <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">{c.folio}</span>
+                          <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded border ${c.folio.startsWith("E-") ? "text-red-700 bg-red-50 border-red-200" : "text-emerald-700 bg-emerald-50 border-emerald-200"}`}>{c.folio}</span>
                         ) : <span className="text-gray-300 text-xs">—</span>}
                       </td>
                       <td className="py-2.5 pr-3 text-gray-600 whitespace-nowrap">
@@ -1117,7 +1221,7 @@ export default function AdminTesoreria() {
                       <td className="py-2.5 pr-3 text-gray-600">
                         {c.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : c.concepto}
                       </td>
-                      <td className="py-2.5 pr-3 text-right font-semibold text-emerald-700">
+                      <td className={`py-2.5 pr-3 text-right font-semibold ${c.folio?.startsWith("E-") ? "text-red-700" : "text-emerald-700"}`}>
                         {FMT(c.monto)}
                       </td>
                       <td className="py-2.5 pr-3 text-gray-500 text-xs capitalize">
@@ -1125,8 +1229,8 @@ export default function AdminTesoreria() {
                       </td>
                       <td className="py-2.5 pr-3 text-center">
                         {c.estado === "revisado" ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                            <CheckCircle size={11} /> Revisado
+                          <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full border ${c.folio?.startsWith("E-") ? "text-red-700 bg-red-50 border-red-200" : "text-emerald-700 bg-emerald-50 border-emerald-200"}`}>
+                            <CheckCircle size={11} /> {c.folio?.startsWith("E-") ? "Aceptado" : "Revisado"}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
@@ -1170,25 +1274,27 @@ export default function AdminTesoreria() {
         />
       )}
 
-      {comprobanteDetalle && (
+      {comprobanteDetalle && (() => {
+        const esEgresoComp = comprobanteDetalle.folio?.startsWith("E-");
+        return (
         <div
           className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setComprobanteDetalle(null); }}
         >
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
             {/* Header */}
-            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between shrink-0">
+            <div className={`${esEgresoComp ? "bg-red-600" : "bg-emerald-600"} px-6 py-4 flex items-center justify-between shrink-0`}>
               <div className="flex items-center gap-3">
                 <Receipt size={18} className="text-white" />
                 <div>
                   <p className="text-white font-bold text-base leading-tight">Comprobante digital</p>
                   <div className="flex items-center gap-2">
                     {comprobanteDetalle.folio && (
-                      <span className="font-mono text-xs font-bold text-emerald-900 bg-white/90 px-2 py-0.5 rounded">
+                      <span className={`font-mono text-xs font-bold ${esEgresoComp ? "text-red-900" : "text-emerald-900"} bg-white/90 px-2 py-0.5 rounded`}>
                         {comprobanteDetalle.folio}
                       </span>
                     )}
-                    <p className="text-emerald-200 text-xs">
+                    <p className={`${esEgresoComp ? "text-red-200" : "text-emerald-200"} text-xs`}>
                       {comprobanteDetalle.fecha
                         ? String(comprobanteDetalle.fecha).split("T")[0].split("-").reverse().join("/")
                         : ""}
@@ -1216,16 +1322,16 @@ export default function AdminTesoreria() {
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-gray-500 uppercase tracking-wide">Monto</p>
-                  <p className="text-2xl font-bold text-emerald-700">{FMT(comprobanteDetalle.monto)}</p>
+                  <p className={`text-2xl font-bold ${esEgresoComp ? "text-red-700" : "text-emerald-700"}`}>{FMT(comprobanteDetalle.monto)}</p>
                 </div>
               </div>
 
               {/* Detalles */}
               <div className="grid grid-cols-2 gap-3">
                 {comprobanteDetalle.folio && (
-                  <div className="bg-emerald-50 rounded-xl p-3 col-span-2">
+                  <div className={`${esEgresoComp ? "bg-red-50" : "bg-emerald-50"} rounded-xl p-3 col-span-2`}>
                     <p className="text-xs text-gray-400 mb-0.5">Nº Comprobante</p>
-                    <p className="font-mono text-base font-bold text-emerald-700">{comprobanteDetalle.folio}</p>
+                    <p className={`font-mono text-base font-bold ${esEgresoComp ? "text-red-700" : "text-emerald-700"}`}>{comprobanteDetalle.folio}</p>
                   </div>
                 )}
                 <div className="bg-gray-50 rounded-xl p-3">
@@ -1254,8 +1360,8 @@ export default function AdminTesoreria() {
 
               {/* Mensaje */}
               {comprobanteDetalle.mensaje && (
-                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
-                  <p className="text-xs text-emerald-600 font-semibold mb-1">Mensaje enviado al miembro</p>
+                <div className={`${esEgresoComp ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-100"} border rounded-xl p-4`}>
+                  <p className={`text-xs ${esEgresoComp ? "text-red-600" : "text-emerald-600"} font-semibold mb-1`}>Mensaje enviado al miembro</p>
                   <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
                     {comprobanteDetalle.mensaje}
                   </p>
@@ -1284,9 +1390,17 @@ export default function AdminTesoreria() {
               <div className="flex items-center justify-between pt-1">
                 <div>
                   {comprobanteDetalle.estado === "revisado" ? (
-                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
-                      <CheckCircle size={14} /> Revisado por el miembro
-                    </span>
+                    <div className="space-y-1">
+                      {esEgresoComp ? (
+                        <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-red-700 bg-red-50 border border-red-200 px-3 py-1 rounded-full">
+                          <CheckCircle size={14} /> Revisado y Aceptado por el destinatario
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
+                          <CheckCircle size={14} /> Revisado por el miembro
+                        </span>
+                      )}
+                    </div>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
                       <Clock size={14} /> Pendiente de revisión
@@ -1331,7 +1445,8 @@ export default function AdminTesoreria() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {editando && formEdit && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) setEditando(null); }}>
