@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+@media print {
+  body > * { display: none !important; }
+  #comprobante-print { display: block !important; }
+  #comprobante-print { position: fixed; inset: 0; background: white; padding: 32px; font-family: 'Nunito', sans-serif; color: #111; }
+  #comprobante-print * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
 @layer base {
   body {
     font-family: 'Nunito', ui-sans-serif, system-ui, sans-serif;

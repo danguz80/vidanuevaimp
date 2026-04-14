@@ -308,6 +308,7 @@ export default function MiPortal() {
   // Comprobantes de tesorería
   const [comprobantes, setComprobantes] = useState([]);
   const [marcandoRevisado, setMarcandoRevisado] = useState(null);
+  const [comprobanteModal, setComprobanteModal] = useState(null);
   const [togglingVisibilidad, setTogglingVisibilidad] = useState(null);
 
   useEffect(() => {
@@ -840,18 +841,20 @@ export default function MiPortal() {
               <Receipt size={14} className="text-emerald-600" /> Comprobantes de Tesorería
             </h2>
             <div className="space-y-3">
-              {comprobantes.map(c => (
+              {/* Pendientes — expandidos con firma */}
+              {comprobantes.filter(c => c.estado !== "revisado").map(c => (
                 <div
                   key={c.id}
-                  className={`rounded-xl border p-4 ${
-                    c.estado === "revisado"
-                      ? "bg-gray-50 border-gray-200"
-                      : "bg-emerald-50 border-emerald-200"
-                  }`}
+                  className="rounded-xl border p-4 bg-emerald-50 border-emerald-200"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {c.folio && (
+                          <span className="font-mono text-xs font-bold text-emerald-800 bg-white border border-emerald-300 px-2 py-0.5 rounded">
+                            {c.folio}
+                          </span>
+                        )}
                         <p className="font-bold text-base text-emerald-700">
                           ${Number(c.monto).toLocaleString("es-CL")}
                         </p>
@@ -869,24 +872,161 @@ export default function MiPortal() {
                       </p>
                     </div>
                     <div className="shrink-0 text-right">
-                      {c.estado === "revisado" ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
-                          <CheckCircle size={12} /> Revisado
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => marcarRevisado(c.id)}
-                          disabled={marcandoRevisado === c.id}
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-full transition disabled:opacity-50"
-                        >
-                          {marcandoRevisado === c.id ? <span className="animate-spin">⏳</span> : <Clock size={12} />}
-                          {marcandoRevisado === c.id ? "..." : "Marcar revisado"}
-                        </button>
-                      )}
+                      <button
+                        onClick={() => marcarRevisado(c.id)}
+                        disabled={marcandoRevisado === c.id}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-full transition disabled:opacity-50"
+                      >
+                        {marcandoRevisado === c.id ? <span className="animate-spin">⏳</span> : <Clock size={12} />}
+                        {marcandoRevisado === c.id ? "..." : "Marcar revisado"}
+                      </button>
+                    </div>
+                  </div>
+                  {/* Firma y Timbre */}
+                  <div className="flex items-center justify-center gap-6 pt-3 mt-2 border-t border-gray-200">
+                    <img
+                      src="/Timbre%20iglesia%20sin%20fondo.png"
+                      alt="Timbre Iglesia"
+                      className="h-16 w-16 object-contain opacity-80 shrink-0"
+                    />
+                    <div className="flex flex-col items-center shrink-0">
+                      <img
+                        src="/Firma%20Pri.png"
+                        alt="Firma Tesorera"
+                        className="h-40 w-32 object-contain mb-0.5"
+                      />
+                      <p className="text-xs font-semibold text-gray-500">Firma Tesorero/a:</p>
+                      <p className="text-xs text-gray-600 font-medium">Priscilla Vásquez Núñez</p>
                     </div>
                   </div>
                 </div>
               ))}
+
+              {/* Revisados — contraídos en lista */}
+              {comprobantes.filter(c => c.estado === "revisado").length > 0 && (
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4 py-2 bg-gray-50 border-b border-gray-200">
+                    Historial revisado
+                  </p>
+                  <div className="divide-y divide-gray-100">
+                    {comprobantes.filter(c => c.estado === "revisado").map(c => (
+                      <div key={c.id} className="flex items-center justify-between px-4 py-2.5 gap-3 cursor-pointer hover:bg-gray-50 transition" onClick={() => setComprobanteModal(c)}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          {c.folio && (
+                            <span className="font-mono text-xs font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">
+                              {c.folio}
+                            </span>
+                          )}
+                          <span className="text-sm font-semibold text-gray-700 shrink-0">
+                            ${Number(c.monto).toLocaleString("es-CL")}
+                          </span>
+                          <span className="text-xs text-gray-400 truncate">
+                            {c.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : c.concepto}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs text-gray-400">
+                            {c.fecha ? String(c.fecha).split("T")[0].split("-").reverse().join("/") : ""}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                            <CheckCircle size={11} /> Revisado
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Modal detalle comprobante revisado */}
+        {comprobanteModal && (
+          <div
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={e => { if (e.target === e.currentTarget) setComprobanteModal(null); }}
+          >
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <Receipt size={18} className="text-white" />
+                  <div>
+                    <p className="text-white font-bold text-base leading-tight">Comprobante digital</p>
+                    <div className="flex items-center gap-2">
+                      {comprobanteModal.folio && (
+                        <span className="font-mono text-xs font-bold text-emerald-900 bg-white/90 px-2 py-0.5 rounded">
+                          {comprobanteModal.folio}
+                        </span>
+                      )}
+                      <p className="text-emerald-200 text-xs">
+                        {comprobanteModal.fecha ? String(comprobanteModal.fecha).split("T")[0].split("-").reverse().join("/") : ""}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => setComprobanteModal(null)} className="text-white/80 hover:text-white">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wide">Miembro</p>
+                    <p className="font-semibold text-gray-800">{perfil?.nombre} {perfil?.apellido}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide">Monto</p>
+                    <p className="text-2xl font-bold text-emerald-700">${Number(comprobanteModal.monto).toLocaleString("es-CL")}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {comprobanteModal.folio && (
+                    <div className="bg-emerald-50 rounded-xl p-3 col-span-2">
+                      <p className="text-xs text-gray-400 mb-0.5">Nº Comprobante</p>
+                      <p className="font-mono text-base font-bold text-emerald-700">{comprobanteModal.folio}</p>
+                    </div>
+                  )}
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-xs text-gray-400 mb-0.5">Concepto</p>
+                    <p className="text-sm font-semibold text-gray-700">
+                      {comprobanteModal.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : comprobanteModal.concepto}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-xs text-gray-400 mb-0.5">Tipo de pago</p>
+                    <p className="text-sm font-semibold text-gray-700 capitalize">
+                      {comprobanteModal.tipo_pago === "efectivo" ? "Efectivo" : comprobanteModal.tipo_pago === "transferencia" ? "Transferencia" : "Depósito"}
+                    </p>
+                  </div>
+                </div>
+                {comprobanteModal.notas && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5">
+                    <p className="text-xs text-gray-500 font-semibold mb-0.5">Detalle</p>
+                    <p className="text-sm text-gray-700">{comprobanteModal.notas}</p>
+                  </div>
+                )}
+                {comprobanteModal.mensaje && (
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
+                    <p className="text-xs text-emerald-600 font-semibold mb-1">Mensaje</p>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{comprobanteModal.mensaje}</p>
+                  </div>
+                )}
+                <div style={{ marginTop: "4px" }} className="flex items-center justify-center gap-6 pt-2 border-t border-gray-100">
+                  <img src="/Timbre%20iglesia%20sin%20fondo.png" alt="Timbre" className="h-24 w-24 object-contain opacity-85 shrink-0" />
+                  <div className="flex flex-col items-center shrink-0">
+                    <img src="/Firma%20Pri.png" alt="Firma" className="h-48 w-36 object-contain mb-1" />
+                    <p className="text-xs font-semibold text-gray-600">Firma Tesorero/a:</p>
+                    <p className="text-xs text-gray-700 font-medium">Priscilla Vásquez Núñez</p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
+                    <CheckCircle size={14} /> Revisado
+                  </span>
+                  <button onClick={() => setComprobanteModal(null)} className="text-sm text-gray-500 hover:text-gray-700 font-medium">Cerrar</button>
+                </div>
+              </div>
             </div>
           </div>
         )}

@@ -3892,11 +3892,17 @@ const initComprobantes = async () => {
       created_at      TIMESTAMP DEFAULT NOW()
     )
   `);
+  // Secuencia de folios para comprobantes de ingreso (I-00001, I-00002, ...)
+  await pool.query(`CREATE SEQUENCE IF NOT EXISTS folio_comprobante_i_seq START 1`);
+  // Columna folio — única por comprobante, puede ser NULL en registros anteriores
+  await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS folio TEXT UNIQUE`);
+  await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS movimiento_id INTEGER REFERENCES tesoreria_movimientos(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS notas TEXT`);
 };
 
 // POST /api/tesoreria/comprobantes — crear comprobante
 app.post("/api/tesoreria/comprobantes", authenticateToken, requireTesoreriaAccess, async (req, res) => {
-  const { miembro_id, monto, concepto, tipo_pago, fecha, mensaje } = req.body;
+  const { miembro_id, monto, concepto, tipo_pago, fecha, mensaje, movimiento_id, notas } = req.body;
   if (!miembro_id) return res.status(400).json({ error: "Miembro requerido" });
   if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
   if (!concepto?.trim()) return res.status(400).json({ error: "Concepto requerido" });
@@ -3904,10 +3910,12 @@ app.post("/api/tesoreria/comprobantes", authenticateToken, requireTesoreriaAcces
   try {
     await initComprobantes();
     const result = await pool.query(
-      `INSERT INTO comprobantes_tesoreria (miembro_id, monto, concepto, tipo_pago, fecha, mensaje, creado_por)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      `INSERT INTO comprobantes_tesoreria (miembro_id, monto, concepto, tipo_pago, fecha, mensaje, creado_por, folio, movimiento_id, notas)
+       VALUES ($1, $2, $3, $4, $5, $6, $7,
+               'I-' || LPAD(nextval('folio_comprobante_i_seq')::text, 5, '0'), $8, $9)
+       RETURNING *`,
       [miembro_id, Math.round(parseFloat(monto)), concepto.trim(), tipo_pago,
-       fecha || new Date().toISOString().split("T")[0], mensaje?.trim() || null, req.user.id]
+       fecha || new Date().toISOString().split("T")[0], mensaje?.trim() || null, req.user.id, movimiento_id || null, notas?.trim() || null]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -3973,6 +3981,53 @@ app.put("/api/miembro/comprobantes/:id/revisar", authenticateMiembro, async (req
   } catch (err) {
     console.error("Error PUT revisar comprobante:", err.message);
     res.status(500).json({ error: "Error al marcar como revisado" });
+  }
+});
+
+// PUT /api/tesoreria/comprobantes/:id — editar comprobante (solo admin/tesorero)
+app.put("/api/tesoreria/comprobantes/:id", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { id } = req.params;
+  const { monto, concepto, tipo_pago, fecha, mensaje } = req.body;
+  if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
+  if (!concepto?.trim()) return res.status(400).json({ error: "Concepto requerido" });
+  if (!["efectivo","transferencia","deposito"].includes(tipo_pago)) return res.status(400).json({ error: "Tipo de pago inválido" });
+  try {
+    await initComprobantes();
+    const result = await pool.query(
+      `UPDATE comprobantes_tesoreria
+       SET monto=$1, concepto=$2, tipo_pago=$3, fecha=$4, mensaje=$5
+       WHERE id=$6 RETURNING *`,
+      [Math.round(parseFloat(monto)), concepto.trim(), tipo_pago,
+       fecha || new Date().toISOString().split("T")[0], mensaje?.trim() || null, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Comprobante no encontrado" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error PUT comprobante:", err.message);
+    res.status(500).json({ error: "Error al editar comprobante" });
+  }
+});
+
+// DELETE /api/tesoreria/comprobantes/:id — eliminar comprobante (solo admin/tesorero)
+// Al eliminar, desaparece también del portal del miembro y se borra el movimiento asociado
+app.delete("/api/tesoreria/comprobantes/:id", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await initComprobantes();
+    // Obtener el movimiento_id antes de borrar
+    const comp = await pool.query("SELECT movimiento_id FROM comprobantes_tesoreria WHERE id = $1", [id]);
+    if (comp.rows.length === 0) return res.status(404).json({ error: "Comprobante no encontrado" });
+    const movimientoId = comp.rows[0].movimiento_id;
+    // Borrar comprobante
+    await pool.query("DELETE FROM comprobantes_tesoreria WHERE id = $1", [id]);
+    // Borrar el movimiento asociado si existe
+    if (movimientoId) {
+      await pool.query("DELETE FROM tesoreria_movimientos WHERE id = $1", [movimientoId]);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error DELETE comprobante:", err.message);
+    res.status(500).json({ error: "Error al eliminar comprobante" });
   }
 });
 

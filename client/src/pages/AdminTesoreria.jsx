@@ -5,7 +5,7 @@ import AdminNav from "../components/AdminNav";
 import ModalComprobante from "../components/ModalComprobante";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { PlusCircle, Trash2, TrendingUp, TrendingDown, DollarSign, Wallet, Pencil, X, FileText, Receipt, CheckCircle, Clock } from "lucide-react";
+import { PlusCircle, Trash2, TrendingUp, TrendingDown, DollarSign, Wallet, Pencil, X, FileText, Receipt, CheckCircle, Clock, Printer } from "lucide-react";
 
 const API = import.meta.env.VITE_BACKEND_URL;
 
@@ -34,6 +34,16 @@ const mesPrevio = (mes) => {
 };
 
 const FORM_VACIO = { tipo: "ingreso", categoria: "", monto: "", descripcion: "", tipo_culto: "", notas: "", fecha: new Date().toISOString().split("T")[0] };
+
+// Categorías de ingreso que generan comprobante digital
+const CATEGORIAS_CON_COMPROBANTE = ["cuotas_diezmos", "otros"];
+
+const CONCEPTO_LABELS_COMP = { cuotas_diezmos: "Cuotas / Diezmos", otros: "Otros" };
+
+const mensajeDefecto = (concepto, nombreMiembro) =>
+  `Estimado/a ${nombreMiembro},\n\nLa iglesia Misión Pentecostés Templo Vida Nueva, a través de su Tesorera, nuestra hna. Priscilla Vásquez Núñez, acredita que Ud. ha realizado un aporte en dinero por concepto de ${CONCEPTO_LABELS_COMP[concepto] || concepto}.\n\nSu donación es bien recibida y se agradece profundamente su cooperación. Que Dios le bendiga grandemente.\n\n"El que siembra escasamente, también segará escasamente; y el que siembra generosamente, generosamente también segará." — 2 Corintios 9:6`;
+
+const FORM_COMP_VACIO = { miembro_id: "", tipo_pago: "efectivo", mensaje: "" };
 
 const MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
@@ -197,6 +207,15 @@ export default function AdminTesoreria() {
   const [comprobantes, setComprobantes] = useState([]);
   const [cargandoComprobantes, setCargandoComprobantes] = useState(false);
   const [comprobanteDetalle, setComprobanteDetalle] = useState(null);
+  const [comprobanteEditando, setComprobanteEditando] = useState(null);
+
+  // Comprobante integrado al formulario de ingreso
+  const [miembros, setMiembros] = useState([]);
+  const [formComp, setFormComp] = useState(FORM_COMP_VACIO);
+  const [comprobanteEditForm, setComprobanteEditForm] = useState(null);
+  const [guardandoComprobante, setGuardandoComprobante] = useState(false);
+  const [mensajeComprobante, setMensajeComprobante] = useState(null);
+  const [eliminandoComprobante, setEliminandoComprobante] = useState(false);
 
   const cargarComprobantes = useCallback(async () => {
     setCargandoComprobantes(true);
@@ -212,6 +231,188 @@ export default function AdminTesoreria() {
       setCargandoComprobantes(false);
     }
   }, [getToken]);
+
+  const abrirEditarComprobante = (c) => {
+    setComprobanteEditForm({
+      monto: c.monto,
+      concepto: c.concepto,
+      tipo_pago: c.tipo_pago,
+      fecha: c.fecha ? String(c.fecha).split("T")[0] : new Date().toISOString().split("T")[0],
+      mensaje: c.mensaje || "",
+    });
+    setComprobanteEditando(c);
+    setComprobanteDetalle(null);
+    setMensajeComprobante(null);
+  };
+
+  const guardarEditarComprobante = async () => {
+    if (!comprobanteEditForm.monto || isNaN(comprobanteEditForm.monto) || parseFloat(comprobanteEditForm.monto) <= 0) {
+      setMensajeComprobante({ tipo: "error", texto: "Monto inválido" });
+      return;
+    }
+    setGuardandoComprobante(true);
+    setMensajeComprobante(null);
+    try {
+      const res = await fetch(`${API}/api/tesoreria/comprobantes/${comprobanteEditando.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify(comprobanteEditForm),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Error al editar");
+      setComprobanteEditando(null);
+      setComprobanteEditForm(null);
+      cargarComprobantes();
+    } catch (e) {
+      setMensajeComprobante({ tipo: "error", texto: e.message });
+    } finally {
+      setGuardandoComprobante(false);
+    }
+  };
+
+  const eliminarComprobante = async (id) => {
+    if (!window.confirm("¿Eliminar este comprobante? Desaparecerá también del portal del miembro.")) return;
+    setEliminandoComprobante(true);
+    try {
+      const res = await fetch(`${API}/api/tesoreria/comprobantes/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Error al eliminar");
+      setComprobanteDetalle(null);
+      cargarComprobantes();
+      cargar(mesFiltro);
+    } catch (e) {
+      alert("Error al eliminar: " + e.message);
+    } finally {
+      setEliminandoComprobante(false);
+    }
+  };
+
+  const imprimirComprobante = async (c) => {
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const W = 210;
+    const margin = 20;
+    let y = 20;
+
+    // Cabecera verde
+    doc.setFillColor(5, 150, 105);
+    doc.rect(0, 0, W, 28, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("Comprobante Digital", margin, 12);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    if (c.folio) doc.text(`Folio: ${c.folio}`, margin, 20);
+    const fechaStr = c.fecha ? String(c.fecha).split("T")[0].split("-").reverse().join("/") : "";
+    doc.text(fechaStr, W - margin, 20, { align: "right" });
+    y = 38;
+
+    // Miembro y monto
+    doc.setTextColor(80, 80, 80);
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.text("MIEMBRO", margin, y);
+    doc.text("MONTO", W - margin, y, { align: "right" });
+    y += 5;
+    doc.setTextColor(20, 20, 20);
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${c.miembro_nombre} ${c.miembro_apellido}`, margin, y);
+    doc.setTextColor(5, 150, 105);
+    doc.text(FMT(c.monto), W - margin, y, { align: "right" });
+    y += 10;
+
+    // Línea separadora
+    doc.setDrawColor(220, 220, 220);
+    doc.line(margin, y, W - margin, y);
+    y += 7;
+
+    // Concepto y tipo pago
+    doc.setTextColor(80, 80, 80);
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.text("CONCEPTO", margin, y);
+    doc.text("TIPO DE PAGO", W / 2, y);
+    y += 5;
+    doc.setTextColor(20, 20, 20);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    const conceptoLabel = c.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : c.concepto;
+    const pagoLabel = c.tipo_pago === "efectivo" ? "Efectivo" : c.tipo_pago === "transferencia" ? "Transferencia" : "Depósito";
+    doc.text(conceptoLabel, margin, y);
+    doc.text(pagoLabel, W / 2, y);
+    y += 10;
+
+    // Notas/Detalle
+    if (c.notas) {
+      doc.setTextColor(80, 80, 80);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text("DETALLE", margin, y);
+      y += 5;
+      doc.setTextColor(20, 20, 20);
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      const notasLines = doc.splitTextToSize(c.notas, W - margin * 2);
+      doc.text(notasLines, margin, y);
+      y += notasLines.length * 5 + 5;
+    }
+
+    // Mensaje
+    if (c.mensaje) {
+      doc.setFillColor(240, 253, 244);
+      const msgLines = doc.splitTextToSize(c.mensaje, W - margin * 2 - 8);
+      const boxH = msgLines.length * 5 + 10;
+      doc.roundedRect(margin, y, W - margin * 2, boxH, 3, 3, "F");
+      doc.setTextColor(5, 150, 105);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("Mensaje al miembro", margin + 4, y + 6);
+      doc.setTextColor(40, 40, 40);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text(msgLines, margin + 4, y + 12);
+      y += boxH + 10;
+    }
+
+    // Firma e imágenes
+    // Timbre
+    try {
+      const timbreRes = await fetch("/Timbre%20iglesia%20sin%20fondo.png");
+      const timbreBlob = await timbreRes.blob();
+      const timbreB64 = await new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(timbreBlob);
+      });
+      doc.addImage(timbreB64, "PNG", margin, y, 32, 32);
+    } catch (_) {}
+
+    // Firma
+    try {
+      const firmaRes = await fetch("/Firma%20Pri.png");
+      const firmaBlob = await firmaRes.blob();
+      const firmaB64 = await new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(firmaBlob);
+      });
+      doc.addImage(firmaB64, "PNG", W / 2 - 10, y - 5, 50, 40);
+    } catch (_) {}
+
+    y += 38;
+    doc.setDrawColor(180, 180, 180);
+    doc.line(W / 2 - 25, y, W / 2 + 50, y);
+    doc.setTextColor(80, 80, 80);
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.text("Firma Tesorero/a:", W / 2 + 12, y + 5, { align: "center" });
+    doc.setFont("helvetica", "normal");
+    doc.text("Priscilla Vásquez Núñez", W / 2 + 12, y + 10, { align: "center" });
+
+    doc.save(`Comprobante-${c.folio || c.id}.pdf`);
+  };
 
   const cargar = useCallback(async (mes) => {
     setCargando(true);
@@ -251,6 +452,23 @@ export default function AdminTesoreria() {
     }
   }, [getToken]);
 
+  // Cargar miembros activos para el selector del comprobante integrado
+  useEffect(() => {
+    if (!tieneAcceso) return;
+    fetch(`${API}/api/miembros`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setMiembros(data.filter(m => m.estado === "activo")); })
+      .catch(() => {});
+  }, []); // eslint-disable-line
+
+  // Auto-generar mensaje cuando cambia miembro o categoría (comprobante integrado)
+  useEffect(() => {
+    if (!formComp.miembro_id) return;
+    const m = miembros.find(m => String(m.id) === String(formComp.miembro_id));
+    if (!m) return;
+    setFormComp(p => ({ ...p, mensaje: mensajeDefecto(form.categoria, `${m.nombre} ${m.apellido}`) }));
+  }, [formComp.miembro_id, form.categoria, miembros]); // eslint-disable-line
+
   useEffect(() => {
     if (tieneAcceso) {
       cargar(mesActual);
@@ -265,17 +483,30 @@ export default function AdminTesoreria() {
     cargarSaldoAnterior(e.target.value);
   };
 
-  const handleForm = (campo, valor) => setForm(p => ({ ...p, [campo]: valor }));
+  const handleForm = (campo, valor) => {
+    setForm(p => ({ ...p, [campo]: valor }));
+    // Si cambia la categoría y ya no aplica comprobante, limpiar formComp
+    if (campo === "categoria" && !CATEGORIAS_CON_COMPROBANTE.includes(valor)) {
+      setFormComp(FORM_COMP_VACIO);
+    }
+  };
 
   const abrirTab = (tab) => {
     setTabActiva(tab);
     setForm(p => ({ ...p, tipo: tab, categoria: "", tipo_culto: "", descripcion: "" }));
+    setFormComp(FORM_COMP_VACIO);
   };
 
   const guardar = async () => {
     if (!form.categoria) { setMensaje({ tipo: "error", texto: "Selecciona una categoría" }); return; }
     if (!form.monto || isNaN(form.monto) || parseFloat(form.monto) <= 0) { setMensaje({ tipo: "error", texto: "Ingresa un monto válido" }); return; }
-    if (tabActiva === "ingreso" && !form.tipo_culto) { setMensaje({ tipo: "error", texto: "Selecciona el tipo de ingreso" }); return; }
+    if (tabActiva === "ingreso" && !form.tipo_culto && !CATEGORIAS_CON_COMPROBANTE.includes(form.categoria)) { setMensaje({ tipo: "error", texto: "Selecciona el tipo de ingreso" }); return; }
+
+    const emiteComprobante = tabActiva === "ingreso" && CATEGORIAS_CON_COMPROBANTE.includes(form.categoria);
+    if (emiteComprobante && !formComp.miembro_id) {
+      setMensaje({ tipo: "error", texto: "Selecciona el miembro para emitir el comprobante" }); return;
+    }
+
     setGuardando(true);
     setMensaje(null);
     try {
@@ -291,8 +522,34 @@ export default function AdminTesoreria() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Error");
+
+      // Emitir comprobante digital si la categoría lo requiere
+      if (emiteComprobante) {
+        const movData = await res.json();
+        const compRes = await fetch(`${API}/api/tesoreria/comprobantes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+          body: JSON.stringify({
+            miembro_id: formComp.miembro_id,
+            monto: Math.round(parseFloat(form.monto)),
+            concepto: form.categoria,
+            tipo_pago: formComp.tipo_pago,
+            fecha: form.fecha,
+            mensaje: formComp.mensaje?.trim() || null,
+            movimiento_id: movData.id,
+            notas: form.notas?.trim() || null,
+          }),
+        });
+        const compData = await compRes.json();
+        const folio = compData.folio || "";
+        setMensaje({ tipo: "ok", texto: `Ingreso registrado y comprobante emitido${folio ? ` (${folio})` : ""}.` });
+        cargarComprobantes();
+      } else {
+        setMensaje({ tipo: "ok", texto: `${tabActiva === "ingreso" ? "Ingreso" : "Egreso"} registrado correctamente.` });
+      }
+
       setForm({ ...FORM_VACIO, tipo: tabActiva, fecha: new Date().toISOString().split("T")[0] });
-      setMensaje({ tipo: "ok", texto: `${tabActiva === "ingreso" ? "Ingreso" : "Egreso"} registrado correctamente.` });
+      setFormComp(FORM_COMP_VACIO);
       cargar(mesFiltro);
     } catch (e) {
       setMensaje({ tipo: "error", texto: e.message });
@@ -549,15 +806,8 @@ export default function AdminTesoreria() {
 
         {/* Formulario nuevo movimiento */}
         <div className="bg-white rounded-xl shadow p-6">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div className="mb-4">
             <h2 className="text-sm font-bold text-gray-600 uppercase tracking-wide">Registrar movimiento</h2>
-            <button
-              onClick={() => setModalComprobante(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700 text-xs font-semibold rounded-lg transition-colors"
-            >
-              <Receipt size={14} />
-              Generar comprobante digital
-            </button>
           </div>
 
           {/* Tabs ingreso / egreso */}
@@ -617,36 +867,38 @@ export default function AdminTesoreria() {
             </div>
 
             {/* Descripción / Tipo culto */}
-            {tabActiva === "ingreso" ? (
-              <div>
-                <label className="text-xs font-semibold text-gray-600 mb-1 block">Descripción *</label>
-                <select
-                  value={form.tipo_culto}
-                  onChange={e => handleForm("tipo_culto", e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                >
-                  <option value="">Seleccionar...</option>
-                  <option value="culto_domingo">Culto Domingo</option>
-                  <option value="culto_jueves">Culto Jueves</option>
-                  <option value="otro">Otro</option>
-                </select>
-              </div>
-            ) : (
-              <div>
-                <label className="text-xs font-semibold text-gray-600 mb-1 block">Descripción (opcional)</label>
-                <input
-                  type="text"
-                  value={form.descripcion}
-                  onChange={e => handleForm("descripcion", e.target.value)}
-                  placeholder="Nota adicional..."
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                />
-              </div>
+            {!CATEGORIAS_CON_COMPROBANTE.includes(form.categoria) && (
+              tabActiva === "ingreso" ? (
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Descripción *</label>
+                  <select
+                    value={form.tipo_culto}
+                    onChange={e => handleForm("tipo_culto", e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  >
+                    <option value="">Seleccionar...</option>
+                    <option value="culto_domingo">Culto Domingo</option>
+                    <option value="culto_jueves">Culto Jueves</option>
+                    <option value="otro">Otro</option>
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Descripción (opcional)</label>
+                  <input
+                    type="text"
+                    value={form.descripcion}
+                    onChange={e => handleForm("descripcion", e.target.value)}
+                    placeholder="Nota adicional..."
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  />
+                </div>
+              )
             )}
           </div>
 
           {/* Detalle libre cuando se elige "Otro" */}
-          {tabActiva === "ingreso" && form.tipo_culto === "otro" && (
+          {tabActiva === "ingreso" && form.tipo_culto === "otro" && !CATEGORIAS_CON_COMPROBANTE.includes(form.categoria) && (
             <div className="mt-3">
               <label className="text-xs font-semibold text-gray-600 mb-1 block">Detalle (opcional)</label>
               <input
@@ -671,6 +923,62 @@ export default function AdminTesoreria() {
             />
           </div>
 
+          {/* Campos de comprobante integrado (cuotas/diezmos u Otros) */}
+          {tabActiva === "ingreso" && CATEGORIAS_CON_COMPROBANTE.includes(form.categoria) && (
+            <div className="mt-4 border border-emerald-200 rounded-xl bg-emerald-50 p-4 space-y-4">
+              <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide flex items-center gap-1.5">
+                <Receipt size={13} /> Comprobante digital — datos del miembro
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Miembro */}
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Miembro *</label>
+                  <select
+                    value={formComp.miembro_id}
+                    onChange={e => setFormComp(p => ({ ...p, miembro_id: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
+                  >
+                    <option value="">Seleccionar miembro...</option>
+                    {[...miembros]
+                      .sort((a, b) => a.apellido.localeCompare(b.apellido))
+                      .map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.apellido}, {m.nombre}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                {/* Tipo de pago */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Tipo de pago *</label>
+                  <select
+                    value={formComp.tipo_pago}
+                    onChange={e => setFormComp(p => ({ ...p, tipo_pago: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
+                  >
+                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia online</option>
+                    <option value="deposito">Depósito en banco</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Mensaje al miembro */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Mensaje al miembro</label>
+                <textarea
+                  rows={5}
+                  value={formComp.mensaje}
+                  onChange={e => setFormComp(p => ({ ...p, mensaje: e.target.value }))}
+                  placeholder="El mensaje se genera automáticamente al seleccionar el miembro..."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-none bg-white"
+                />
+              </div>
+            </div>
+          )}
+
           {mensaje && (
             <p className={`text-sm mt-3 font-medium ${mensaje.tipo === "ok" ? "text-emerald-600" : "text-red-600"}`}>
               {mensaje.tipo === "ok" ? "✓" : "✗"} {mensaje.texto}
@@ -683,7 +991,11 @@ export default function AdminTesoreria() {
             className={`mt-4 flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white transition-colors disabled:opacity-60 ${tabActiva === "ingreso" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-500 hover:bg-red-600"}`}
           >
             <PlusCircle size={16} />
-            {guardando ? "Guardando..." : `Registrar ${tabActiva === "ingreso" ? "ingreso" : "egreso"}`}
+            {guardando
+              ? "Guardando..."
+              : tabActiva === "ingreso" && CATEGORIAS_CON_COMPROBANTE.includes(form.categoria)
+                ? "Registrar y Emitir Comprobante"
+                : `Registrar ${tabActiva === "ingreso" ? "ingreso" : "egreso"}`}
           </button>
         </div>
 
@@ -774,12 +1086,14 @@ export default function AdminTesoreria() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs text-gray-500 uppercase border-b">
+                    <th className="pb-2 text-left pr-3">Folio</th>
                     <th className="pb-2 text-left pr-3">Fecha</th>
                     <th className="pb-2 text-left pr-3">Miembro</th>
                     <th className="pb-2 text-left pr-3">Concepto</th>
                     <th className="pb-2 text-right pr-3">Monto</th>
                     <th className="pb-2 text-left pr-3">Pago</th>
-                    <th className="pb-2 text-center">Estado</th>
+                    <th className="pb-2 text-center pr-3">Estado</th>
+                    <th className="pb-2 text-center">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -789,6 +1103,11 @@ export default function AdminTesoreria() {
                       className="hover:bg-emerald-50 cursor-pointer transition"
                       onClick={() => setComprobanteDetalle(c)}
                     >
+                      <td className="py-2.5 pr-3 whitespace-nowrap">
+                        {c.folio ? (
+                          <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">{c.folio}</span>
+                        ) : <span className="text-gray-300 text-xs">—</span>}
+                      </td>
                       <td className="py-2.5 pr-3 text-gray-600 whitespace-nowrap">
                         {c.fecha ? String(c.fecha).split("T")[0].split("-").reverse().join("/") : "—"}
                       </td>
@@ -804,7 +1123,7 @@ export default function AdminTesoreria() {
                       <td className="py-2.5 pr-3 text-gray-500 text-xs capitalize">
                         {c.tipo_pago === "efectivo" ? "Efectivo" : c.tipo_pago === "transferencia" ? "Transferencia" : "Depósito"}
                       </td>
-                      <td className="py-2.5 text-center">
+                      <td className="py-2.5 pr-3 text-center">
                         {c.estado === "revisado" ? (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                             <CheckCircle size={11} /> Revisado
@@ -814,6 +1133,25 @@ export default function AdminTesoreria() {
                             <Clock size={11} /> Pendiente
                           </span>
                         )}
+                      </td>
+                      <td className="py-2.5 text-center" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => abrirEditarComprobante(c)}
+                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                            title="Editar"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            onClick={() => eliminarComprobante(c.id)}
+                            disabled={eliminandoComprobante}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition disabled:opacity-50"
+                            title="Eliminar"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -837,18 +1175,25 @@ export default function AdminTesoreria() {
           className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setComprobanteDetalle(null); }}
         >
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
             {/* Header */}
-            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between">
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <Receipt size={18} className="text-white" />
                 <div>
                   <p className="text-white font-bold text-base leading-tight">Comprobante digital</p>
-                  <p className="text-emerald-200 text-xs">
-                    {comprobanteDetalle.fecha
-                      ? String(comprobanteDetalle.fecha).split("T")[0].split("-").reverse().join("/")
-                      : ""}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    {comprobanteDetalle.folio && (
+                      <span className="font-mono text-xs font-bold text-emerald-900 bg-white/90 px-2 py-0.5 rounded">
+                        {comprobanteDetalle.folio}
+                      </span>
+                    )}
+                    <p className="text-emerald-200 text-xs">
+                      {comprobanteDetalle.fecha
+                        ? String(comprobanteDetalle.fecha).split("T")[0].split("-").reverse().join("/")
+                        : ""}
+                    </p>
+                  </div>
                 </div>
               </div>
               <button
@@ -860,7 +1205,7 @@ export default function AdminTesoreria() {
             </div>
 
             {/* Body */}
-            <div className="px-6 py-5 space-y-4">
+            <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
               {/* Miembro + monto */}
               <div className="flex items-center justify-between">
                 <div>
@@ -877,6 +1222,12 @@ export default function AdminTesoreria() {
 
               {/* Detalles */}
               <div className="grid grid-cols-2 gap-3">
+                {comprobanteDetalle.folio && (
+                  <div className="bg-emerald-50 rounded-xl p-3 col-span-2">
+                    <p className="text-xs text-gray-400 mb-0.5">Nº Comprobante</p>
+                    <p className="font-mono text-base font-bold text-emerald-700">{comprobanteDetalle.folio}</p>
+                  </div>
+                )}
                 <div className="bg-gray-50 rounded-xl p-3">
                   <p className="text-xs text-gray-400 mb-0.5">Concepto</p>
                   <p className="text-sm font-semibold text-gray-700">
@@ -893,6 +1244,14 @@ export default function AdminTesoreria() {
                 </div>
               </div>
 
+              {/* Detalle */}
+              {comprobanteDetalle.notas && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5">
+                  <p className="text-xs text-gray-500 font-semibold mb-0.5">Detalle</p>
+                  <p className="text-sm text-gray-700">{comprobanteDetalle.notas}</p>
+                </div>
+              )}
+
               {/* Mensaje */}
               {comprobanteDetalle.mensaje && (
                 <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
@@ -902,6 +1261,24 @@ export default function AdminTesoreria() {
                   </p>
                 </div>
               )}
+
+              {/* Firma y Timbre */}
+              <div style={{ marginTop: "4px" }} className="flex items-center justify-center gap-6 pt-2 border-t border-gray-100">
+                <img
+                  src="/Timbre%20iglesia%20sin%20fondo.png"
+                  alt="Timbre Iglesia"
+                  className="h-24 w-24 object-contain opacity-85 shrink-0"
+                />
+                <div className="flex flex-col items-center shrink-0">
+                  <img
+                    src="/Firma%20Pri.png"
+                    alt="Firma Tesorera"
+                    className="h-48 w-36 object-contain mb-1"
+                  />
+                  <p className="text-xs font-semibold text-gray-600">Firma Tesorero/a:</p>
+                  <p className="text-xs text-gray-700 font-medium">Priscilla Vásquez Núñez</p>
+                </div>
+              </div>
 
               {/* Estado */}
               <div className="flex items-center justify-between pt-1">
@@ -926,6 +1303,29 @@ export default function AdminTesoreria() {
                   className="text-sm text-gray-500 hover:text-gray-700 font-medium"
                 >
                   Cerrar
+                </button>
+              </div>
+
+              {/* Acciones admin/tesorero */}
+              <div className="flex gap-2 pt-2 border-t">
+                <button
+                  onClick={() => imprimirComprobante(comprobanteDetalle)}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 px-3 py-2 rounded-lg transition"
+                >
+                  <Printer size={14} /> Imprimir PDF
+                </button>
+                <button
+                  onClick={() => abrirEditarComprobante(comprobanteDetalle)}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-2 rounded-lg transition"
+                >
+                  <Pencil size={14} /> Editar
+                </button>
+                <button
+                  onClick={() => eliminarComprobante(comprobanteDetalle.id)}
+                  disabled={eliminandoComprobante}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-3 py-2 rounded-lg transition disabled:opacity-50"
+                >
+                  <Trash2 size={14} /> {eliminandoComprobante ? "Eliminando..." : "Eliminar"}
                 </button>
               </div>
             </div>
@@ -1010,6 +1410,122 @@ export default function AdminTesoreria() {
               >
                 {guardandoEdit ? "Guardando..." : "Guardar cambios"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar comprobante */}
+      {comprobanteEditando && comprobanteEditForm && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) { setComprobanteEditando(null); setComprobanteEditForm(null); } }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b">
+              <div className="flex items-center gap-2">
+                <Pencil size={18} className="text-blue-600" />
+                <h2 className="text-lg font-bold text-gray-800">Editar comprobante</h2>
+              </div>
+              <button onClick={() => { setComprobanteEditando(null); setComprobanteEditForm(null); }} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Miembro (solo lectura) */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Miembro</label>
+                <p className="text-sm font-medium text-gray-800 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                  {comprobanteEditando.miembro_apellido}, {comprobanteEditando.miembro_nombre}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {/* Concepto */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Concepto *</label>
+                  <select
+                    value={comprobanteEditForm.concepto}
+                    onChange={e => setComprobanteEditForm(p => ({ ...p, concepto: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="cuotas_diezmos">Cuotas / Diezmos</option>
+                    <option value="otros">Otros</option>
+                  </select>
+                </div>
+
+                {/* Tipo de pago */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Tipo de pago *</label>
+                  <select
+                    value={comprobanteEditForm.tipo_pago}
+                    onChange={e => setComprobanteEditForm(p => ({ ...p, tipo_pago: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia online</option>
+                    <option value="deposito">Depósito en banco</option>
+                  </select>
+                </div>
+
+                {/* Monto */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Monto (CLP) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={comprobanteEditForm.monto}
+                    onChange={e => setComprobanteEditForm(p => ({ ...p, monto: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+
+                {/* Fecha */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Fecha *</label>
+                  <input
+                    type="date"
+                    value={comprobanteEditForm.fecha}
+                    onChange={e => setComprobanteEditForm(p => ({ ...p, fecha: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+              </div>
+
+              {/* Mensaje */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Mensaje al miembro</label>
+                <textarea
+                  rows={5}
+                  value={comprobanteEditForm.mensaje}
+                  onChange={e => setComprobanteEditForm(p => ({ ...p, mensaje: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                />
+              </div>
+
+              {mensajeComprobante && (
+                <p className={`text-sm font-medium ${mensajeComprobante.tipo === "error" ? "text-red-600" : "text-emerald-600"}`}>
+                  {mensajeComprobante.texto}
+                </p>
+              )}
+
+              <div className="flex gap-3 justify-end pt-2 border-t">
+                <button
+                  onClick={() => { setComprobanteEditando(null); setComprobanteEditForm(null); }}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={guardarEditarComprobante}
+                  disabled={guardandoComprobante}
+                  className="px-5 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors disabled:opacity-60"
+                >
+                  {guardandoComprobante ? "Guardando..." : "Guardar cambios"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
