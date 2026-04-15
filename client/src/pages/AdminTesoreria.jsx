@@ -543,7 +543,7 @@ export default function AdminTesoreria() {
 
   const guardar = async () => {
     if (!form.categoria) { setMensaje({ tipo: "error", texto: "Selecciona una categoría" }); return; }
-    if (!form.monto || isNaN(form.monto) || parseFloat(form.monto) <= 0) { setMensaje({ tipo: "error", texto: "Ingresa un monto válido" }); return; }
+    if (form.monto === "" || form.monto == null || isNaN(form.monto) || parseFloat(form.monto) < 0 || (parseFloat(form.monto) === 0 && form.categoria !== "ofrendas")) { setMensaje({ tipo: "error", texto: "Ingresa un monto válido (mínimo $0 para ofrendas)" }); return; }
     if (tabActiva === "ingreso" && !form.tipo_culto && !CATEGORIAS_CON_COMPROBANTE.includes(form.categoria)) { setMensaje({ tipo: "error", texto: "Selecciona el tipo de ingreso" }); return; }
 
     const emiteComprobante = tabActiva === "ingreso" && CATEGORIAS_CON_COMPROBANTE.includes(form.categoria);
@@ -654,7 +654,7 @@ export default function AdminTesoreria() {
 
   const guardarEdit = async () => {
     if (!formEdit.categoria) { setMensajeEdit({ tipo: "error", texto: "Selecciona una categor\u00eda" }); return; }
-    if (!formEdit.monto || isNaN(formEdit.monto) || parseFloat(formEdit.monto) <= 0) { setMensajeEdit({ tipo: "error", texto: "Ingresa un monto v\u00e1lido" }); return; }
+    if (formEdit.monto === "" || formEdit.monto == null || isNaN(formEdit.monto) || parseFloat(formEdit.monto) < 0 || (parseFloat(formEdit.monto) === 0 && formEdit.categoria !== "ofrendas")) { setMensajeEdit({ tipo: "error", texto: "Ingresa un monto válido (mínimo $0 para ofrendas)" }); return; }
     if (formEdit.tipo === "ingreso" && !formEdit.tipo_culto) { setMensajeEdit({ tipo: "error", texto: "Selecciona el tipo de ingreso" }); return; }
     setGuardandoEdit(true);
     setMensajeEdit(null);
