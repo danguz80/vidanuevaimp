@@ -857,6 +857,11 @@ export default function MiPortal() {
                             {c.folio}
                           </span>
                         )}
+                        {c.nombre_externo && (
+                          <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
+                            {c.nombre_externo}
+                          </span>
+                        )}
                         <p className={`font-bold text-base ${esEgresoC ? "text-red-700" : "text-emerald-700"}`}>
                           ${Number(c.monto).toLocaleString("es-CL")}
                         </p>
@@ -923,6 +928,11 @@ export default function MiPortal() {
                           <span className="text-sm font-semibold text-gray-700 shrink-0">
                             ${Number(c.monto).toLocaleString("es-CL")}
                           </span>
+                          {c.nombre_externo && (
+                            <span className="text-xs font-semibold text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">
+                              {c.nombre_externo}
+                            </span>
+                          )}
                           <span className="text-xs text-gray-400 truncate">
                             {c.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : c.concepto}
                           </span>

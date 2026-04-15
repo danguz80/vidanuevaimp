@@ -3731,16 +3731,18 @@ app.get("/api/tesoreria", authenticateToken, requireTesoreriaAccess, async (req,
 
 // POST /api/tesoreria — registrar ingreso o egreso
 app.post("/api/tesoreria", authenticateToken, requireTesoreriaAccess, async (req, res) => {
-  const { tipo, categoria, monto, descripcion, fecha, tipo_culto, notas } = req.body;
+  const { tipo, categoria, monto, descripcion, fecha, tipo_culto, notas, tipo_pago } = req.body;
   if (!tipo || !["ingreso","egreso"].includes(tipo)) return res.status(400).json({ error: "Tipo inválido" });
   if (!categoria || !categoria.trim()) return res.status(400).json({ error: "Categoría requerida" });
   const montoNum = parseFloat(monto);
   if (monto === undefined || monto === null || monto === "" || isNaN(monto) || montoNum < 0 || (montoNum === 0 && categoria !== "ofrendas")) return res.status(400).json({ error: "Monto inválido" });
   const TIPOS_CULTO_VALIDOS = ["culto_domingo", "culto_jueves"];
   const tipoCultoFinal = (tipo === "ingreso" && tipo_culto && TIPOS_CULTO_VALIDOS.includes(tipo_culto)) ? tipo_culto : null;
+  const tipoPagoFinal = ["efectivo","transferencia","deposito"].includes(tipo_pago) ? tipo_pago : "efectivo";
   try {
     await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS tipo_culto TEXT");
     await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS notas TEXT");
+    await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS tipo_pago TEXT DEFAULT 'efectivo'");
     // Migrar constraint para permitir monto = 0 (ofrendas sin monto definido)
     await pool.query(`
       DO $$ BEGIN
@@ -3755,9 +3757,9 @@ app.post("/api/tesoreria", authenticateToken, requireTesoreriaAccess, async (req
       END $$;
     `);
     const result = await pool.query(
-      `INSERT INTO tesoreria_movimientos (tipo, categoria, monto, descripcion, tipo_culto, notas, fecha, registrado_por)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [tipo, categoria.trim(), Math.round(parseFloat(monto)), descripcion?.trim() || null, tipoCultoFinal, notas?.trim() || null, fecha || new Date().toISOString().split("T")[0], req.user.id]
+      `INSERT INTO tesoreria_movimientos (tipo, categoria, monto, descripcion, tipo_culto, notas, tipo_pago, fecha, registrado_por)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [tipo, categoria.trim(), Math.round(parseFloat(monto)), descripcion?.trim() || null, tipoCultoFinal, notas?.trim() || null, tipoPagoFinal, fecha || new Date().toISOString().split("T")[0], req.user.id]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -3782,18 +3784,21 @@ app.delete("/api/tesoreria/:id", authenticateToken, requireTesoreriaAccess, asyn
 // PUT /api/tesoreria/:id — editar un movimiento
 app.put("/api/tesoreria/:id", authenticateToken, requireTesoreriaAccess, async (req, res) => {
   const { id } = req.params;
-  const { tipo, categoria, monto, descripcion, fecha, tipo_culto, notas } = req.body;
+  const { tipo, categoria, monto, descripcion, fecha, tipo_culto, notas, tipo_pago } = req.body;
   if (!tipo || !["ingreso","egreso"].includes(tipo)) return res.status(400).json({ error: "Tipo inválido" });
   if (!categoria || !categoria.trim()) return res.status(400).json({ error: "Categoría requerida" });
-  if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
+  const montoNumEdit = parseFloat(monto);
+  if (monto === undefined || monto === null || monto === "" || isNaN(monto) || montoNumEdit < 0 || (montoNumEdit === 0 && categoria !== "ofrendas")) return res.status(400).json({ error: "Monto inválido" });
   const TIPOS_CULTO_VALIDOS = ["culto_domingo", "culto_jueves"];
   const tipoCultoFinal = (tipo === "ingreso" && tipo_culto && TIPOS_CULTO_VALIDOS.includes(tipo_culto)) ? tipo_culto : null;
+  const tipoPagoFinal = ["efectivo","transferencia","deposito"].includes(tipo_pago) ? tipo_pago : "efectivo";
   try {
+    await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS tipo_pago TEXT DEFAULT 'efectivo'");
     const result = await pool.query(
       `UPDATE tesoreria_movimientos
-       SET tipo=$1, categoria=$2, monto=$3, descripcion=$4, tipo_culto=$5, notas=$6, fecha=$7
-       WHERE id=$8 RETURNING *`,
-      [tipo, categoria.trim(), Math.round(parseFloat(monto)), descripcion?.trim() || null, tipoCultoFinal, notas?.trim() || null, fecha, id]
+       SET tipo=$1, categoria=$2, monto=$3, descripcion=$4, tipo_culto=$5, notas=$6, tipo_pago=$7, fecha=$8
+       WHERE id=$9 RETURNING *`,
+      [tipo, categoria.trim(), Math.round(parseFloat(monto)), descripcion?.trim() || null, tipoCultoFinal, notas?.trim() || null, tipoPagoFinal, fecha, id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Movimiento no encontrado" });
     res.json(result.rows[0]);
@@ -3913,26 +3918,42 @@ const initComprobantes = async () => {
   await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS folio TEXT UNIQUE`);
   await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS movimiento_id INTEGER REFERENCES tesoreria_movimientos(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS notas TEXT`);
+  // Permitir miembro_id nulo para comprobantes de personas externas ("Otro")
+  await pool.query(`ALTER TABLE comprobantes_tesoreria ALTER COLUMN miembro_id DROP NOT NULL`);
+  await pool.query(`ALTER TABLE comprobantes_tesoreria ADD COLUMN IF NOT EXISTS nombre_externo TEXT`);
 };
 
 // POST /api/tesoreria/comprobantes — crear comprobante
 app.post("/api/tesoreria/comprobantes", authenticateToken, requireTesoreriaAccess, async (req, res) => {
-  const { miembro_id, monto, concepto, tipo_pago, fecha, mensaje, movimiento_id, notas, tipo_comprobante } = req.body;
-  if (!miembro_id) return res.status(400).json({ error: "Miembro requerido" });
+  const { miembro_id, nombre_externo, monto, concepto, tipo_pago, fecha, mensaje, movimiento_id, notas, tipo_comprobante } = req.body;
+  const esExterno = !miembro_id || String(miembro_id) === "otro";
+  if (esExterno && !nombre_externo?.trim()) return res.status(400).json({ error: "Nombre requerido para persona externa" });
   if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
   if (!concepto?.trim()) return res.status(400).json({ error: "Concepto requerido" });
   if (!["efectivo","transferencia","deposito"].includes(tipo_pago)) return res.status(400).json({ error: "Tipo de pago inválido" });
+  const miembroIdFinal = esExterno ? null : parseInt(miembro_id);
   const esEgreso = tipo_comprobante === "egreso";
   const seqName = esEgreso ? "folio_comprobante_e_seq" : "folio_comprobante_i_seq";
   const prefijo = esEgreso ? "E-" : "I-";
   try {
     await initComprobantes();
+    // Si es externo, asignar el comprobante al miembro con rol Tesorero para que le aparezca en su portal
+    let miembroIdDestino = miembroIdFinal;
+    if (esExterno) {
+      const tesoreroRes = await pool.query(
+        `SELECT m.id FROM miembros m
+         JOIN miembro_roles r ON r.miembro_id = m.id
+         WHERE r.rol = 'Tesorero' AND m.estado = 'activo'
+         ORDER BY m.id LIMIT 1`
+      );
+      if (tesoreroRes.rows.length > 0) miembroIdDestino = tesoreroRes.rows[0].id;
+    }
     const result = await pool.query(
-      `INSERT INTO comprobantes_tesoreria (miembro_id, monto, concepto, tipo_pago, fecha, mensaje, creado_por, folio, movimiento_id, notas)
-       VALUES ($1, $2, $3, $4, $5, $6, $7,
-               $8 || LPAD(nextval($9)::text, 5, '0'), $10, $11)
+      `INSERT INTO comprobantes_tesoreria (miembro_id, nombre_externo, monto, concepto, tipo_pago, fecha, mensaje, creado_por, folio, movimiento_id, notas)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+               $9 || LPAD(nextval($10)::text, 5, '0'), $11, $12)
        RETURNING *`,
-      [miembro_id, Math.round(parseFloat(monto)), concepto.trim(), tipo_pago,
+      [miembroIdDestino, esExterno ? nombre_externo.trim() : null, Math.round(parseFloat(monto)), concepto.trim(), tipo_pago,
        fecha || new Date().toISOString().split("T")[0], mensaje?.trim() || null, req.user.id,
        prefijo, seqName, movimiento_id || null, notas?.trim() || null]
     );
@@ -3945,17 +3966,31 @@ app.post("/api/tesoreria/comprobantes", authenticateToken, requireTesoreriaAcces
 
 // GET /api/tesoreria/comprobantes — listar comprobantes (admin/tesorero)
 app.get("/api/tesoreria/comprobantes", authenticateToken, requireTesoreriaAccess, async (req, res) => {
+  const { mes } = req.query; // formato: "YYYY-MM"
   try {
     await initComprobantes();
-    const result = await pool.query(
-      `SELECT c.*,
+    let query, params;
+    if (mes && /^\d{4}-\d{2}$/.test(mes)) {
+      query = `SELECT c.*,
               m.nombre AS miembro_nombre, m.apellido AS miembro_apellido, m.foto_url AS miembro_foto,
               cr.nombre AS creado_por_nombre, cr.apellido AS creado_por_apellido
        FROM comprobantes_tesoreria c
        LEFT JOIN miembros m  ON m.id  = c.miembro_id
        LEFT JOIN miembros cr ON cr.id = c.creado_por
-       ORDER BY c.created_at DESC`
-    );
+       WHERE TO_CHAR(c.fecha, 'YYYY-MM') = $1
+       ORDER BY c.fecha DESC, c.created_at DESC`;
+      params = [mes];
+    } else {
+      query = `SELECT c.*,
+              m.nombre AS miembro_nombre, m.apellido AS miembro_apellido, m.foto_url AS miembro_foto,
+              cr.nombre AS creado_por_nombre, cr.apellido AS creado_por_apellido
+       FROM comprobantes_tesoreria c
+       LEFT JOIN miembros m  ON m.id  = c.miembro_id
+       LEFT JOIN miembros cr ON cr.id = c.creado_por
+       ORDER BY c.fecha DESC, c.created_at DESC`;
+      params = [];
+    }
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
     console.error("Error GET comprobantes:", err.message);

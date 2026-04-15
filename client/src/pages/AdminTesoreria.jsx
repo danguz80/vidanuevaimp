@@ -35,7 +35,7 @@ const mesPrevio = (mes) => {
   return `${y}-${String(m - 1).padStart(2, "0")}`;
 };
 
-const FORM_VACIO = { tipo: "ingreso", categoria: "", monto: "", descripcion: "", tipo_culto: "", notas: "", fecha: new Date().toISOString().split("T")[0] };
+const FORM_VACIO = { tipo: "ingreso", categoria: "", monto: "", descripcion: "", tipo_culto: "", notas: "", tipo_pago: "efectivo", fecha: new Date().toISOString().split("T")[0] };
 
 // Categorías de ingreso que generan comprobante digital
 const CATEGORIAS_CON_COMPROBANTE = ["cuotas_diezmos", "otros"];
@@ -56,7 +56,7 @@ const mensajeDefectoEgreso = (concepto, nombreMiembro, tipoPago, monto, detalle)
   return `Estimado/a ${nombreMiembro},\n\nLa iglesia Misión Pentecostés Templo Vida Nueva, a través de su Tesorera, nuestra hna. Priscilla Vásquez Núñez, acredita que le ha entregado a Ud. un monto en ${tipoPagoLabel} equivalente a ${montoFmt}, correspondiente a ${categoriaLabel}.\n\nSu revisión y/o firma de este comprobante certifica su validez.\n\n"Pero todo debe hacerse de una manera apropiada y con orden." — 1 Corintios 14:40`;
 };
 
-const FORM_COMP_VACIO = { miembro_id: "", tipo_pago: "efectivo", mensaje: "" };
+const FORM_COMP_VACIO = { miembro_id: "", nombre_externo: "", tipo_pago: "efectivo", mensaje: "" };
 
 const MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
@@ -230,10 +230,11 @@ export default function AdminTesoreria() {
   const [mensajeComprobante, setMensajeComprobante] = useState(null);
   const [eliminandoComprobante, setEliminandoComprobante] = useState(false);
 
-  const cargarComprobantes = useCallback(async () => {
+  const cargarComprobantes = useCallback(async (mes) => {
     setCargandoComprobantes(true);
     try {
-      const res = await fetch(`${API}/api/tesoreria/comprobantes`, {
+      const mesFiltroParam = mes || mesFiltro;
+      const res = await fetch(`${API}/api/tesoreria/comprobantes?mes=${mesFiltroParam}`, {
         headers: { Authorization: `Bearer ${getToken()}` },
       });
       const data = await res.json();
@@ -243,7 +244,7 @@ export default function AdminTesoreria() {
     } finally {
       setCargandoComprobantes(false);
     }
-  }, [getToken]);
+  }, [getToken, mesFiltro]);
 
   const abrirEditarComprobante = (c) => {
     setComprobanteEditForm({
@@ -335,7 +336,7 @@ export default function AdminTesoreria() {
     doc.setTextColor(20, 20, 20);
     doc.setFontSize(13);
     doc.setFont("helvetica", "bold");
-    doc.text(`${c.miembro_nombre} ${c.miembro_apellido}`, margin, y);
+    doc.text(c.nombre_externo || `${c.miembro_nombre} ${c.miembro_apellido}`, margin, y);
     doc.setTextColor(cr, cg, cb);
     doc.text(FMT(c.monto), W - margin, y, { align: "right" });
     y += 10;
@@ -503,21 +504,22 @@ export default function AdminTesoreria() {
   // Auto-generar mensaje cuando cambia miembro, categoría, tipo de pago, monto o detalle
   useEffect(() => {
     if (!formComp.miembro_id) return;
-    const m = miembros.find(m => String(m.id) === String(formComp.miembro_id));
-    if (!m) return;
-    const nombreMiembro = `${m.nombre} ${m.apellido}`;
+    const nombreMiembro = formComp.miembro_id === "otro"
+      ? (formComp.nombre_externo?.trim() || "")
+      : (() => { const m = miembros.find(m => String(m.id) === String(formComp.miembro_id)); return m ? `${m.nombre} ${m.apellido}` : ""; })();
+    if (!nombreMiembro) return;
     if (tabActiva === "egreso" && CATEGORIAS_CON_COMPROBANTE_EGRESO.includes(form.categoria)) {
       setFormComp(p => ({ ...p, mensaje: mensajeDefectoEgreso(form.categoria, nombreMiembro, p.tipo_pago, form.monto, form.notas) }));
     } else {
       setFormComp(p => ({ ...p, mensaje: mensajeDefecto(form.categoria, nombreMiembro) }));
     }
-  }, [formComp.miembro_id, form.categoria, formComp.tipo_pago, form.monto, form.notas, tabActiva, miembros]); // eslint-disable-line
+  }, [formComp.miembro_id, formComp.nombre_externo, form.categoria, formComp.tipo_pago, form.monto, form.notas, tabActiva, miembros]); // eslint-disable-line
 
   useEffect(() => {
     if (tieneAcceso) {
       cargar(mesActual);
       cargarSaldoAnterior(mesActual);
-      cargarComprobantes();
+      cargarComprobantes(mesActual);
     }
   }, []); // eslint-disable-line
 
@@ -525,6 +527,7 @@ export default function AdminTesoreria() {
     setMesFiltro(e.target.value);
     cargar(e.target.value);
     cargarSaldoAnterior(e.target.value);
+    cargarComprobantes(e.target.value);
   };
 
   const handleForm = (campo, valor) => {
@@ -551,6 +554,9 @@ export default function AdminTesoreria() {
     if ((emiteComprobante || emiteComprobanteEgreso) && !formComp.miembro_id) {
       setMensaje({ tipo: "error", texto: "Selecciona el miembro para emitir el comprobante" }); return;
     }
+    if ((emiteComprobante || emiteComprobanteEgreso) && formComp.miembro_id === "otro" && !formComp.nombre_externo?.trim()) {
+      setMensaje({ tipo: "error", texto: "Ingresa el nombre de la persona" }); return;
+    }
 
     setGuardando(true);
     setMensaje(null);
@@ -575,7 +581,8 @@ export default function AdminTesoreria() {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
           body: JSON.stringify({
-            miembro_id: formComp.miembro_id,
+            miembro_id: formComp.miembro_id === "otro" ? null : formComp.miembro_id,
+            nombre_externo: formComp.miembro_id === "otro" ? formComp.nombre_externo.trim() : null,
             monto: Math.round(parseFloat(form.monto)),
             concepto: form.categoria,
             tipo_pago: formComp.tipo_pago,
@@ -648,6 +655,7 @@ export default function AdminTesoreria() {
       tipo_culto: m.tipo_culto || (m.tipo === "ingreso" ? "otro" : ""),
       notas: m.notas || "",
       fecha: String(m.fecha).split("T")[0],
+      tipo_pago: m.tipo_pago || "efectivo",
     });
     setMensajeEdit(null);
   };
@@ -960,6 +968,19 @@ export default function AdminTesoreria() {
 
           {/* Anotación opcional (Detalle) */}
           <div className="mt-3">
+            <label className="text-xs font-semibold text-gray-600 mb-1 block">Tipo de pago</label>
+            <select
+              value={form.tipo_pago}
+              onChange={e => handleForm("tipo_pago", e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            >
+              <option value="efectivo">Efectivo</option>
+              <option value="transferencia">Transferencia online</option>
+              <option value="deposito">Depósito en banco</option>
+            </select>
+          </div>
+
+          <div className="mt-3">
             <label className="text-xs font-semibold text-gray-600 mb-1 block">Detalle <span className="text-gray-400 font-normal">(opcional)</span></label>
             <textarea
               rows={2}
@@ -983,7 +1004,7 @@ export default function AdminTesoreria() {
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">Miembro *</label>
                   <select
                     value={formComp.miembro_id}
-                    onChange={e => setFormComp(p => ({ ...p, miembro_id: e.target.value }))}
+                    onChange={e => setFormComp(p => ({ ...p, miembro_id: e.target.value, nombre_externo: "" }))}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
                   >
                     <option value="">Seleccionar miembro...</option>
@@ -994,7 +1015,17 @@ export default function AdminTesoreria() {
                           {m.apellido}, {m.nombre}
                         </option>
                       ))}
+                    <option value="otro">-- Otro --</option>
                   </select>
+                  {formComp.miembro_id === "otro" && (
+                    <input
+                      type="text"
+                      value={formComp.nombre_externo}
+                      onChange={e => setFormComp(p => ({ ...p, nombre_externo: e.target.value }))}
+                      placeholder="Nombre completo..."
+                      className="mt-2 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
+                    />
+                  )}
                 </div>
 
                 {/* Tipo de pago */}
@@ -1039,7 +1070,7 @@ export default function AdminTesoreria() {
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">Miembro *</label>
                   <select
                     value={formComp.miembro_id}
-                    onChange={e => setFormComp(p => ({ ...p, miembro_id: e.target.value }))}
+                    onChange={e => setFormComp(p => ({ ...p, miembro_id: e.target.value, nombre_externo: "" }))}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
                   >
                     <option value="">Seleccionar miembro...</option>
@@ -1050,7 +1081,17 @@ export default function AdminTesoreria() {
                           {m.apellido}, {m.nombre}
                         </option>
                       ))}
+                    <option value="otro">-- Otro --</option>
                   </select>
+                  {formComp.miembro_id === "otro" && (
+                    <input
+                      type="text"
+                      value={formComp.nombre_externo}
+                      onChange={e => setFormComp(p => ({ ...p, nombre_externo: e.target.value }))}
+                      placeholder="Nombre completo..."
+                      className="mt-2 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
+                    />
+                  )}
                 </div>
 
                 {/* Tipo de pago */}
@@ -1216,7 +1257,8 @@ export default function AdminTesoreria() {
                         {c.fecha ? String(c.fecha).split("T")[0].split("-").reverse().join("/") : "—"}
                       </td>
                       <td className="py-2.5 pr-3 font-medium text-gray-800">
-                        {c.miembro_nombre} {c.miembro_apellido}
+                        {c.nombre_externo || `${c.miembro_nombre || ""} ${c.miembro_apellido || ""}`.trim() || "—"}
+                        {c.nombre_externo && <span className="ml-1 text-xs text-gray-400 font-normal">(externo)</span>}
                       </td>
                       <td className="py-2.5 pr-3 text-gray-600">
                         {c.concepto === "cuotas_diezmos" ? "Cuotas / Diezmos" : c.concepto}
@@ -1317,7 +1359,9 @@ export default function AdminTesoreria() {
                 <div>
                   <p className="text-xs text-gray-500 uppercase tracking-wide">Miembro</p>
                   <p className="font-semibold text-gray-800">
-                    {comprobanteDetalle.miembro_nombre} {comprobanteDetalle.miembro_apellido}
+                    {comprobanteDetalle.nombre_externo
+                      ? <>{comprobanteDetalle.nombre_externo} <span className="text-xs text-gray-400 font-normal">(externo)</span></>
+                      : `${comprobanteDetalle.miembro_nombre || ""} ${comprobanteDetalle.miembro_apellido || ""}`.trim() || "—"}
                   </p>
                 </div>
                 <div className="text-right">
@@ -1502,6 +1546,15 @@ export default function AdminTesoreria() {
                 <input type="text" value={formEdit.descripcion} onChange={e => handleFormEdit("descripcion", e.target.value)} placeholder="Descripci\u00f3n del ingreso..." className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
               </div>
             )}
+
+            <div>
+              <label className="text-xs font-semibold text-gray-600 mb-1 block">Tipo de pago</label>
+              <select value={formEdit.tipo_pago} onChange={e => handleFormEdit("tipo_pago", e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400">
+                <option value="efectivo">Efectivo</option>
+                <option value="transferencia">Transferencia online</option>
+                <option value="deposito">Depósito en banco</option>
+              </select>
+            </div>
 
             <div>
               <label className="text-xs font-semibold text-gray-600 mb-1 block">Detalle <span className="text-gray-400 font-normal">(opcional)</span></label>
