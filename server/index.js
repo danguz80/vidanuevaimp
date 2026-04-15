@@ -3734,12 +3734,26 @@ app.post("/api/tesoreria", authenticateToken, requireTesoreriaAccess, async (req
   const { tipo, categoria, monto, descripcion, fecha, tipo_culto, notas } = req.body;
   if (!tipo || !["ingreso","egreso"].includes(tipo)) return res.status(400).json({ error: "Tipo inválido" });
   if (!categoria || !categoria.trim()) return res.status(400).json({ error: "Categoría requerida" });
-  if (!monto || isNaN(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: "Monto inválido" });
+  const montoNum = parseFloat(monto);
+  if (monto === undefined || monto === null || monto === "" || isNaN(monto) || montoNum < 0 || (montoNum === 0 && categoria !== "ofrendas")) return res.status(400).json({ error: "Monto inválido" });
   const TIPOS_CULTO_VALIDOS = ["culto_domingo", "culto_jueves"];
   const tipoCultoFinal = (tipo === "ingreso" && tipo_culto && TIPOS_CULTO_VALIDOS.includes(tipo_culto)) ? tipo_culto : null;
   try {
     await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS tipo_culto TEXT");
     await pool.query("ALTER TABLE tesoreria_movimientos ADD COLUMN IF NOT EXISTS notas TEXT");
+    // Migrar constraint para permitir monto = 0 (ofrendas sin monto definido)
+    await pool.query(`
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.table_constraints
+          WHERE table_name = 'tesoreria_movimientos'
+            AND constraint_name = 'tesoreria_movimientos_monto_check'
+        ) THEN
+          ALTER TABLE tesoreria_movimientos DROP CONSTRAINT tesoreria_movimientos_monto_check;
+          ALTER TABLE tesoreria_movimientos ADD CONSTRAINT tesoreria_movimientos_monto_check CHECK (monto >= 0);
+        END IF;
+      END $$;
+    `);
     const result = await pool.query(
       `INSERT INTO tesoreria_movimientos (tipo, categoria, monto, descripcion, tipo_culto, notas, fecha, registrado_por)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
