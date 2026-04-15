@@ -509,11 +509,11 @@ export default function AdminTesoreria() {
       : (() => { const m = miembros.find(m => String(m.id) === String(formComp.miembro_id)); return m ? `${m.nombre} ${m.apellido}` : ""; })();
     if (!nombreMiembro) return;
     if (tabActiva === "egreso" && CATEGORIAS_CON_COMPROBANTE_EGRESO.includes(form.categoria)) {
-      setFormComp(p => ({ ...p, mensaje: mensajeDefectoEgreso(form.categoria, nombreMiembro, p.tipo_pago, form.monto, form.notas) }));
+      setFormComp(p => ({ ...p, mensaje: mensajeDefectoEgreso(form.categoria, nombreMiembro, form.tipo_pago, form.monto, form.notas) }));
     } else {
       setFormComp(p => ({ ...p, mensaje: mensajeDefecto(form.categoria, nombreMiembro) }));
     }
-  }, [formComp.miembro_id, formComp.nombre_externo, form.categoria, formComp.tipo_pago, form.monto, form.notas, tabActiva, miembros]); // eslint-disable-line
+  }, [formComp.miembro_id, formComp.nombre_externo, form.categoria, form.tipo_pago, form.monto, form.notas, tabActiva, miembros]); // eslint-disable-line
 
   useEffect(() => {
     if (tieneAcceso) {
@@ -585,7 +585,7 @@ export default function AdminTesoreria() {
             nombre_externo: formComp.miembro_id === "otro" ? formComp.nombre_externo.trim() : null,
             monto: Math.round(parseFloat(form.monto)),
             concepto: form.categoria,
-            tipo_pago: formComp.tipo_pago,
+            tipo_pago: form.tipo_pago,
             fecha: form.fecha,
             mensaje: formComp.mensaje?.trim() || null,
             movimiento_id: movData.id,
@@ -679,6 +679,24 @@ export default function AdminTesoreria() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Error");
+
+      // Actualizar comprobante asociado si existe
+      const compAsociado = comprobantes.find(c => String(c.movimiento_id) === String(editando.id));
+      if (compAsociado) {
+        await fetch(`${API}/api/tesoreria/comprobantes/${compAsociado.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+          body: JSON.stringify({
+            monto: Math.round(parseFloat(formEdit.monto)),
+            concepto: formEdit.categoria,
+            tipo_pago: formEdit.tipo_pago,
+            fecha: formEdit.fecha,
+            mensaje: compAsociado.mensaje,
+          }),
+        });
+        cargarComprobantes(mesFiltro);
+      }
+
       setEditando(null);
       setFormEdit(null);
       cargar(mesFiltro);
@@ -1028,19 +1046,6 @@ export default function AdminTesoreria() {
                   )}
                 </div>
 
-                {/* Tipo de pago */}
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Tipo de pago *</label>
-                  <select
-                    value={formComp.tipo_pago}
-                    onChange={e => setFormComp(p => ({ ...p, tipo_pago: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
-                  >
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia online</option>
-                    <option value="deposito">Depósito en banco</option>
-                  </select>
-                </div>
               </div>
 
               {/* Mensaje al miembro */}
@@ -1094,19 +1099,6 @@ export default function AdminTesoreria() {
                   )}
                 </div>
 
-                {/* Tipo de pago */}
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Tipo de pago *</label>
-                  <select
-                    value={formComp.tipo_pago}
-                    onChange={e => setFormComp(p => ({ ...p, tipo_pago: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
-                  >
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia online</option>
-                    <option value="deposito">Depósito en banco</option>
-                  </select>
-                </div>
               </div>
 
               {/* Mensaje al miembro */}

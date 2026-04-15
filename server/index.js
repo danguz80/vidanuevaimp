@@ -3815,6 +3815,57 @@ function mesPrevio(mes) {
   return `${y}-${String(m - 1).padStart(2, "0")}`;
 }
 
+// Calcula recursivamente el saldo de cierre de un mes dado.
+// Sube mes a mes hasta encontrar una entrada manual en tesoreria_saldo_inicial
+// o hasta que no haya datos (devuelve null).
+async function calcularSaldoCierre(mes, pool, depth = 0) {
+  if (depth > 36) return null; // límite de seguridad: 3 años
+
+  const [y, m] = mes.split("-");
+  const diasMes = new Date(parseInt(y), parseInt(m), 0).getDate();
+  const desde = `${y}-${m}-01`;
+  const hasta = `${y}-${m}-${String(diasMes).padStart(2, "0")}`;
+
+  const [manualRes, movRes] = await Promise.all([
+    pool.query("SELECT monto FROM tesoreria_saldo_inicial WHERE mes = $1", [mes]),
+    pool.query(
+      `SELECT tipo, COALESCE(SUM(monto), 0)::DECIMAL AS total
+       FROM tesoreria_movimientos
+       WHERE fecha >= $1 AND fecha <= $2
+       GROUP BY tipo`,
+      [desde, hasta]
+    ),
+  ]);
+
+  const tieneManual = manualRes.rows.length > 0;
+  const tieneMovs   = movRes.rows.length > 0;
+
+  // Sin datos de ningún tipo: subir al mes anterior para propagar el último balance conocido
+  if (!tieneManual && !tieneMovs) {
+    const prev = mesPrevio(mes);
+    return calcularSaldoCierre(prev, pool, depth + 1);
+  }
+
+  let base;
+  if (tieneManual) {
+    // Entrada manual: ancla de la cadena
+    base = parseFloat(manualRes.rows[0].monto);
+  } else {
+    // Sin entrada manual: calcular recursivamente el cierre del mes anterior
+    const prev = mesPrevio(mes);
+    const prevSaldo = await calcularSaldoCierre(prev, pool, depth + 1);
+    base = prevSaldo ?? 0;
+  }
+
+  let ing = 0, egr = 0;
+  movRes.rows.forEach(r => {
+    if (r.tipo === "ingreso") ing = parseFloat(r.total);
+    else egr = parseFloat(r.total);
+  });
+
+  return base + ing - egr;
+}
+
 // GET /api/tesoreria/saldo-anterior?mes=YYYY-MM — devuelve el saldo de cierre del mes previo
 app.get("/api/tesoreria/saldo-anterior", authenticateToken, requireTesoreriaAccess, async (req, res) => {
   const { mes } = req.query;
@@ -3833,36 +3884,13 @@ app.get("/api/tesoreria/saldo-anterior", authenticateToken, requireTesoreriaAcce
     if (manualMesActual.rows.length > 0) {
       return res.json({ saldo: parseFloat(manualMesActual.rows[0].monto), manual: true });
     }
-    // Calcular cierre del mes anterior
+    // Calcular el saldo de cierre del mes anterior de forma recursiva
     const prev = mesPrevio(mes);
-    const [py, pm] = prev.split("-");
-    const diasPrev = new Date(parseInt(py), parseInt(pm), 0).getDate();
-    const desde = `${py}-${pm}-01`;
-    const hasta = `${py}-${pm}-${String(diasPrev).padStart(2, "0")}`;
-
-    const saldoInicialM1 = await pool.query(
-      "SELECT monto FROM tesoreria_saldo_inicial WHERE mes = $1", [prev]
-    );
-    const tieneManualM1 = saldoInicialM1.rows.length > 0;
-    const baseM1 = tieneManualM1 ? parseFloat(saldoInicialM1.rows[0].monto) : 0;
-
-    const movRes = await pool.query(
-      `SELECT tipo, COALESCE(SUM(monto), 0)::DECIMAL AS total
-       FROM tesoreria_movimientos
-       WHERE fecha >= $1 AND fecha <= $2
-       GROUP BY tipo`,
-      [desde, hasta]
-    );
-    const tieneMovM1 = movRes.rows.length > 0;
-    if (!tieneMovM1 && !tieneManualM1) {
+    const saldo = await calcularSaldoCierre(prev, pool);
+    if (saldo === null) {
       return res.json({ noData: true, mes_anterior: prev });
     }
-    let ing = 0, egr = 0;
-    movRes.rows.forEach(r => {
-      if (r.tipo === "ingreso") ing = parseFloat(r.total);
-      else egr = parseFloat(r.total);
-    });
-    res.json({ saldo: baseM1 + ing - egr, mes_anterior: prev });
+    res.json({ saldo, mes_anterior: prev });
   } catch (err) {
     console.error("Error GET saldo-anterior:", err.message);
     res.status(500).json({ error: "Error al obtener saldo anterior" });
