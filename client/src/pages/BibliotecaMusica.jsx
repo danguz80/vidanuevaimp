@@ -4,9 +4,10 @@ import { useMemberAuth } from "../context/MemberAuthContext";
 import {
   ArrowLeft, Music, ListMusic, Play, Pause, SkipBack, SkipForward,
   Volume2, Plus, Trash2, FolderOpen, Loader2, ListPlus, X, ChevronRight, Layers,
-  CheckCircle2, Radio, HardDriveDownload,
+  CheckCircle2, Radio, HardDriveDownload, Music2,
 } from "lucide-react";
 import MultitrackPlayer, { precacheTrackList } from "../components/MultitrackPlayer";
+import GuiasEditor from "../components/GuiasEditor";
 import { idbStats, idbClear, formatBytes } from "../utils/audioOfflineCache";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
@@ -59,6 +60,13 @@ export default function BibliotecaMusica() {
   // ── Multitrack ──
   const [multitrackTracks, setMultitrackTracks] = useState(null);
   const [multitrackFolder, setMultitrackFolder] = useState("");
+
+  // ── Editor de Guías ──
+  const [guiasEditorOpen, setGuiasEditorOpen] = useState(false);
+  const [guiasFolderId, setGuiasFolderId] = useState(null);
+  const [guiasFolderName, setGuiasFolderName] = useState("");
+  // Duración de la canción activa (para el editor de guías)
+  const [guiasDuration, setGuiasDuration] = useState(0);
 
   // ── Setlist ──
   // setlistItems: [{ carpeta: {id,name}, tracks: null|[], cached: bool, caching: bool }]
@@ -487,7 +495,21 @@ export default function BibliotecaMusica() {
                 ) : (
                   <>
                   {canciones.length > 1 && (
-                    <div className="flex justify-end mb-3">
+                    <div className="flex justify-end gap-2 mb-3">
+                      <button
+                        onClick={() => {
+                          const fid = subcarpetaActiva?.id || carpetaActiva?.id;
+                          const fname = subcarpetaActiva?.name || carpetaActiva?.name || "Canción";
+                          setGuiasFolderId(fid);
+                          setGuiasFolderName(fname);
+                          // Estimamos duración: se refinará dentro del editor
+                          setGuiasDuration(0);
+                          setGuiasEditorOpen(true);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition shadow"
+                      >
+                        <Music2 size={13} /> Pista Guías
+                      </button>
                       <button
                         onClick={() => {
                           setMultitrackFolder(subcarpetaActiva?.name || carpetaActiva?.name || "Multitrack");
@@ -859,11 +881,26 @@ export default function BibliotecaMusica() {
         </div>
       )}
 
+      {/* ── Editor de Guías ── */}
+      {guiasEditorOpen && guiasFolderId && (
+        <GuiasEditor
+          folderId={guiasFolderId}
+          folderName={guiasFolderName}
+          tracks={canciones}
+          getToken={getToken}
+          onClose={() => setGuiasEditorOpen(false)}
+          onSaved={(clips) => {
+            setGuiasEditorOpen(false);
+          }}
+        />
+      )}
+
       {/* ── Multitrack Player (modo carpeta normal) ── */}
       {multitrackTracks && !setlistActivo && (
         <MultitrackPlayer
           tracks={multitrackTracks}
           folderName={multitrackFolder}
+          folderId={subcarpetaActiva?.id || carpetaActiva?.id || null}
           onClose={() => setMultitrackTracks(null)}
           getToken={getToken}
         />

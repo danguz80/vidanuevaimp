@@ -81,6 +81,7 @@ export async function precacheTrackList(tracks, getToken, onProgress) {
 export default function MultitrackPlayer({
   tracks,
   folderName,
+  folderId = null,          // Drive folder ID — para cargar pista de guías
   onClose,
   getToken,
   setlistSongs = null,
@@ -101,6 +102,15 @@ export default function MultitrackPlayer({
   const [masterVolume, setMasterVolume] = useState(0.85);
   const [trackStates, setTrackStates] = useState([]);
   const [showSetlist, setShowSetlist] = useState(false);
+
+  // ── Pista de Guías ──
+  const [guiasClips, setGuiasClips] = useState([]); // clips guardados en DB
+  const [guiasVolume, setGuiasVolume] = useState(1);
+  const [guiasMuted, setGuiasMuted] = useState(false);
+  // Cada clip tiene: { id, fileId, fileName, startTime, duration }
+  // Al reproducir se programan BufferSources desde ctx.currentTime+startTime
+  const guiasDataRef = useRef([]); // [{ fileId, buffer, sourceNode, startTime }]
+  const guiasGainRef = useRef(null);
 
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
@@ -135,6 +145,12 @@ export default function MultitrackPlayer({
     masterGain.gain.value = masterVolume;
     masterGain.connect(ctx.destination);
     masterGainRef.current = masterGain;
+
+    // Gain para la pista de guías (independiente del master)
+    const guiasGain = ctx.createGain();
+    guiasGain.gain.value = guiasVolume;
+    guiasGain.connect(masterGain);
+    guiasGainRef.current = guiasGain;
 
     try {
       let completedCount = 0;
@@ -216,10 +232,25 @@ export default function MultitrackPlayer({
     return () => {
       clearInterval(timerRef.current);
       trackDataRef.current.forEach((t) => { try { t.sourceNode?.stop(); } catch {} });
-      // close() devuelve Promise — usar .catch() para evitar unhandled rejection
+      guiasDataRef.current.forEach((g) => { try { g.sourceNode?.stop(); } catch {} });
       audioCtxRef.current?.close().catch(() => {});
     };
   }, [tracks]);
+
+  // Cargar clips de guías desde la DB cuando folderId esté disponible y loading termine
+  useEffect(() => {
+    if (!folderId || !getToken) return;
+    fetch(`${API_URL}/api/musica/guias/${encodeURIComponent(folderId)}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data.clips) && data.clips.length > 0) {
+          setGuiasClips(data.clips);
+        }
+      })
+      .catch(() => {});
+  }, [folderId, getToken]);
 
   // Pre-carga silenciosa de canciones siguientes en background
   // Solo arranca DESPUÉS de que la canción actual haya terminado de cargar
@@ -237,10 +268,58 @@ export default function MultitrackPlayer({
     return () => { cancelled = true; clearTimeout(timer); };
   }, [nextSongsTracks, getToken, loading]);
 
+  // Cargar y decodificar buffers de los clips de guías cuando estén disponibles
+  useEffect(() => {
+    if (!guiasClips.length || loading) return;
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    let cancelled = false;
+
+    (async () => {
+      const loaded = [];
+      for (const clip of guiasClips) {
+        if (cancelled) break;
+        try {
+          let ab;
+          if (bufferCache.has(clip.fileId)) {
+            ab = bufferCache.get(clip.fileId).slice(0);
+          } else {
+            const idbData = await idbGet(clip.fileId);
+            if (idbData) {
+              bufferCache.set(clip.fileId, idbData);
+              ab = idbData.slice(0);
+            } else {
+              const r = await fetch(`${API_URL}/api/musica/stream/${clip.fileId}`, {
+                headers: { Authorization: `Bearer ${getToken()}` },
+              });
+              if (!r.ok) continue;
+              ab = await r.arrayBuffer();
+              bufferCache.set(clip.fileId, ab.slice(0));
+              idbSet(clip.fileId, ab.slice(0));
+            }
+          }
+          if (cancelled) break;
+          const buffer = await ctx.decodeAudioData(ab);
+          loaded.push({ fileId: clip.fileId, buffer, startTime: clip.startTime, sourceNode: null });
+        } catch (e) {
+          console.warn("[GuíasPlayer] Error cargando clip:", clip.fileId, e.message);
+        }
+      }
+      if (!cancelled) guiasDataRef.current = loaded;
+    })();
+
+    return () => { cancelled = true; };
+  }, [guiasClips, loading, getToken]);
+
   const stopSources = () => {
     trackDataRef.current.forEach((t) => {
       try { t.sourceNode?.stop(); } catch {}
       t.sourceNode = null;
+    });
+    // Detener clips de guías
+    guiasDataRef.current.forEach((g) => {
+      try { g.sourceNode?.stop(); } catch {}
+      g.sourceNode = null;
     });
   };
 
@@ -256,6 +335,20 @@ export default function MultitrackPlayer({
       src.connect(t.gainNode);
       src.start(startAt, fromOffset);
       t.sourceNode = src;
+    });
+
+    // Reproducir clips de guías en sus posiciones
+    guiasDataRef.current.forEach((g) => {
+      if (!g.buffer) return;
+      const clipEnd = g.startTime + g.buffer.duration;
+      if (fromOffset >= clipEnd) return; // ya pasó
+      const clipOffset = Math.max(0, fromOffset - g.startTime);
+      const startDelay = g.startTime > fromOffset ? (g.startTime - fromOffset) : 0;
+      const src = ctx.createBufferSource();
+      src.buffer = g.buffer;
+      src.connect(guiasGainRef.current);
+      src.start(startAt + startDelay, clipOffset);
+      g.sourceNode = src;
     });
 
     setPlaying(true);
@@ -544,6 +637,53 @@ export default function MultitrackPlayer({
                   </div>
                 );
               })}
+
+              {/* Canal de Guías (si hay clips cargados) */}
+              {guiasClips.length > 0 && (
+                <div
+                  className={`flex flex-col items-center gap-1.5 px-2 border-r border-gray-800 transition-opacity`}
+                  style={{ width: 68, minWidth: 68, opacity: guiasMuted ? 0.28 : 1 }}
+                >
+                  <div className="w-10 h-0.5 rounded-full bg-emerald-500" />
+                  <div className="h-9 flex items-center justify-center px-0.5 w-full">
+                    <p className="text-[10px] text-emerald-400 font-medium text-center leading-tight">Guías</p>
+                  </div>
+                  {/* Fader vertical */}
+                  <div className="flex-1 flex items-center justify-center w-full py-1 relative" style={{ minHeight: 100 }}>
+                    <div className="absolute w-1.5 rounded-full bg-gray-700 top-2 bottom-2 left-1/2 -translate-x-1/2" />
+                    <div
+                      className="absolute w-1.5 rounded-full left-1/2 -translate-x-1/2 bottom-2 bg-emerald-500 transition-none"
+                      style={{ opacity: 0.75, height: `calc(${guiasVolume * 100}% - 16px)` }}
+                    />
+                    <div
+                      className="absolute w-5 h-3.5 rounded bg-emerald-200 left-1/2 -translate-x-1/2 shadow-md"
+                      style={{ bottom: `calc(${guiasVolume * 100}% - 16px - 7px + 2px)` }}
+                    />
+                    <input
+                      type="range" min={0} max={1} step={0.01} value={guiasVolume}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        setGuiasVolume(v);
+                        if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasMuted ? 0 : v;
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      style={{ writingMode: "vertical-lr", direction: "rtl", WebkitAppearance: "slider-vertical" }}
+                    />
+                  </div>
+                  <span className="text-gray-500 text-[10px] tabular-nums">{Math.round(guiasVolume * 100)}</span>
+                  <button
+                    onClick={() => {
+                      const next = !guiasMuted;
+                      setGuiasMuted(next);
+                      if (guiasGainRef.current) guiasGainRef.current.gain.value = next ? 0 : guiasVolume;
+                    }}
+                    className={`w-full py-1 rounded text-[10px] font-bold transition select-none ${
+                      guiasMuted ? "bg-red-500 text-white" : "bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700"
+                    }`}
+                  >M</button>
+                  <div className="w-full h-6 mb-1" />
+                </div>
+              )}
 
               {/* Master channel */}
               <div

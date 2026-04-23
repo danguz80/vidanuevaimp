@@ -3020,6 +3020,82 @@ app.get("/api/musica/canciones", authenticateMiembro, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Guías en Español ─────────────────────────────────────────────────────────
+
+// Tabla para guardar la pista de guías de cada canción
+// Se crea automáticamente al arrancar
+pool.query(`
+  CREATE TABLE IF NOT EXISTS musica_guias (
+    id           SERIAL PRIMARY KEY,
+    folder_id    TEXT NOT NULL UNIQUE,   -- Drive folder ID de la canción
+    clips        JSONB NOT NULL DEFAULT '[]',
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(e => console.error("[musica_guias] Error creando tabla:", e.message));
+
+// GET /api/musica/guias/archivos — lista archivos de la carpeta "Guias en Español"
+app.get("/api/musica/guias/archivos", authenticateMiembro, async (req, res) => {
+  try {
+    // Buscar la carpeta "Guias en Español" dentro de la raíz configurada
+    const cfgRow = await pool.query("SELECT valor FROM configuracion WHERE clave = 'google_drive_folder_id'");
+    if (!cfgRow.rows.length) return res.status(503).json({ error: "Música no configurada" });
+    const rootId = cfgRow.rows[0].valor;
+
+    // Buscar la subcarpeta de guías (nombre configurable, primero exacto luego parcial)
+    const foldersData = await driveList({
+      q: `'${rootId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: "files(id,name)",
+      pageSize: "200",
+    });
+    const guiasFolder = (foldersData.files || []).find(f =>
+      /guia(s)?\s*(en\s*)?(español|espanol)/i.test(f.name)
+    );
+    if (!guiasFolder) return res.status(404).json({ error: "Carpeta 'Guias en Español' no encontrada en Drive" });
+
+    const data = await driveList({
+      q: `'${guiasFolder.id}' in parents and trashed=false`,
+      fields: "files(id,name,mimeType,size)",
+      orderBy: "name",
+      pageSize: "200",
+    });
+    const archivos = (data.files || []).filter(
+      f => f.mimeType?.startsWith("audio/") || /\.(mp3|wav|flac|m4a|aac|ogg|wma|aiff?|opus)$/i.test(f.name)
+    );
+    res.json(archivos);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/musica/guias/:folderId — obtener clips guardados de una canción
+app.get("/api/musica/guias/:folderId", authenticateMiembro, async (req, res) => {
+  try {
+    const r = await pool.query("SELECT clips FROM musica_guias WHERE folder_id = $1", [req.params.folderId]);
+    if (!r.rows.length) return res.json({ clips: [] });
+    res.json({ clips: r.rows[0].clips });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/musica/guias/:folderId — guardar/actualizar clips de una canción
+app.post("/api/musica/guias/:folderId", authenticateMiembro, async (req, res) => {
+  const { clips } = req.body;
+  if (!Array.isArray(clips)) return res.status(400).json({ error: "clips debe ser un array" });
+  try {
+    await pool.query(
+      `INSERT INTO musica_guias (folder_id, clips) VALUES ($1, $2)
+       ON CONFLICT (folder_id) DO UPDATE SET clips = EXCLUDED.clips, updated_at = NOW()`,
+      [req.params.folderId, JSON.stringify(clips)]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/musica/guias/:folderId — eliminar pista guías de una canción
+app.delete("/api/musica/guias/:folderId", authenticateMiembro, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM musica_guias WHERE folder_id = $1", [req.params.folderId]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/musica/stream/:fileId — proxy de audio desde Google Drive (resuelve CORS)
 app.get("/api/musica/stream/:fileId", authenticateMiembro, async (req, res) => {
   const apiKey = process.env.GOOGLE_API_KEY;
