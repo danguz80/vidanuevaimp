@@ -3,8 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { useMemberAuth } from "../context/MemberAuthContext";
 import {
   ArrowLeft, Music, ListMusic, Play, Pause, SkipBack, SkipForward,
-  Volume2, Plus, Trash2, FolderOpen, Loader2, ListPlus, X, ChevronRight,
+  Volume2, Plus, Trash2, FolderOpen, Loader2, ListPlus, X, ChevronRight, Layers,
+  CheckCircle2, Radio, HardDriveDownload,
 } from "lucide-react";
+import MultitrackPlayer, { precacheTrackList } from "../components/MultitrackPlayer";
+import { idbStats, idbClear, formatBytes } from "../utils/audioOfflineCache";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 
@@ -21,7 +24,7 @@ function sinExtension(nombre) {
 
 export default function BibliotecaMusica() {
   const navigate = useNavigate();
-  const { miembro, getToken } = useMemberAuth();
+  const { miembro, loading: authLoading, getToken } = useMemberAuth();
 
   // ── Navegación tabs ──
   const [tab, setTab] = useState("biblioteca");
@@ -53,6 +56,20 @@ export default function BibliotecaMusica() {
   const [duracion, setDuracion] = useState(0);
   const [volumen, setVolumen] = useState(1);
 
+  // ── Multitrack ──
+  const [multitrackTracks, setMultitrackTracks] = useState(null);
+  const [multitrackFolder, setMultitrackFolder] = useState("");
+
+  // ── Setlist ──
+  // setlistItems: [{ carpeta: {id,name}, tracks: null|[], cached: bool, caching: bool }]
+  const [setlistItems, setSetlistItems] = useState([]);
+  const [setlistActivo, setSetlistActivo] = useState(false); // player abierto
+  const [setlistSongIdx, setSetlistSongIdx] = useState(0);
+  const [precachingAll, setPrecachingAll] = useState(false);
+  const [precacheProgress, setPrecacheProgress] = useState(0);
+  const [savingOffline, setSavingOffline] = useState(false);
+  const [offlineStats, setOfflineStats] = useState(null); // { count, bytes }
+
   // ── Playlist UI ──
   const [mostrarNuevaPlaylist, setMostrarNuevaPlaylist] = useState(false);
   const [nombreNuevaPlaylist, setNombreNuevaPlaylist] = useState("");
@@ -63,6 +80,7 @@ export default function BibliotecaMusica() {
 
   // ── Audio events ──
   useEffect(() => {
+    if (authLoading) return;              // esperar a que el contexto inicialice
     if (!miembro) { navigate("/portal/login"); return; }
     const audio = audioRef.current;
 
@@ -220,6 +238,83 @@ export default function BibliotecaMusica() {
     } catch {}
   };
 
+  // ── Setlist helpers ──
+  const toggleEnSetlist = async (carpeta) => {
+    const yaEsta = setlistItems.some((s) => s.carpeta.id === carpeta.id);
+    if (yaEsta) {
+      setSetlistItems((prev) => prev.filter((s) => s.carpeta.id !== carpeta.id));
+      return;
+    }
+    // Agregar y cargar sus tracks en background
+    const item = { carpeta, tracks: null, cached: false, caching: true };
+    setSetlistItems((prev) => [...prev, item]);
+    try {
+      const r = await fetch(`${API_URL}/api/musica/canciones?folderId=${encodeURIComponent(carpeta.id)}`, { headers: hdrs() });
+      const data = await r.json();
+      const tracks = Array.isArray(data) ? data : [];
+      setSetlistItems((prev) => prev.map((s) => s.carpeta.id === carpeta.id ? { ...s, tracks, caching: false } : s));
+    } catch {
+      setSetlistItems((prev) => prev.map((s) => s.carpeta.id === carpeta.id ? { ...s, tracks: [], caching: false } : s));
+    }
+  };
+
+  const moverSetlistItem = (idx, dir) => {
+    setSetlistItems((prev) => {
+      const next = [...prev];
+      const dest = idx + dir;
+      if (dest < 0 || dest >= next.length) return prev;
+      [next[idx], next[dest]] = [next[dest], next[idx]];
+      return next;
+    });
+  };
+
+  const precacharSetlist = async () => {
+    setPrecachingAll(true);
+    setPrecacheProgress(0);
+    const allTracks = setlistItems.flatMap((s) => s.tracks || []);
+    const total = allTracks.length;
+    const errors = [];
+    await precacheTrackList(allTracks, getToken, (done, _total, track, err) => {
+      if (err) errors.push(`${track.name || track.id}: ${err}`);
+      setPrecacheProgress(Math.round((done / total) * 100));
+    });
+    setSetlistItems((prev) => prev.map((s) => ({ ...s, cached: true })));
+    setPrecachingAll(false);
+    if (errors.length > 0) console.warn("Pre-carga con errores:", errors);
+  };
+
+  // Guardar setlist completo en IndexedDB (persiste entre sesiones)
+  const guardarOffline = async () => {
+    setSavingOffline(true);
+    setPrecacheProgress(0);
+    const allTracks = setlistItems.flatMap((s) => s.tracks || []);
+    const total = allTracks.length;
+    await precacheTrackList(allTracks, getToken, (done) => {
+      setPrecacheProgress(Math.round((done / total) * 100));
+    });
+    setSetlistItems((prev) => prev.map((s) => ({ ...s, cached: true })));
+    const stats = await idbStats();
+    setOfflineStats(stats);
+    setSavingOffline(false);
+  };
+
+  // Cargar stats de caché offline al abrir la pestaña setlist
+  useEffect(() => {
+    if (tab === "setlist") {
+      idbStats().then(setOfflineStats);
+    }
+  }, [tab]);
+
+  const abrirSetlist = (idx) => {
+    setSetlistSongIdx(idx);
+    setSetlistActivo(true);
+  };
+
+  const navegarSetlist = (delta) => {
+    const next = setlistSongIdx + delta;
+    if (next >= 0 && next < setlistItems.length) setSetlistSongIdx(next);
+  };
+
   // ── Player ──
   const reproducirItem = async (item, cola, idx) => {
     const fileId = item.fileId || item.file_id || item.id;
@@ -270,6 +365,11 @@ export default function BibliotecaMusica() {
     setProgreso(val);
   };
 
+  if (authLoading) return (
+    <div className="flex items-center justify-center min-h-screen">
+      <Loader2 size={28} className="animate-spin text-indigo-400" />
+    </div>
+  );
   if (!miembro) return null;
 
   const colaLibreria = canciones;
@@ -292,6 +392,7 @@ export default function BibliotecaMusica() {
           {[
             { id: "biblioteca", label: "Carpetas", icon: <FolderOpen size={14} /> },
             { id: "playlists",  label: "Mis Playlists", icon: <ListMusic size={14} />, badge: playlists.length || null },
+            { id: "setlist",    label: "Setlist", icon: <Radio size={14} />, badge: setlistItems.length || null },
           ].map(t => (
             <button
               key={t.id}
@@ -329,36 +430,50 @@ export default function BibliotecaMusica() {
                 {/* ── Chips de carpetas ── */}
                 <div className="flex gap-2 flex-wrap mb-4">
                   {carpetas.map(c => (
-                    <button
-                      key={c.id}
-                      onClick={() => seleccionarCarpeta(c)}
-                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition ${
-                        carpetaActiva?.id === c.id
-                          ? "bg-indigo-600 text-white"
-                          : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300 hover:text-indigo-600"
-                      }`}
-                    >
-                      {c.name}
-                    </button>
+                    <div key={c.id} className="flex items-center gap-1">
+                      <button
+                        onClick={() => seleccionarCarpeta(c)}
+                        className={`px-3 py-1.5 rounded-full text-sm font-medium transition ${
+                          carpetaActiva?.id === c.id
+                            ? "bg-indigo-600 text-white"
+                            : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300 hover:text-indigo-600"
+                        }`}
+                      >
+                        {c.name}
+                      </button>
+                    </div>
                   ))}
                 </div>
 
                 {/* ── Chips de subcarpetas (segundo nivel) ── */}
                 {subcarpetas.length > 0 && (
                   <div className="flex gap-2 flex-wrap mb-4 pl-2 border-l-2 border-indigo-200">
-                    {subcarpetas.map(s => (
-                      <button
-                        key={s.id}
-                        onClick={() => cargarCanciones(s)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium transition ${
-                          subcarpetaActiva?.id === s.id
-                            ? "bg-indigo-500 text-white"
-                            : "bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100"
-                        }`}
-                      >
-                        {s.name}
-                      </button>
-                    ))}
+                    {subcarpetas.map(s => {
+                      const enSetlist = setlistItems.some((sl) => sl.carpeta.id === s.id);
+                      return (
+                      <div key={s.id} className="flex items-center gap-1">
+                        <button
+                          onClick={() => cargarCanciones(s)}
+                          className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                            subcarpetaActiva?.id === s.id
+                              ? "bg-indigo-500 text-white"
+                              : "bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100"
+                          }`}
+                        >
+                          {s.name}
+                        </button>
+                        <button
+                          onClick={() => toggleEnSetlist(s)}
+                          title={enSetlist ? "Quitar del setlist" : "Agregar al setlist"}
+                          className={`w-5 h-5 rounded-full flex items-center justify-center transition text-xs ${
+                            enSetlist ? "bg-green-500 text-white" : "bg-gray-200 text-gray-400 hover:bg-indigo-200 hover:text-indigo-600"
+                          }`}
+                        >
+                          {enSetlist ? "✓" : "+"}
+                        </button>
+                      </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -370,6 +485,20 @@ export default function BibliotecaMusica() {
                 ) : canciones.length === 0 ? (
                   <p className="text-center text-gray-400 text-sm py-8">No hay canciones en esta carpeta</p>
                 ) : (
+                  <>
+                  {canciones.length > 1 && (
+                    <div className="flex justify-end mb-3">
+                      <button
+                        onClick={() => {
+                          setMultitrackFolder(subcarpetaActiva?.name || carpetaActiva?.name || "Multitrack");
+                          setMultitrackTracks(canciones);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition shadow"
+                      >
+                        <Layers size={13} /> Modo Multitrack
+                      </button>
+                    </div>
+                  )}
                   <div className="bg-white rounded-2xl shadow-sm divide-y divide-gray-100 overflow-hidden">
                     {canciones.map((c, i) => {
                       const titulo  = c.audio?.title  || sinExtension(c.name || "");
@@ -416,6 +545,7 @@ export default function BibliotecaMusica() {
                       );
                     })}
                   </div>
+                  </>
                 )}
               </>
             )}
@@ -548,6 +678,129 @@ export default function BibliotecaMusica() {
             )}
           </div>
         )}
+
+        {/* ─────────────── TAB SETLIST ─────────────── */}
+        {tab === "setlist" && (
+          <div className="space-y-4">
+            {setlistItems.length === 0 ? (
+              <div className="text-center py-14 text-gray-400 space-y-2">
+                <Radio size={36} className="mx-auto opacity-30" />
+                <p className="text-sm font-medium">Setlist vacío</p>
+                <p className="text-xs text-gray-400 max-w-xs mx-auto">
+                  Ve a "Carpetas", selecciona una canción (subcarpeta) y toca el <strong>+</strong> junto a su nombre para agregarla aquí.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Lista ordenable */}
+                <div className="bg-white rounded-2xl shadow-sm divide-y divide-gray-100 overflow-hidden">
+                  {setlistItems.map((item, idx) => (
+                    <div key={item.carpeta.id} className="flex items-center gap-2 px-4 py-3">
+                      {/* Orden */}
+                      <div className="flex flex-col gap-0.5 shrink-0">
+                        <button
+                          onClick={() => moverSetlistItem(idx, -1)}
+                          disabled={idx === 0}
+                          className="text-gray-300 hover:text-gray-600 disabled:opacity-20 leading-none"
+                        >▲</button>
+                        <button
+                          onClick={() => moverSetlistItem(idx, 1)}
+                          disabled={idx === setlistItems.length - 1}
+                          className="text-gray-300 hover:text-gray-600 disabled:opacity-20 leading-none"
+                        >▼</button>
+                      </div>
+                      {/* Número */}
+                      <span className="text-gray-400 text-xs w-5 text-center tabular-nums shrink-0">{idx + 1}</span>
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 truncate">{item.carpeta.name}</p>
+                        <p className="text-xs text-gray-400">
+                          {item.caching ? "Cargando tracks…" : item.tracks ? `${item.tracks.length} tracks` : "Sin tracks"}
+                        </p>
+                      </div>
+                      {/* Estado caché */}
+                      {item.cached && <CheckCircle2 size={15} className="text-green-500 shrink-0" />}
+                      {item.caching && <Loader2 size={15} className="animate-spin text-indigo-400 shrink-0" />}
+                      {/* Reproducir esta canción */}
+                      <button
+                        onClick={() => abrirSetlist(idx)}
+                        disabled={!item.tracks || item.tracks.length === 0}
+                        className="w-8 h-8 rounded-full bg-indigo-100 hover:bg-indigo-200 text-indigo-600 flex items-center justify-center transition disabled:opacity-30 shrink-0"
+                      >
+                        <Play size={14} />
+                      </button>
+                      {/* Quitar */}
+                      <button
+                        onClick={() => toggleEnSetlist(item.carpeta)}
+                        className="p-1.5 text-gray-300 hover:text-red-500 transition shrink-0"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Pre-carga + Guardar offline + Tocar setlist completo */}
+                <div className="flex gap-3 flex-wrap items-center">
+                  <button
+                    onClick={precacharSetlist}
+                    disabled={precachingAll || savingOffline || setlistItems.every((s) => s.cached)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-white border border-gray-200 text-gray-700 hover:border-indigo-300 hover:text-indigo-600 transition disabled:opacity-50"
+                  >
+                    {precachingAll ? (
+                      <><Loader2 size={14} className="animate-spin" /> Pre-cargando… {precacheProgress}%</>
+                    ) : setlistItems.every((s) => s.cached) ? (
+                      <><CheckCircle2 size={14} className="text-green-500" /> Todo pre-cargado</>
+                    ) : (
+                      <><Layers size={14} /> Pre-cargar todo</>
+                    )}
+                  </button>
+
+                  {/* Guardar offline en IndexedDB */}
+                  <button
+                    onClick={guardarOffline}
+                    disabled={savingOffline || precachingAll || setlistItems.length === 0}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-50"
+                    title="Guarda todos los tracks en el navegador — carga instantánea en próximas sesiones"
+                  >
+                    {savingOffline ? (
+                      <><Loader2 size={14} className="animate-spin" /> Guardando… {precacheProgress}%</>
+                    ) : (
+                      <><HardDriveDownload size={14} /> Guardar offline</>
+                    )}
+                  </button>
+
+                  {/* Indicador de almacenamiento guardado + botón limpiar */}
+                  {offlineStats && offlineStats.count > 0 && (
+                    <span className="text-xs text-gray-400 flex items-center gap-1.5">
+                      <CheckCircle2 size={12} className="text-emerald-500" />
+                      {offlineStats.count} tracks · {formatBytes(offlineStats.bytes)}
+                      <button
+                        onClick={async () => {
+                          await idbClear();
+                          setOfflineStats(null);
+                          setSetlistItems((prev) => prev.map((s) => ({ ...s, cached: false })));
+                        }}
+                        className="ml-1 text-red-400 hover:text-red-600 underline underline-offset-2 transition"
+                        title="Eliminar caché offline"
+                      >
+                        Limpiar
+                      </button>
+                    </span>
+                  )}
+
+                  <button
+                    onClick={() => abrirSetlist(0)}
+                    disabled={setlistItems.length === 0 || !setlistItems[0]?.tracks?.length}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition disabled:opacity-40"
+                  >
+                    <Play size={14} /> Tocar setlist desde el inicio
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Player bar ── */}
@@ -604,6 +857,42 @@ export default function BibliotecaMusica() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Multitrack Player (modo carpeta normal) ── */}
+      {multitrackTracks && !setlistActivo && (
+        <MultitrackPlayer
+          tracks={multitrackTracks}
+          folderName={multitrackFolder}
+          onClose={() => setMultitrackTracks(null)}
+          getToken={getToken}
+        />
+      )}
+
+      {/* ── Multitrack Player (modo setlist) ── */}
+      {setlistActivo && setlistItems[setlistSongIdx]?.tracks?.length > 0 && (
+        <MultitrackPlayer
+          key={setlistSongIdx}
+          tracks={setlistItems[setlistSongIdx].tracks}
+          folderName={setlistItems[setlistSongIdx].carpeta.name}
+          onClose={() => setSetlistActivo(false)}
+          getToken={getToken}
+          setlistSongs={setlistItems.map((s) => ({
+            name: s.carpeta.name,
+            cached: s.cached,
+            caching: s.caching,
+          }))}
+          songIndex={setlistSongIdx}
+          onPrevSong={(delta) => navegarSetlist(-delta)}
+          onNextSong={(delta) => navegarSetlist(delta)}
+          nextSongsTracks={
+            // Pasar los tracks de las próximas 2 canciones para pre-cargar en background
+            setlistItems
+              .slice(setlistSongIdx + 1, setlistSongIdx + 3)
+              .map((s) => s.tracks)
+              .filter(Boolean)
+          }
+        />
       )}
 
       {/* ── Modal: agregar a playlist ── */}

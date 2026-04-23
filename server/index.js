@@ -13,8 +13,31 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { v2 as cloudinary } from "cloudinary";
-import { OAuth2Client } from "google-auth-library";
+import { OAuth2Client, JWT as GoogleJWT } from "google-auth-library";
 import cron from "node-cron";
+
+// ── Service Account para Google Drive (descarga de archivos de audio) ──────
+// Si GOOGLE_SERVICE_ACCOUNT_EMAIL y GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY están
+// configurados, se usa OAuth2 con Service Account (más confiable que API key)
+let _driveJwtClient = null;
+function getDriveJwtClient() {
+  if (_driveJwtClient) return _driveJwtClient;
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const key = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (!email || !key) return null;
+  _driveJwtClient = new GoogleJWT({
+    email,
+    key,
+    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+  });
+  return _driveJwtClient;
+}
+async function getDriveAccessToken() {
+  const client = getDriveJwtClient();
+  if (!client) return null;
+  const { token } = await client.getAccessToken();
+  return token;
+}
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 import { sendDonationReceipt, saveDonation, sendCashDonationReceipt } from "./emailService.js";
@@ -2991,7 +3014,7 @@ app.get("/api/musica/canciones", authenticateMiembro, async (req, res) => {
       pageSize: "200",
     });
     const canciones = (data.files || []).filter(
-      f => f.mimeType?.startsWith("audio/") || /\.(mp3|wav|flac|m4a|aac|ogg|wma)$/i.test(f.name)
+      f => f.mimeType?.startsWith("audio/") || /\.(mp3|wav|flac|m4a|aac|ogg|wma|aiff?|opus|caf|mid|midi|ape|wv)$/i.test(f.name)
     );
     res.json(canciones);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3000,13 +3023,47 @@ app.get("/api/musica/canciones", authenticateMiembro, async (req, res) => {
 // GET /api/musica/stream/:fileId — proxy de audio desde Google Drive (resuelve CORS)
 app.get("/api/musica/stream/:fileId", authenticateMiembro, async (req, res) => {
   const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: "GOOGLE_API_KEY no configurada" });
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   try {
-    const driveRes = await fetch(
-      `${DRIVE_API}/files/${req.params.fileId}?alt=media&key=${apiKey}`,
-      { headers: req.headers.range ? { Range: req.headers.range } : {} }
-    );
-    if (!driveRes.ok) return res.status(driveRes.status).json({ error: "No se pudo obtener el audio" });
+    // Intentar obtener access token de Service Account (preferido)
+    const serviceToken = await getDriveAccessToken().catch(() => null);
+
+    let driveRes;
+    // Hasta 5 intentos con backoff exponencial
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      let fileUrl;
+      let fetchHeaders = {};
+
+      if (serviceToken) {
+        // Service Account OAuth2: funciona con archivos privados/compartidos
+        fileUrl = `${DRIVE_API}/files/${req.params.fileId}?alt=media`;
+        fetchHeaders = { Authorization: `Bearer ${serviceToken}` };
+      } else {
+        // Fallback: API key (solo funciona si el archivo es público)
+        if (!apiKey) return res.status(503).json({ error: "Sin credenciales de Google Drive configuradas" });
+        fileUrl = `${DRIVE_API}/files/${req.params.fileId}?alt=media&key=${apiKey}`;
+      }
+
+      if (req.headers.range) fetchHeaders["Range"] = req.headers.range;
+
+      driveRes = await fetch(fileUrl, { headers: fetchHeaders });
+      if (driveRes.status !== 403 && driveRes.status !== 429) break;
+      if (attempt < 5) {
+        const waitMs = attempt * 1200;
+        console.warn(`[stream] Drive ${driveRes.status} en intento ${attempt} para fileId=${req.params.fileId} — reintentando en ${waitMs}ms`);
+        await sleep(waitMs);
+      }
+    }
+
+    if (!driveRes.ok) {
+      let driveBody = "";
+      try { driveBody = await driveRes.text(); } catch {}
+      console.error(`[stream] Drive respondió ${driveRes.status} (sin éxito tras reintentos) para fileId=${req.params.fileId}:`, driveBody.slice(0, 300));
+      return res.status(driveRes.status).json({ error: "No se pudo obtener el audio", detail: driveBody.slice(0, 200) });
+    }
+
     res.status(driveRes.status);
     ["content-type", "content-length", "content-range", "accept-ranges"].forEach(h => {
       const v = driveRes.headers.get(h);
