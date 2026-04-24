@@ -508,7 +508,7 @@ export default function BibliotecaMusica() {
                         }}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition shadow"
                       >
-                        <Music2 size={13} /> Pista Guías
+                        <Music2 size={13} /> Modo Edición
                       </button>
                       <button
                         onClick={() => {
@@ -892,6 +892,11 @@ export default function BibliotecaMusica() {
           onSaved={(clips) => {
             setGuiasEditorOpen(false);
           }}
+          onSwitchToMultitrack={() => {
+            setGuiasEditorOpen(false);
+            setMultitrackFolder(guiasFolderName);
+            setMultitrackTracks(canciones);
+          }}
         />
       )}
 
@@ -903,6 +908,12 @@ export default function BibliotecaMusica() {
           folderId={subcarpetaActiva?.id || carpetaActiva?.id || null}
           onClose={() => setMultitrackTracks(null)}
           getToken={getToken}
+          onSwitchToEditor={() => {
+            setMultitrackTracks(null);
+            setGuiasFolderId(subcarpetaActiva?.id || carpetaActiva?.id);
+            setGuiasFolderName(multitrackFolder);
+            setGuiasEditorOpen(true);
+          }}
         />
       )}
 

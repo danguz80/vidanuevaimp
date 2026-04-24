@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { X, Play, Pause, Square, Volume2, Loader2, SkipBack, SkipForward, ListMusic } from "lucide-react";
+import { X, Play, Pause, Square, Volume2, Loader2, SkipBack, SkipForward, ListMusic, Pencil } from "lucide-react";
+import { SoundTouch, SimpleFilter, WebAudioBufferSource, getWebAudioNode } from 'soundtouchjs';
 import { idbGet, idbSet } from "../utils/audioOfflineCache";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
@@ -90,6 +91,7 @@ export default function MultitrackPlayer({
   onNextSong = null,
   // Pre-carga de canciones siguientes (pasado desde BibliotecaMusica)
   nextSongsTracks = null, // [[track,...], [track,...]] de las próximas canciones
+  onSwitchToEditor = null, // callback para cambiar a Modo Edición
 }) {
   const [loading, setLoading] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -103,25 +105,65 @@ export default function MultitrackPlayer({
   const [trackStates, setTrackStates] = useState([]);
   const [showSetlist, setShowSetlist] = useState(false);
 
+  // ── Info canción (del editor de guías) ──
+  const [songBpm, setSongBpm] = useState(0);
+  const [songKey, setSongKey] = useState('');
+  const [beatsPerBar, setBeatsPerBar] = useState(4);
+  const [playBpm, setPlayBpm] = useState(0);
+  const [playSemitones, setPlaySemitones] = useState(0);
+  const [processing, setProcessing] = useState(false);
+  // ── Metrónomo DAW ──
+  const [metroEnabled, setMetroEnabled] = useState(false);
+  const [metroVolume, setMetroVolume] = useState(2);
+  const [metroPan, setMetroPan] = useState(-1);
+
   // ── Pista de Guías ──
   const [guiasClips, setGuiasClips] = useState([]); // clips guardados en DB
+  const [guiasTrackRegions, setGuiasTrackRegions] = useState({}); // cortes/eliminaciones por fileId
   const [guiasVolume, setGuiasVolume] = useState(1);
   const [guiasMuted, setGuiasMuted] = useState(false);
+  const [guiasSoloed, setGuiasSoloed] = useState(false);
+  const [guiasPan, setGuiasPan] = useState(-1); // izquierda por defecto
   // Cada clip tiene: { id, fileId, fileName, startTime, duration }
-  // Al reproducir se programan BufferSources desde ctx.currentTime+startTime
-  const guiasDataRef = useRef([]); // [{ fileId, buffer, sourceNode, startTime }]
+  // Al reproducir se programan BufferSources por cada región activa del clip
+  const guiasDataRef = useRef([]); // [{ fileId, buffer, regions, startTime, sourceNode }]
   const guiasGainRef = useRef(null);
+  const guiasPannerRef = useRef(null);
+  // ── Pitch/Tempo + Metro refs ──
+  const originalBuffersRef = useRef(new Map()); // fileId → AudioBuffer sin procesar
+  const metroGainRef = useRef(null);
+  const metroPannerRef = useRef(null);
+  const metroSchedulerRef = useRef(null);   // setTimeout ID del scheduler
+  const metroNodesRef = useRef([]);          // OscillatorNodes activos del metro
+  const metroNextBeatTimeRef = useRef(0);    // ctx time del próximo beat a programar
+  const metroNextBeatIndexRef = useRef(0);   // índice del próximo beat (para downbeat)
+  const processingIdRef = useRef(0);
+  const loadTracksIdRef = useRef(0);          // cancelación de loadTracks obsoletas (StrictMode / cambio rápido)
+  const soundTouchLatencyRef = useRef(-1);   // samples de latencia de arranque SoundTouch (medido una vez)
+  const currentAudioBpmRef = useRef(0);      // BPM del buffer actualmente cargado (0 = original sin procesar)
+  const songBpmRef = useRef(0);
+  const playBpmRef = useRef(0);
+  const playSemitonesRef = useRef(0);
+  const beatsPerBarRef = useRef(4);
+  const metroEnabledRef = useRef(false);
+  const metroVolumeRef = useRef(2);
+  const metroPanRef = useRef(-1);
 
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
   const trackDataRef = useRef([]);
+  const savedTrackRegionsRef = useRef({}); // trackRegions de las pistas, accesible sin closure stale
   const startTimeRef = useRef(0);
   const offsetRef = useRef(0);
   const playingRef = useRef(false);
   const timerRef = useRef(null);
   const durationRef = useRef(0);
+  const folderNameRef = useRef(folderName);
+  useEffect(() => { folderNameRef.current = folderName; }, [folderName]);
 
   const loadTracks = useCallback(async (trackList) => {
+    const myId = ++loadTracksIdRef.current;
+    const name = folderNameRef.current || '';
     setLoading(true);
     setLoadingProgress(0);
     setLoadingTrack("");
@@ -137,7 +179,30 @@ export default function MultitrackPlayer({
     playingRef.current = false;
     setPlaying(false);
 
+    // ── Parsear BPM/Key/Beats desde el nombre de carpeta ──
+    // Formato: "Nombre - Key - 127bpm - 4:4"
+    {
+      const segments = (name || '').split(/\s*[-\u2013\u2014|]\s*/);
+      let foundBpm = 0, foundKey = '', foundBpb = 0;
+      for (const seg of segments) {
+        const s = seg.trim();
+        if (!foundBpm) { const m = s.match(/^(\d+)\s*bpm$/i) || s.match(/(\d+)\s*bpm/i); if (m) foundBpm = parseFloat(m[1]); }
+        if (!foundKey) { const m = s.match(/^([A-G][#b]?(?:m(?:aj|in)?|maj|min)?)$/i); if (m) foundKey = m[1]; }
+        if (!foundBpb) { const m = s.match(/^(\d)\s*[\/:.]\s*4$/); if (m) foundBpb = parseInt(m[1]); }
+      }
+      if (!foundBpm) { const m = (name||'').match(/(\d+)\s*bpm/i); if (m) foundBpm = parseFloat(m[1]); }
+      if (!foundKey) { const m = (name||'').match(/\b([A-G][#b]?(?:m(?:aj|in)?|maj|min)?)\b/); if (m) foundKey = m[1]; }
+      if (!foundBpb) { const m = (name||'').match(/(\d)\s*[\/:.]\s*4/); if (m) foundBpb = parseInt(m[1]); }
+      if (foundBpm > 0) { setSongBpm(foundBpm); setPlayBpm(foundBpm); songBpmRef.current = foundBpm; playBpmRef.current = foundBpm; }
+      else { setSongBpm(0); setPlayBpm(0); songBpmRef.current = 0; playBpmRef.current = 0; }
+      if (foundKey) setSongKey(foundKey); else setSongKey('');
+      if (foundBpb > 0) { setBeatsPerBar(foundBpb); beatsPerBarRef.current = foundBpb; } else { setBeatsPerBar(4); beatsPerBarRef.current = 4; }
+    }
+
     audioCtxRef.current?.close().catch(() => {});
+    originalBuffersRef.current = new Map();
+    soundTouchLatencyRef.current = -1;   // re-medir al próximo processBuffers
+    currentAudioBpmRef.current = 0;      // reiniciar: los buffers cargados son el original
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     audioCtxRef.current = ctx;
 
@@ -146,11 +211,25 @@ export default function MultitrackPlayer({
     masterGain.connect(ctx.destination);
     masterGainRef.current = masterGain;
 
-    // Gain para la pista de guías (independiente del master)
+    // Gain + Panner para la pista de guías (independiente del master)
     const guiasGain = ctx.createGain();
-    guiasGain.gain.value = guiasVolume;
-    guiasGain.connect(masterGain);
+    guiasGain.gain.value = guiasVolume * 6.0;
+    const guiasPanner = ctx.createStereoPanner();
+    guiasPanner.pan.value = -1; // izquierda por defecto
+    guiasGain.connect(guiasPanner);
+    guiasPanner.connect(masterGain);
     guiasGainRef.current = guiasGain;
+    guiasPannerRef.current = guiasPanner;
+
+    // Gain + Panner para metrónomo DAW (izquierda por defecto)
+    const metroGain = ctx.createGain();
+    metroGain.gain.value = metroVolumeRef.current;
+    const metroPanner = ctx.createStereoPanner();
+    metroPanner.pan.value = metroPanRef.current;
+    metroGain.connect(metroPanner);
+    metroPanner.connect(masterGain);
+    metroGainRef.current = metroGain;
+    metroPannerRef.current = metroPanner;
 
     try {
       let completedCount = 0;
@@ -188,6 +267,7 @@ export default function MultitrackPlayer({
         }
 
         const buffer = await ctx.decodeAudioData(arrayBuffer);
+        originalBuffersRef.current.set(fileId, buffer); // guardar original
         const gainNode = ctx.createGain();
         gainNode.gain.value = 1;
         const pannerNode = ctx.createStereoPanner();
@@ -202,18 +282,33 @@ export default function MultitrackPlayer({
         return { id: fileId, name, buffer, gainNode, pannerNode, sourceNode: null, _idx: i };
       }));
 
-      // Restaurar orden original (Promise.all preserva orden, pero por claridad)
-      loaded.sort((a, b) => a._idx - b._idx);
+      // Orden: vocals → backing vocals → [resto] → metro → (Guías es canal aparte, siempre al final)
+      const isMetro   = (name) => /\b(metro(nome)?|click|clic|clave|beat|tempo|drum\s*machine)\b/i.test(name);
+      const isVocal   = (name) => /\bvocals?\b|\bvocales\b|\bvoz\b|\blead\b/i.test(name) && !/backing|bg[\s_-]?vocals?|bv\d?\b/i.test(name);
+      const isBacking = (name) => /\b(backing[\s_-]?vocals?|bg[\s_-]?vocals?|bv\d?|coro)\b/i.test(name);
+
+      const sortPriority = (name) => {
+        if (isVocal(name))   return 0;  // primero
+        if (isBacking(name)) return 1;  // segundo
+        if (isMetro(name))   return 99; // penúltimo (antes de Guías)
+        return 50; // todo lo demás en el medio
+      };
+
+      loaded.sort((a, b) => {
+        const diff = sortPriority(a.name) - sortPriority(b.name);
+        return diff !== 0 ? diff : a._idx - b._idx;
+      });
       loaded.forEach((t) => delete t._idx);
+
+      // Si una llamada más nueva ya tomó el control, descartar esta (StrictMode / cambio rápido)
+      if (loadTracksIdRef.current !== myId) return;
 
       trackDataRef.current = loaded;
       const maxDur = Math.max(...loaded.map((t) => t.buffer.duration));
       durationRef.current = maxDur;
       setDuration(maxDur);
 
-      // Auto-pan: click/metrónomo → izquierda (-1), todo lo demás (drums incluido) → derecha (+1)
-      // "drums" va a la DERECHA — solo el click/metro/clave va a la izquierda
-      const isMetro = (name) => /\b(metro(nome)?|click|clic|clave|beat|tempo|drum\s*machine)\b/i.test(name);
+      // Auto-pan: metro/click → izquierda (-1), todos los demás → derecha (+1)
       const initialStates = loaded.map((t) => {
         const pan = isMetro(t.name) ? -1 : 1;
         t.pannerNode.pan.value = pan;
@@ -222,8 +317,10 @@ export default function MultitrackPlayer({
       setTrackStates(initialStates);
       setLoading(false);
     } catch (e) {
-      setError(e.message);
-      setLoading(false);
+      if (loadTracksIdRef.current === myId) {
+        setError(e.message);
+        setLoading(false);
+      }
     }
   }, [getToken]);
 
@@ -235,7 +332,7 @@ export default function MultitrackPlayer({
       guiasDataRef.current.forEach((g) => { try { g.sourceNode?.stop(); } catch {} });
       audioCtxRef.current?.close().catch(() => {});
     };
-  }, [tracks]);
+  }, [tracks, folderName]);
 
   // Cargar clips de guías desde la DB cuando folderId esté disponible y loading termine
   useEffect(() => {
@@ -248,6 +345,22 @@ export default function MultitrackPlayer({
         if (Array.isArray(data.clips) && data.clips.length > 0) {
           setGuiasClips(data.clips);
         }
+        if (data.trackRegions && typeof data.trackRegions === 'object') {
+          setGuiasTrackRegions(data.trackRegions);
+          savedTrackRegionsRef.current = data.trackRegions;
+        }
+
+        // DB solo aplica si el folderName NO tenía el dato (no sobreescribir el nombre de carpeta)
+        if (data.bpm && parseFloat(data.bpm) > 0 && songBpmRef.current === 0) {
+          const bpm = parseFloat(data.bpm);
+          setSongBpm(bpm); setPlayBpm(bpm);
+          songBpmRef.current = bpm; playBpmRef.current = bpm; currentAudioBpmRef.current = bpm;
+        }
+        if (data.beatsPerBar && beatsPerBarRef.current === 4) {
+          const bpb = parseInt(data.beatsPerBar);
+          setBeatsPerBar(bpb); beatsPerBarRef.current = bpb;
+        }
+        if (data.key && !songKey) setSongKey(data.key);
       })
       .catch(() => {});
   }, [folderId, getToken]);
@@ -300,6 +413,7 @@ export default function MultitrackPlayer({
           }
           if (cancelled) break;
           const buffer = await ctx.decodeAudioData(ab);
+          // Los clips de guía se reproducen completos desde su startTime
           loaded.push({ fileId: clip.fileId, buffer, startTime: clip.startTime, sourceNode: null });
         } catch (e) {
           console.warn("[GuíasPlayer] Error cargando clip:", clip.fileId, e.message);
@@ -311,6 +425,241 @@ export default function MultitrackPlayer({
     return () => { cancelled = true; };
   }, [guiasClips, loading, getToken]);
 
+  // ── Transponer tonalidad ──
+  const KEY_SHARPS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const FLATS_MAP  = {'Db':1,'Eb':3,'Gb':6,'Ab':8,'Bb':10};
+  const transposeKey = (key, semitones) => {
+    if (!key || semitones === 0) return key;
+    const norm = key.trim();
+    let rootIdx = KEY_SHARPS.indexOf(norm.slice(0,2));
+    let rootLen = rootIdx !== -1 ? 2 : 0;
+    if (rootIdx === -1) { rootIdx = KEY_SHARPS.indexOf(norm.slice(0,1)); rootLen = rootIdx !== -1 ? 1 : 0; }
+    if (rootIdx === -1 && FLATS_MAP[norm.slice(0,2)] !== undefined) { rootIdx = FLATS_MAP[norm.slice(0,2)]; rootLen = 2; }
+    if (rootIdx === -1) return key;
+    return KEY_SHARPS[((rootIdx + semitones) % 12 + 12) % 12] + norm.slice(rootLen);
+  };
+
+  // ── Metrónomo schedulado (patrón Web Audio preciso, inmune a latencia de buffer) ──
+  const stopMetroScheduler = () => {
+    if (metroSchedulerRef.current) { clearTimeout(metroSchedulerRef.current); metroSchedulerRef.current = null; }
+    metroNodesRef.current.forEach(n => { try { n.stop(); } catch {} });
+    metroNodesRef.current = [];
+  };
+
+  const scheduleMetroBeats = () => {
+    const ctx = audioCtxRef.current;
+    if (!ctx || ctx.state === 'closed' || !metroEnabledRef.current || !playingRef.current || !playBpmRef.current || !metroGainRef.current) return;
+    const beatInterval = 60 / playBpmRef.current;
+    const scheduleAhead = 0.15; // 150ms lookahead
+
+    while (metroNextBeatTimeRef.current < ctx.currentTime + scheduleAhead) {
+      const beatTime = metroNextBeatTimeRef.current;
+      const beatIndex = metroNextBeatIndexRef.current;
+
+      if (beatTime >= ctx.currentTime - 0.01) {
+        const isDown = (beatIndex % beatsPerBarRef.current) === 0;
+        const freq = isDown ? 1600 : 900;
+        const amp  = isDown ? 0.9  : 0.55;
+
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        env.gain.setValueAtTime(0, beatTime);
+        env.gain.setValueAtTime(amp, beatTime);
+        env.gain.exponentialRampToValueAtTime(0.001, beatTime + 0.035);
+        osc.connect(env);
+        env.connect(metroGainRef.current);
+        osc.start(beatTime);
+        osc.stop(beatTime + 0.04);
+        metroNodesRef.current.push(osc);
+      }
+
+      metroNextBeatTimeRef.current += beatInterval;
+      metroNextBeatIndexRef.current += 1;
+    }
+
+    // Limpiar nodos terminados
+    metroNodesRef.current = metroNodesRef.current.filter(n => {
+      try { return n.playbackState !== n.FINISHED_STATE; } catch { return false; }
+    });
+
+    metroSchedulerRef.current = setTimeout(scheduleMetroBeats, 25);
+  };
+
+  const startMetroScheduler = (fromOffset, startAt) => {
+    stopMetroScheduler();
+    if (!metroEnabledRef.current || !playBpmRef.current || !metroGainRef.current) return;
+    const beatInterval = 60 / playBpmRef.current;
+    // Beat más cercano mayor o igual a fromOffset
+    const firstBeatIdx = Math.round(fromOffset / beatInterval);
+    const firstBeatOffset = firstBeatIdx * beatInterval;
+    const adjustedIdx = firstBeatOffset < fromOffset - 0.001 ? firstBeatIdx + 1 : firstBeatIdx;
+    const adjustedOffset = adjustedIdx * beatInterval;
+
+    metroNextBeatTimeRef.current = startAt + (adjustedOffset - fromOffset);
+    metroNextBeatIndexRef.current = adjustedIdx;
+    scheduleMetroBeats();
+  };
+
+  // ── Mide latencia de arranque de SoundTouch (ejecutar una sola vez) ──
+  const measureSoundTouchLatency = async () => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return 0;
+    const sr = ctx.sampleRate;
+    const inputLen = Math.ceil(0.5 * sr); // 0.5s de señal
+    const inputBuf = ctx.createBuffer(2, inputLen, sr);
+    for (let c = 0; c < 2; c++) {
+      const d = inputBuf.getChannelData(c);
+      for (let i = 0; i < inputLen; i++) d[i] = 0.5 * Math.sin(2 * Math.PI * 440 * i / sr);
+    }
+    const offCtx = new OfflineAudioContext(2, inputLen + sr, sr);
+    const st = new SoundTouch();
+    st.tempo = 1; st.pitchSemitones = 0;
+    const filter = new SimpleFilter(new WebAudioBufferSource(inputBuf), st);
+    const node = getWebAudioNode(offCtx, filter);
+    node.connect(offCtx.destination);
+    const rendered = await offCtx.startRendering();
+    const ch = rendered.getChannelData(0);
+    for (let i = 0; i < ch.length; i++) {
+      if (Math.abs(ch[i]) > 0.001) return i;
+    }
+    return 0;
+  };
+
+  // ── Recorta samples del inicio de un AudioBuffer ──
+  const trimBuffer = (buffer, trimSamples) => {
+    if (trimSamples <= 0) return buffer;
+    const ctx = audioCtxRef.current;
+    const newLen = buffer.length - trimSamples;
+    if (newLen <= 0) return buffer;
+    const trimmed = ctx.createBuffer(buffer.numberOfChannels, newLen, buffer.sampleRate);
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      trimmed.getChannelData(c).set(buffer.getChannelData(c).subarray(trimSamples));
+    }
+    return trimmed;
+  };
+
+  // ── Time-stretch + Pitch-shift con SoundTouch vía OfflineAudioContext ──
+  const renderWithSoundTouch = (origBuf, tempoRatio, semitones) => {
+    const sampleRate = origBuf.sampleRate;
+    // Duración de salida: ajustada por tempo + 1s de colchón para latencia SoundTouch
+    const outputLength = Math.ceil(origBuf.length / tempoRatio) + sampleRate;
+    const offCtx = new OfflineAudioContext(2, outputLength, sampleRate);
+    const st = new SoundTouch();
+    st.tempo = tempoRatio;
+    st.pitchSemitones = semitones;
+    const waSrc = new WebAudioBufferSource(origBuf);
+    const filter = new SimpleFilter(waSrc, st);
+    const node = getWebAudioNode(offCtx, filter);
+    node.connect(offCtx.destination);
+    return offCtx.startRendering();
+  };
+
+  const processBuffers = async (newBpm, semitones) => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    const myId = ++processingIdRef.current;
+    const origBpm = songBpmRef.current;
+    const tempoRatio = (origBpm > 0 && newBpm > 0) ? newBpm / origBpm : 1;
+    const identity = Math.abs(tempoRatio - 1) < 0.001 && Math.abs(semitones) < 0.01;
+
+    // Invariante: currentAudioBpmRef siempre refleja el BPM en que está expresado offsetRef.
+    // Se actualiza de forma EAGER (antes del render) para que llamadas rápidas encadenadas escalen bien.
+    const prevAudioBpm = currentAudioBpmRef.current || origBpm;
+
+    // ── Helper: escala el offset del dominio prevAudioBpm → targetBpm ──
+    const scaleOffset = (rawOffset, fromBpm, toBpm) =>
+      (fromBpm > 0 && toBpm > 0 && fromBpm !== toBpm) ? rawOffset * fromBpm / toBpm : rawOffset;
+
+    if (identity) {
+      originalBuffersRef.current.forEach((buf, fileId) => {
+        const t = trackDataRef.current.find(t => t.id === fileId);
+        if (t) t.buffer = buf;
+      });
+      const origDur = trackDataRef.current.reduce((max, t) => t.buffer ? Math.max(max, t.buffer.duration) : max, 0);
+      if (origDur > 0) { durationRef.current = origDur; setDuration(origDur); }
+      if (playingRef.current) {
+        const elapsed = ctx.currentTime - startTimeRef.current;
+        clearInterval(timerRef.current); stopSources();
+        offsetRef.current = Math.max(0, scaleOffset(elapsed, prevAudioBpm, origBpm));
+        playingRef.current = false; setPlaying(false);
+      } else {
+        offsetRef.current = Math.max(0, scaleOffset(offsetRef.current, prevAudioBpm, origBpm));
+      }
+      currentAudioBpmRef.current = origBpm;
+      setProcessing(false);
+      if (!playingRef.current) {
+        await new Promise(r => setTimeout(r, 30));
+        startPlayback(Math.min(offsetRef.current, durationRef.current));
+      }
+      return;
+    }
+
+    setProcessing(true);
+    const wasPlaying = playingRef.current;
+    if (wasPlaying) {
+      const elapsed = ctx.currentTime - startTimeRef.current;
+      clearInterval(timerRef.current); stopSources();
+      // Escalar desde buffer actual → nuevo buffer
+      offsetRef.current = Math.max(0, scaleOffset(elapsed, prevAudioBpm, newBpm));
+      playingRef.current = false; setPlaying(false);
+    } else {
+      // No estaba reproduciendo (llamada anterior ya lo detuvo), pero offsetRef puede estar
+      // en el dominio BPM de esa llamada anterior → escalar al dominio del nuevo BPM
+      offsetRef.current = Math.max(0, scaleOffset(offsetRef.current, prevAudioBpm, newBpm));
+    }
+    // Actualizar AHORA para que llamadas rápidas subsiguientes usen el BPM correcto
+    currentAudioBpmRef.current = newBpm;
+
+    for (const track of trackDataRef.current) {
+      if (myId !== processingIdRef.current) return;
+      const origBuf = originalBuffersRef.current.get(track.id);
+      if (!origBuf) continue;
+      try {
+        const rendered = await renderWithSoundTouch(origBuf, tempoRatio, semitones);
+        if (myId !== processingIdRef.current) return;
+        // Medir latencia SoundTouch una sola vez y recortar todos los buffers
+        if (soundTouchLatencyRef.current < 0) {
+          soundTouchLatencyRef.current = await measureSoundTouchLatency();
+          if (myId !== processingIdRef.current) return;
+        }
+        track.buffer = trimBuffer(rendered, soundTouchLatencyRef.current);
+      } catch (e) {
+        console.warn('[SoundTouch] Render failed for', track.id, e);
+      }
+    }
+
+    if (myId !== processingIdRef.current) return;
+
+    // Actualizar duración y BPM actual del buffer
+    const newDur = trackDataRef.current.reduce((max, t) => t.buffer ? Math.max(max, t.buffer.duration) : max, 0);
+    if (newDur > 0) {
+      durationRef.current = newDur;
+      setDuration(newDur);
+    }
+    // currentAudioBpmRef ya se actualizó en la fase de stop (eager)
+
+    setProcessing(false);
+    if (wasPlaying) {
+      if (ctx.state === 'suspended') await ctx.resume();
+      await new Promise(r => setTimeout(r, 30));
+      startPlayback(Math.min(offsetRef.current, durationRef.current));
+    }
+  };
+
+  const handleBpmChange = (delta) => {
+    const newBpm = Math.max(40, Math.min(240, (playBpm || songBpm) + delta));
+    setPlayBpm(newBpm); playBpmRef.current = newBpm;
+    processBuffers(newBpm, playSemitonesRef.current);
+  };
+
+  const handleSemitoneChange = (delta) => {
+    const newSt = Math.max(-12, Math.min(12, playSemitones + delta));
+    setPlaySemitones(newSt); playSemitonesRef.current = newSt;
+    processBuffers(playBpmRef.current, newSt);
+  };
+
   const stopSources = () => {
     trackDataRef.current.forEach((t) => {
       try { t.sourceNode?.stop(); } catch {}
@@ -321,6 +670,8 @@ export default function MultitrackPlayer({
       try { g.sourceNode?.stop(); } catch {}
       g.sourceNode = null;
     });
+    // Detener metrónomo DAW (scheduler)
+    stopMetroScheduler();
   };
 
   const startPlayback = (fromOffset) => {
@@ -328,31 +679,59 @@ export default function MultitrackPlayer({
     const startAt = ctx.currentTime + 0.05;
     startTimeRef.current = startAt - fromOffset;
 
+    // Reproducir pistas principales aplicando trackRegions (cortes/eliminaciones del editor)
     trackDataRef.current.forEach((t) => {
-      if (fromOffset >= t.buffer.duration) return;
-      const src = ctx.createBufferSource();
-      src.buffer = t.buffer;
-      src.connect(t.gainNode);
-      src.start(startAt, fromOffset);
-      t.sourceNode = src;
+      const regs = savedTrackRegionsRef.current[t.id];
+      if (regs && regs.length > 0) {
+        // Pista editada: programar solo los segmentos activos
+        regs.forEach(r => {
+          if (fromOffset >= r.end) return;
+          const fileOff   = r.fileOffset ?? r.start;
+          const regDur    = r.end - r.start;
+          const skipInReg = fromOffset > r.start ? fromOffset - r.start : 0;
+          const bufOff    = fileOff + skipInReg;
+          const segDur    = regDur - skipInReg;
+          const delay     = r.start > fromOffset ? r.start - fromOffset : 0;
+          if (segDur <= 0 || bufOff >= t.buffer.duration) return;
+          const src = ctx.createBufferSource();
+          src.buffer = t.buffer;
+          src.connect(t.gainNode);
+          src.start(startAt + delay, bufOff, Math.min(segDur, t.buffer.duration - bufOff));
+          t.sourceNode = src;
+        });
+      } else {
+        // Sin editar: reproducir completa
+        if (fromOffset >= t.buffer.duration) return;
+        const src = ctx.createBufferSource();
+        src.buffer = t.buffer;
+        src.connect(t.gainNode);
+        src.start(startAt, fromOffset);
+        t.sourceNode = src;
+      }
     });
 
-    // Reproducir clips de guías en sus posiciones
+    // Reproducir clips de guías en sus posiciones (sin edición de regiones)
     guiasDataRef.current.forEach((g) => {
       if (!g.buffer) return;
       const clipEnd = g.startTime + g.buffer.duration;
-      if (fromOffset >= clipEnd) return; // ya pasó
+      if (fromOffset >= clipEnd) return;
       const clipOffset = Math.max(0, fromOffset - g.startTime);
-      const startDelay = g.startTime > fromOffset ? (g.startTime - fromOffset) : 0;
+      const delay = g.startTime > fromOffset ? g.startTime - fromOffset : 0;
       const src = ctx.createBufferSource();
       src.buffer = g.buffer;
       src.connect(guiasGainRef.current);
-      src.start(startAt + startDelay, clipOffset);
+      src.start(startAt + delay, clipOffset);
       g.sourceNode = src;
     });
 
+    // Marcar como playing ANTES del scheduler (scheduleMetroBeats verifica playingRef)
     setPlaying(true);
     playingRef.current = true;
+
+    // Metrónomo DAW: scheduler preciso basado en ctx.currentTime (inmune a latencia de buffer)
+    if (metroEnabledRef.current && playBpmRef.current > 0 && metroGainRef.current) {
+      startMetroScheduler(fromOffset, startAt);
+    }
 
     timerRef.current = setInterval(() => {
       if (!playingRef.current) return;
@@ -397,12 +776,26 @@ export default function MultitrackPlayer({
     if (wasPlaying) startPlayback(time);
   };
 
-  const recalcGains = (states) => {
-    const anySoloed = states.some((t) => t.soloed);
+  const recalcGains = (states, nextGuiasSoloed = guiasSoloed, nextGuiasMuted = guiasMuted) => {
+    const anySoloed = states.some((t) => t.soloed) || nextGuiasSoloed;
     states.forEach((t, i) => {
       const active = anySoloed ? t.soloed : !t.muted;
       trackDataRef.current[i].gainNode.gain.value = active ? t.volume : 0;
     });
+    // Actualizar gain de guías
+    const guiasActive = anySoloed ? nextGuiasSoloed : !nextGuiasMuted;
+    if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasActive ? guiasVolume * 6.0 : 0;
+  };
+
+  const toggleGuiasSolo = () => {
+    const next = !guiasSoloed;
+    setGuiasSoloed(next);
+    recalcGains(trackStates, next, guiasMuted);
+  };
+
+  const setGuiasPanValue = (v) => {
+    setGuiasPan(v);
+    if (guiasPannerRef.current) guiasPannerRef.current.pan.value = v;
   };
 
   const setTrackVolume = (i, v) => {
@@ -473,6 +866,15 @@ export default function MultitrackPlayer({
               <ListMusic size={17} />
             </button>
           )}
+          {onSwitchToEditor && (
+            <button
+              onClick={onSwitchToEditor}
+              title="Cambiar a Modo Edición"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition shrink-0"
+            >
+              <Pencil size={13}/> Modo Edición
+            </button>
+          )}
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-white transition p-1.5 rounded-lg hover:bg-gray-800"
@@ -508,6 +910,95 @@ export default function MultitrackPlayer({
       {/* Mixer + Transport */}
       {!loading && !error && (
         <>
+          {/* ── Barra BPM / Key / Metro ── */}
+          {songBpm > 0 && (
+            <div className="shrink-0 bg-gray-900 border-b border-gray-800 px-3 py-1.5 flex items-center gap-3 flex-wrap">
+              {/* BPM */}
+              <div className="flex items-center gap-1">
+                <span className="text-gray-500 text-[10px] font-bold tracking-widest">BPM</span>
+                <button onClick={() => handleBpmChange(-1)} className="w-5 h-5 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 text-xs flex items-center justify-center select-none">−</button>
+                <span className="text-white text-xs tabular-nums font-mono w-8 text-center">{playBpm || songBpm}</span>
+                <button onClick={() => handleBpmChange(+1)} className="w-5 h-5 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 text-xs flex items-center justify-center select-none">+</button>
+                {(playBpm && playBpm !== songBpm) && (
+                  <button onClick={() => { setPlayBpm(songBpm); playBpmRef.current = songBpm; processBuffers(songBpm, playSemitonesRef.current); }}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 ml-0.5" title="Restaurar BPM original">↺</button>
+                )}
+              </div>
+              <div className="w-px h-4 bg-gray-700 shrink-0" />
+              {/* Key */}
+              {songKey && (
+                <>
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-500 text-[10px] font-bold tracking-widest">KEY</span>
+                    <button onClick={() => handleSemitoneChange(-1)} className="w-5 h-5 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 text-xs flex items-center justify-center select-none">−</button>
+                    <span className="text-white text-xs font-mono w-10 text-center">
+                      {playSemitones !== 0
+                        ? <>{songKey}<span className="text-gray-500 mx-0.5">→</span>{transposeKey(songKey, playSemitones)}</>
+                        : songKey}
+                    </span>
+                    <button onClick={() => handleSemitoneChange(+1)} className="w-5 h-5 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 text-xs flex items-center justify-center select-none">+</button>
+                    {playSemitones !== 0 && (
+                      <button onClick={() => { setPlaySemitones(0); playSemitonesRef.current = 0; processBuffers(playBpmRef.current, 0); }}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 ml-0.5" title="Restaurar tonalidad original">↺</button>
+                    )}
+                  </div>
+                  <div className="w-px h-4 bg-gray-700 shrink-0" />
+                </>
+              )}
+              {/* Beat */}
+              <span className="text-gray-400 text-[11px] font-mono">{beatsPerBar}/4</span>
+              <div className="w-px h-4 bg-gray-700 shrink-0" />
+              {/* Metrónomo */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    const next = !metroEnabled;
+                    setMetroEnabled(next);
+                    metroEnabledRef.current = next;
+                    if (!next) {
+                      // Apagar en vivo: detener scheduler
+                      stopMetroScheduler();
+                    } else if (playingRef.current) {
+                      // Encender en vivo: arrancar scheduler desde posición actual
+                      const ctx = audioCtxRef.current;
+                      if (ctx && playBpmRef.current > 0) {
+                        const currentOffset = ctx.currentTime - startTimeRef.current;
+                        startMetroScheduler(Math.max(0, currentOffset), ctx.currentTime + 0.02);
+                      }
+                    }
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition select-none ${metroEnabled ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-500 hover:text-white hover:bg-gray-700'}`}
+                >♩ METRO</button>
+                {/* Volumen metro — siempre visible */}
+                <input type="range" min={0} max={3} step={0.05} value={metroVolume}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    setMetroVolume(v); metroVolumeRef.current = v;
+                    if (metroGainRef.current) metroGainRef.current.gain.value = v;
+                  }}
+                  className="w-16 h-1 accent-emerald-500 cursor-pointer"
+                />
+                {/* Pan metro */}
+                <button
+                  onClick={() => {
+                    const next = metroPan === -1 ? 0 : -1;
+                    setMetroPan(next); metroPanRef.current = next;
+                    if (metroPannerRef.current) metroPannerRef.current.pan.value = next;
+                  }}
+                  className={`text-[10px] font-bold rounded px-1.5 py-0.5 transition select-none ${metroPan === -1 ? 'bg-gray-700 text-white' : 'bg-emerald-600 text-white'}`}
+                  title={metroPan === -1 ? 'Centrar metrónomo' : 'Metrónomo a la izquierda'}
+                >{metroPan === -1 ? 'L' : 'C'}</button>
+              </div>
+              {/* Indicador de procesamiento */}
+              {processing && (
+                <div className="flex items-center gap-1 ml-auto">
+                  <Loader2 size={11} className="animate-spin text-indigo-400" />
+                  <span className="text-indigo-400 text-[10px]">Procesando…</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Panel setlist — lateral derecho, no tapa los faders */}
           {showSetlist && isSetlist && (
             <div className="absolute right-0 top-0 bottom-0 z-10 w-56 bg-gray-900 border-l border-gray-700 flex flex-col shadow-2xl">
@@ -547,12 +1038,16 @@ export default function MultitrackPlayer({
                 const color = TRACK_COLORS[i % TRACK_COLORS.length];
                 const anySoloed = trackStates.some((ts) => ts.soloed);
                 const isActive = anySoloed ? t.soloed : !t.muted;
+                const isMetroTrack   = /\b(metro(nome)?|click|clic|clave|beat|tempo|drum\s*machine)\b/i.test(t.name);
+                const isVocalTrack   = /\bvocals?\b|\bvocales\b|\bvoz\b|\blead\b/i.test(t.name) && !/backing|bg[\s_-]?vocals?|bv\d?\b/i.test(t.name);
+                const isBackingTrack = /\b(backing[\s_-]?vocals?|bg[\s_-]?vocals?|bv\d?|coro)\b/i.test(t.name);
+                const cssOrder = isMetroTrack ? 999 : isVocalTrack ? 0 : isBackingTrack ? 1 : i + 10;
 
                 return (
                   <div
                     key={i}
                     className={`flex flex-col items-center gap-1.5 px-2 border-r border-gray-800 last:border-r-0 transition-opacity`}
-                    style={{ width: 68, minWidth: 68, opacity: isActive ? 1 : 0.28 }}
+                    style={{ width: 68, minWidth: 68, opacity: isActive ? 1 : 0.28, order: cssOrder }}
                   >
                     {/* Top color bar */}
                     <div className="w-10 h-0.5 rounded-full" style={{ backgroundColor: color }} />
@@ -639,10 +1134,13 @@ export default function MultitrackPlayer({
               })}
 
               {/* Canal de Guías (si hay clips cargados) */}
-              {guiasClips.length > 0 && (
+              {guiasClips.length > 0 && (() => {
+                const anyTrackSoloed = trackStates.some(ts => ts.soloed) || guiasSoloed;
+                const guiasActive = anyTrackSoloed ? guiasSoloed : !guiasMuted;
+                return (
                 <div
                   className={`flex flex-col items-center gap-1.5 px-2 border-r border-gray-800 transition-opacity`}
-                  style={{ width: 68, minWidth: 68, opacity: guiasMuted ? 0.28 : 1 }}
+                  style={{ width: 68, minWidth: 68, opacity: guiasActive ? 1 : 0.28, order: 998 }}
                 >
                   <div className="w-10 h-0.5 rounded-full bg-emerald-500" />
                   <div className="h-9 flex items-center justify-center px-0.5 w-full">
@@ -664,7 +1162,7 @@ export default function MultitrackPlayer({
                       onChange={(e) => {
                         const v = parseFloat(e.target.value);
                         setGuiasVolume(v);
-                        if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasMuted ? 0 : v;
+                        if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasMuted ? 0 : v * 6.0;
                       }}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                       style={{ writingMode: "vertical-lr", direction: "rtl", WebkitAppearance: "slider-vertical" }}
@@ -673,22 +1171,48 @@ export default function MultitrackPlayer({
                   <span className="text-gray-500 text-[10px] tabular-nums">{Math.round(guiasVolume * 100)}</span>
                   <button
                     onClick={() => {
-                      const next = !guiasMuted;
-                      setGuiasMuted(next);
-                      if (guiasGainRef.current) guiasGainRef.current.gain.value = next ? 0 : guiasVolume;
+                      const nextMuted = !guiasMuted;
+                      setGuiasMuted(nextMuted);
+                      recalcGains(trackStates, guiasSoloed, nextMuted);
                     }}
                     className={`w-full py-1 rounded text-[10px] font-bold transition select-none ${
                       guiasMuted ? "bg-red-500 text-white" : "bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700"
                     }`}
                   >M</button>
-                  <div className="w-full h-6 mb-1" />
+
+                  {/* Solo */}
+                  <button
+                    onClick={toggleGuiasSolo}
+                    className={`w-full py-1 rounded text-[10px] font-bold transition select-none ${
+                      guiasSoloed ? "bg-yellow-400 text-gray-900" : "bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700"
+                    }`}
+                  >S</button>
+
+                  {/* Pan label */}
+                  <span className="text-gray-500 text-[10px] tabular-nums mt-1">
+                    {guiasPan < -0.04 ? `L${Math.round(-guiasPan * 100)}` : guiasPan > 0.04 ? `R${Math.round(guiasPan * 100)}` : "C"}
+                  </span>
+
+                  {/* Pan slider — doble clic para centrar */}
+                  <div className="w-full relative mb-1" title="Balance (doble clic = centro)">
+                    <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-700 -translate-y-1/2 pointer-events-none" />
+                    <div className="absolute top-1/2 left-1/2 w-px h-2 bg-gray-600 -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="range" min={-1} max={1} step={0.02} value={guiasPan}
+                      onChange={(e) => setGuiasPanValue(parseFloat(e.target.value))}
+                      onDoubleClick={() => setGuiasPanValue(0)}
+                      className="w-full h-4 opacity-100 cursor-pointer relative"
+                      style={{ accentColor: "#10b981" }}
+                    />
+                  </div>
                 </div>
-              )}
+                );
+              })()}
 
               {/* Master channel */}
               <div
                 className="flex flex-col items-center gap-1.5 px-2 border-l-2 border-gray-600 ml-1"
-                style={{ width: 68, minWidth: 68 }}
+                style={{ width: 68, minWidth: 68, order: 1000 }}
               >
                 <div className="w-10 h-0.5 rounded-full bg-indigo-500" />
                 <div className="h-9 flex items-center justify-center">

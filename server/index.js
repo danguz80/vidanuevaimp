@@ -3027,11 +3027,26 @@ app.get("/api/musica/canciones", authenticateMiembro, async (req, res) => {
 pool.query(`
   CREATE TABLE IF NOT EXISTS musica_guias (
     id           SERIAL PRIMARY KEY,
-    folder_id    TEXT NOT NULL UNIQUE,   -- Drive folder ID de la canción
+    folder_id    TEXT NOT NULL UNIQUE,
     clips        JSONB NOT NULL DEFAULT '[]',
+    track_regions JSONB NOT NULL DEFAULT '{}',
+    bpm          NUMERIC(6,2) NOT NULL DEFAULT 120,
+    beats_per_bar INT NOT NULL DEFAULT 4,
+    song_key     TEXT NOT NULL DEFAULT '',
     updated_at   TIMESTAMPTZ DEFAULT NOW()
   )
-`).catch(e => console.error("[musica_guias] Error creando tabla:", e.message));
+`)
+.then(() => {
+  // Migración: agregar columnas nuevas si ya existía la tabla sin ellas
+  return pool.query(`
+    ALTER TABLE musica_guias
+      ADD COLUMN IF NOT EXISTS track_regions  JSONB    NOT NULL DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS bpm            NUMERIC(6,2) NOT NULL DEFAULT 120,
+      ADD COLUMN IF NOT EXISTS beats_per_bar  INT      NOT NULL DEFAULT 4,
+      ADD COLUMN IF NOT EXISTS song_key       TEXT     NOT NULL DEFAULT ''
+  `);
+})
+.catch(e => console.error("[musica_guias] Error creando/migrando tabla:", e.message));
 
 // GET /api/musica/guias/archivos — lista archivos de la carpeta "Guias en Español"
 app.get("/api/musica/guias/archivos", authenticateMiembro, async (req, res) => {
@@ -3065,24 +3080,48 @@ app.get("/api/musica/guias/archivos", authenticateMiembro, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/musica/guias/:folderId — obtener clips guardados de una canción
+// GET /api/musica/guias/:folderId — obtener datos guardados de una canción
 app.get("/api/musica/guias/:folderId", authenticateMiembro, async (req, res) => {
   try {
-    const r = await pool.query("SELECT clips FROM musica_guias WHERE folder_id = $1", [req.params.folderId]);
-    if (!r.rows.length) return res.json({ clips: [] });
-    res.json({ clips: r.rows[0].clips });
+    const r = await pool.query(
+      "SELECT clips, track_regions, bpm, beats_per_bar, song_key FROM musica_guias WHERE folder_id = $1",
+      [req.params.folderId]
+    );
+    if (!r.rows.length) return res.json({ clips: [], trackRegions: {}, bpm: 120, beatsPerBar: 4, key: "" });
+    const row = r.rows[0];
+    res.json({
+      clips:        row.clips,
+      trackRegions: row.track_regions,
+      bpm:          parseFloat(row.bpm),
+      beatsPerBar:  row.beats_per_bar,
+      key:          row.song_key,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/musica/guias/:folderId — guardar/actualizar clips de una canción
+// POST /api/musica/guias/:folderId — guardar/actualizar datos de una canción
 app.post("/api/musica/guias/:folderId", authenticateMiembro, async (req, res) => {
-  const { clips } = req.body;
+  const { clips, trackRegions, bpm, beatsPerBar, key } = req.body;
   if (!Array.isArray(clips)) return res.status(400).json({ error: "clips debe ser un array" });
   try {
     await pool.query(
-      `INSERT INTO musica_guias (folder_id, clips) VALUES ($1, $2)
-       ON CONFLICT (folder_id) DO UPDATE SET clips = EXCLUDED.clips, updated_at = NOW()`,
-      [req.params.folderId, JSON.stringify(clips)]
+      `INSERT INTO musica_guias (folder_id, clips, track_regions, bpm, beats_per_bar, song_key)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (folder_id) DO UPDATE SET
+         clips         = EXCLUDED.clips,
+         track_regions = EXCLUDED.track_regions,
+         bpm           = EXCLUDED.bpm,
+         beats_per_bar = EXCLUDED.beats_per_bar,
+         song_key      = EXCLUDED.song_key,
+         updated_at    = NOW()`,
+      [
+        req.params.folderId,
+        JSON.stringify(clips),
+        JSON.stringify(trackRegions ?? {}),
+        bpm ?? 120,
+        beatsPerBar ?? 4,
+        key ?? "",
+      ]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }

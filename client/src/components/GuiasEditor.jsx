@@ -12,7 +12,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   X, Loader2, Play, Pause, Square, Save, Trash2,
   GripHorizontal, ChevronLeft, ChevronRight, Music2,
-  ZoomIn, ZoomOut, Plus, Scissors, MousePointer, Volume2, VolumeX,
+  ZoomIn, ZoomOut, Plus, Scissors, MousePointer, Volume2, VolumeX, Undo2, Maximize2, Layers,
 } from "lucide-react";
 import { idbGet, idbSet } from "../utils/audioOfflineCache";
 
@@ -32,19 +32,45 @@ function fmt(s)   { if (!Number.isFinite(s)||s<0) return "0:00"; return `${Math.
 function fmtMs(s) { if (!Number.isFinite(s)||s<0) return "0:00.0"; return `${Math.floor(s/60)}:${(s%60).toFixed(1).padStart(4,"0")}`; }
 function sinExt(n){ return (n||"").replace(/\.[^.]+$/,""); }
 
+/**
+ * parseFolderName — extrae clave, BPM y compas del nombre de carpeta.
+ * Formato esperado: "Nombre cancion - G - 110bpm - 4/4"
+ * También soporta variaciones como "Gm", "F#", "Bb", "110 bpm", "3/4", etc.
+ */
+function parseFolderName(name = "") {
+  const result = { key: null, bpm: null, beatsPerBar: null };
+  // BPM: número seguido opcionalmente de espacio y "bpm"
+  const bpmMatch = name.match(/(\d{2,3})\s*bpm/i);
+  if (bpmMatch) result.bpm = parseInt(bpmMatch[1], 10);
+  // Time signature: dígito/dígito
+  const tsMatch = name.match(/(\d+)\/(\d+)/);
+  if (tsMatch) result.beatsPerBar = parseInt(tsMatch[1], 10);
+  // Clave musical: letra A-G, opcionalmente seguida de # o b, luego m/min/maj/M
+  // Buscamos segmentos separados por " - " o " |"
+  const keyMatch = name.match(/(?:^|\s+-\s+)([A-Ga-g][#b]?(?:m|min|maj|M)?(?:\d)?(?![a-z]))/g);
+  if (keyMatch) {
+    // tomar el que no sea el nombre de la canción (generalmente 2do segmento)
+    const keys = keyMatch.map(s => s.replace(/^\s*-\s*/, "").trim());
+    result.key = keys[0] || null;
+  }
+  return result;
+}
+
 let _uid=1;
 const uid = () => `id_${Date.now()}_${_uid++}`;
 
 /* ─── Dibujo de waveform con regiones activas ─────────────────────────────── */
-function drawWaveformWithRegions(canvas, buffer, color, regions, selectedId) {
+function drawWaveformWithRegions(canvas, buffer, color, regions, selectedId, gridLines, zoom, multiSelIds) {
   if (!canvas || !buffer) return;
-  const ctx  = canvas.getContext("2d");
-  const W    = canvas.width;
-  const H    = canvas.height;
-  const dur  = buffer.duration;
-  const data = buffer.getChannelData(0);
-  const step = Math.max(1, Math.floor(data.length / W));
-  const amp  = (H / 2) * 0.88;
+  const ctx    = canvas.getContext("2d");
+  const W      = canvas.width;
+  const H      = canvas.height;
+  const dur    = buffer.duration;
+  const data   = buffer.getChannelData(0);
+  // píxeles que ocupa realmente el audio (puede ser < W si la pista es más corta)
+  const W_audio = Math.min(W, Math.ceil(dur * zoom));
+  const step    = Math.max(1, Math.floor(data.length / W_audio));
+  const amp     = (H / 2) * 0.88;
 
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = "#ffffff06";
@@ -55,43 +81,67 @@ function drawWaveformWithRegions(canvas, buffer, color, regions, selectedId) {
   ctx.lineWidth = 0.5;
   ctx.beginPath(); ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
 
-  // helper: dibuja líneas de waveform entre columnas x1..x2
-  const drawLines = (x1, x2, strokeColor, lw=1) => {
+  // helper: dibuja líneas de waveform entre columnas px1..px2
+  // x1Region: píxel absoluto donde empieza la región en el canvas
+  // fileOffset: segundos en el archivo de audio donde empieza la región
+  const drawLines = (px1, px2, x1Region, fileOffset, strokeColor, lw=1) => {
+    const a1 = Math.max(0, px1);
+    const a2 = Math.min(W_audio, px2); // no dibujar más allá del audio real
+    if (a1 >= a2) return;
     ctx.strokeStyle = strokeColor; ctx.lineWidth = lw; ctx.beginPath();
-    for (let i=Math.max(0,x1); i<Math.min(W,x2); i++) {
+    for (let px = a1; px < a2; px++) {
+      // tiempo en el archivo de audio = fileOffset + posición relativa dentro de la región
+      const fileTime = fileOffset + (px - x1Region) / zoom;
+      if (fileTime < 0 || fileTime >= dur) continue;
+      const si = Math.floor((fileTime / dur) * data.length);
       let mn=0, mx=0;
-      for (let j=0;j<step;j++) { const d=data[i*step+j]??0; if(d<mn)mn=d; if(d>mx)mx=d; }
-      ctx.moveTo(i+.5, H/2+mn*amp); ctx.lineTo(i+.5, H/2+mx*amp);
+      for (let j=0;j<step;j++) { const d=data[si+j]??0; if(d<mn)mn=d; if(d>mx)mx=d; }
+      ctx.moveTo(px+.5, H/2+mn*amp); ctx.lineTo(px+.5, H/2+mx*amp);
     }
     ctx.stroke();
   };
 
-  // 1. waveform completa tenue (fondo / zonas eliminadas)
-  drawLines(0, W, color+"22");
-
-  // 2. por cada región activa, dibujar la waveform viva + borde
+  // Solo dibujamos las regiones activas — las zonas eliminadas quedan vacías
   for (const r of regions) {
-    const x1 = Math.floor((r.start/dur)*W);
-    const x2 = Math.ceil ((r.end  /dur)*W);
+    const x1 = Math.floor(r.start * zoom);
+    const x2 = Math.ceil (r.end   * zoom);
     const sel = r.id === selectedId;
+    const multiSel = !sel && (multiSelIds?.has(r.id) ?? false);
+    // fileOffset: dónde en el archivo de audio empieza esta región (por defecto = r.start para compatibilidad)
+    const fileOff = r.fileOffset ?? r.start;
 
-    ctx.fillStyle = sel ? color+"44" : color+"1c";
+    ctx.fillStyle = sel ? color+"44" : multiSel ? "#6366f130" : color+"1c";
     ctx.fillRect(x1, 0, x2-x1, H);
 
     ctx.save();
     ctx.beginPath(); ctx.rect(x1,0,x2-x1,H); ctx.clip();
-    drawLines(x1, x2, sel?"#ffffff": color, sel?1.3:1);
+    drawLines(x1, x2, x1, fileOff, (sel||multiSel)?"#ffffff": color, (sel||multiSel)?1.3:1);
     ctx.restore();
 
-    ctx.strokeStyle = sel ? "#ffffffa0" : color+"80";
-    ctx.lineWidth   = sel ? 1.5 : 1;
+    ctx.strokeStyle = sel ? "#ffffffa0" : multiSel ? "#6366f1c0" : color+"80";
+    ctx.lineWidth   = sel ? 1.5 : (multiSel ? 1.5 : 1);
     ctx.strokeRect(x1+.5, .5, x2-x1-1, H-1);
+  }
+
+  // 3. líneas de grid (beats y barras) encima de todo
+  if (gridLines) {
+    if (gridLines.beats?.length) {
+      ctx.strokeStyle = "#ffffff0a"; ctx.lineWidth = 1; ctx.beginPath();
+      gridLines.beats.forEach(x => { ctx.moveTo(x+.5,0); ctx.lineTo(x+.5,H); });
+      ctx.stroke();
+    }
+    if (gridLines.bars?.length) {
+      ctx.strokeStyle = "#ffffff1a"; ctx.lineWidth = 1; ctx.beginPath();
+      gridLines.bars.forEach(x => { ctx.moveTo(x+.5,0); ctx.lineTo(x+.5,H); });
+      ctx.stroke();
+    }
   }
 }
 
 /* ─── Componente principal ────────────────────────────────────────────────── */
-export default function GuiasEditor({ folderId, folderName, tracks=[], getToken, onClose, onSaved }) {
-
+export default function GuiasEditor({ folderId, folderName, tracks=[], getToken, onClose, onSaved, onSwitchToMultitrack=null }) {
+  /* Extraer metadatos del nombre de carpeta una sola vez */
+  const folderMeta = React.useMemo(() => parseFolderName(folderName), [folderName]);
   /* refs de audio */
   const ctxRef        = useRef(null);
   const masterGainRef = useRef(null);
@@ -102,7 +152,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const playingRef    = useRef(false);
   const tickRef       = useRef(null);
   const durationRef   = useRef(0);
-  const guiaSrcRef    = useRef(null);
+  const guiaSrcRef    = useRef([]);  // array de BufferSourceNodes activos de guías
 
   /* state */
   const [buffers,       setBuffers]       = useState({});
@@ -116,17 +166,25 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const [loadingClips,  setLoadingClips]  = useState(true);
   /* trackRegions: { [fid]: [{id,start,end}] }  — no entry = 1 región completa */
   const [trackRegions,  setTrackRegions]  = useState({});
+  const historyRef    = useRef([]); // stack de snapshots de trackRegions para undo
+  const [canUndo,       setCanUndo]       = useState(false);
   const [selectedReg,   setSelectedReg]   = useState(null); // {fid,id}
+  const [selectedRegIds, setSelectedRegIds] = useState(new Set()); // regiones seleccionadas para corte (keys: "fid:rid")
+  const anchorTrackRef = useRef(null); // ancla Shift+click: {fid, id} o null
+  const dragRegRef    = useRef(null);  // estado de drag: {fid, rid, startX, origStart, origEnd, dur}
   const [tool,          setTool]          = useState("select");
   const [soloGuia,      setSoloGuia]      = useState(false);
+  const [muteGuia,      setMuteGuia]      = useState(false);
   const [saving,        setSaving]        = useState(false);
   const [playing,       setPlaying]       = useState(false);
   const [currentTime,   setCurrentTime]   = useState(0);
   const [duration,      setDuration]      = useState(0);
   const [zoom,          setZoom]          = useState(6);
-  const [bpm,           setBpm]           = useState(120);
-  const [beatsPerBar,   setBeatsPerBar]   = useState(4);
+  const [bpm,           setBpm]           = useState(() => folderMeta.bpm ?? 120);
+  const [beatsPerBar,   setBeatsPerBar]   = useState(() => folderMeta.beatsPerBar ?? 4);
+  const [songKey,       setSongKey]       = useState(folderMeta.key ?? "");
   const [showBeats,     setShowBeats]     = useState(true);
+  const [rulerMode,     setRulerMode]     = useState("bars"); // "bars" | "seconds"
   const [activeGuiaClip,setActiveGuiaClip]= useState(null);
   const [previewId,     setPreviewId]     = useState(null);
   const previewAudio  = useRef(new Audio());
@@ -138,7 +196,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
 
   /* helper: obtiene regiones de un track */
   const getRegs = (fid, buf) =>
-    trackRegions[fid] ?? (buf ? [{ id:`r0_${fid}`, start:0, end:buf.duration }] : []);
+    trackRegions[fid] ?? (buf ? [{ id:`r0_${fid}`, start:0, end:buf.duration, fileOffset:0 }] : []);
 
   /* ── carga inicial ───────────────────────────────────────────────────────── */
   useEffect(() => {
@@ -146,7 +204,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     const actx = new (window.AudioContext||window.webkitAudioContext)();
     ctxRef.current = actx;
     const mg = actx.createGain(); mg.gain.value=.85; mg.connect(actx.destination); masterGainRef.current=mg;
-    const gg = actx.createGain(); gg.gain.value=.9;  gg.connect(actx.destination); guiaGainRef.current=gg;
+    const gg = actx.createGain(); gg.gain.value=6.0; gg.connect(actx.destination); guiaGainRef.current=gg;
 
     let done=0, total=tracks.length;
     (async()=>{
@@ -181,6 +239,8 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
         if(d.trackRegions)             setTrackRegions(d.trackRegions);
         if(d.bpm)                      setBpm(d.bpm);
         if(d.beatsPerBar)              setBeatsPerBar(d.beatsPerBar);
+        if(d.key)                      setSongKey(d.key);
+        if(d.beatsPerBar)              setBeatsPerBar(d.beatsPerBar);
       }).catch(()=>{}).finally(()=>setLoadingClips(false));
 
     return ()=>{
@@ -192,6 +252,26 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
 
   /* ── redibujar waveforms ─────────────────────────────────────────────────── */
   useEffect(()=>{
+    // calcular líneas de grid para las waveforms
+    const bars = [], beats = [];
+    if (duration > 0) {
+      const _secPerBeat = 60/bpm;
+      const _secPerBar  = _secPerBeat * beatsPerBar;
+      const _barCount   = Math.ceil(duration / _secPerBar) + 1;
+      for (let bi = 0; bi < _barCount; bi++) {
+        const bSec = bi * _secPerBar;
+        if (bSec > duration + _secPerBar) break;
+        bars.push(Math.floor(bSec * zoom));
+        if (showBeats) {
+          for (let ti = 1; ti < beatsPerBar; ti++) {
+            const tSec = bSec + ti * _secPerBeat;
+            if (tSec < duration) beats.push(Math.floor(tSec * zoom));
+          }
+        }
+      }
+    }
+    const gridLines = { bars, beats };
+
     tracks.forEach((track,i)=>{
       const fid=track.id||track.fileId;
       const buf=buffers[fid]; const canvas=canvasRefs.current[fid];
@@ -199,28 +279,139 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
       canvas.width=tlWidth; canvas.height=TRACK_H;
       const regs = getRegs(fid,buf);
       const selId = selectedReg?.fid===fid ? selectedReg.id : null;
-      drawWaveformWithRegions(canvas, buf, TRACK_COLORS[i%TRACK_COLORS.length], regs, selId);
+      const multiSelIds = new Set([...selectedRegIds].filter(k=>k.startsWith(fid+":")).map(k=>k.slice(fid.length+1)));
+      drawWaveformWithRegions(canvas, buf, TRACK_COLORS[i%TRACK_COLORS.length], regs, selId, gridLines, zoom, multiSelIds);
     });
-  },[buffers,tlWidth,tracks,trackRegions,selectedReg]); // eslint-disable-line
+  },[buffers,tlWidth,tracks,trackRegions,selectedReg,selectedRegIds,bpm,beatsPerBar,showBeats,zoom,duration]); // eslint-disable-line
 
-  /* ── teclado: Delete para eliminar región seleccionada ───────────────────── */
+  /* ── helper: guarda snapshot y actualiza trackRegions ──────────────────── */
+  const commitRegions = useCallback((updater) => {
+    setTrackRegions(prev => {
+      historyRef.current = [...historyRef.current.slice(-49), prev]; // máx 50 pasos
+      setCanUndo(true);
+      return typeof updater === "function" ? updater(prev) : updater;
+    });
+  }, []);
+
+  const undo = useCallback(() => {
+    if (!historyRef.current.length) return;
+    const prev = historyRef.current[historyRef.current.length - 1];
+    historyRef.current = historyRef.current.slice(0, -1);
+    setTrackRegions(prev);
+    setCanUndo(historyRef.current.length > 0);
+    setSelectedReg(null);
+  }, []);
+
+  /* ── gestión de regiones ─────────────────────────────────────────────────── */
+  const deleteRegion = useCallback((fid,rid)=>{
+    commitRegions(prev=>{
+      const regs=prev[fid]; if(!regs) return prev;
+      return {...prev,[fid]:regs.filter(r=>r.id!==rid)};
+    });
+  },[commitRegions]);
+
+  // elimina todas las regiones marcadas en selectedRegIds de una sola pasada (1 entrada en historial)
+  const deleteSelectedRegions = useCallback((regIds)=>{
+    if (!regIds.size) return;
+    const byFid = {};
+    regIds.forEach(key=>{
+      const [rfid,...rest] = key.split(":"); const rid = rest.join(":");
+      (byFid[rfid] = byFid[rfid]||[]).push(rid);
+    });
+    commitRegions(prev=>{
+      const next = {...prev};
+      Object.entries(byFid).forEach(([rfid, rids])=>{
+        const regs = next[rfid]; if(!regs) return;
+        next[rfid] = regs.filter(r=>!rids.includes(r.id));
+      });
+      return next;
+    });
+  },[commitRegions]);
+
+  /* ── teclado: Delete · Escape · Ctrl+Z · ← → mover región con imán ──────── */
   useEffect(()=>{
     const onKey=e=>{
-      if(!selectedReg) return;
       if(["INPUT","SELECT","TEXTAREA"].includes(e.target.tagName)) return;
+      if(e.key==="Escape"){
+        setSelectedRegIds(new Set());
+        anchorTrackRef.current = null;
+        return;
+      }
+      if((e.ctrlKey||e.metaKey) && e.key==="z"){ e.preventDefault(); undo(); return; }
       if(e.key==="Delete"||e.key==="Backspace"){
-        deleteRegion(selectedReg.fid, selectedReg.id);
-        setSelectedReg(null);
+        if(selectedRegIds.size > 0){
+          deleteSelectedRegions(selectedRegIds);
+          setSelectedRegIds(new Set()); anchorTrackRef.current=null;
+        } else if(selectedReg){
+          deleteRegion(selectedReg.fid, selectedReg.id);
+          setSelectedReg(null);
+        }
+        return;
+      }
+
+      /* ── mover regiones con ← → ────────────────────────────────────────── */
+      if(e.key==="ArrowLeft" || e.key==="ArrowRight"){
+        const hasSelection = selectedRegIds.size > 0 || selectedReg;
+        if(!hasSelection) return;
+        e.preventDefault();
+
+        // paso base: 1 tiempo (beat), o compás completo si se mantiene Shift
+        const secPerBeat = 60 / bpm;
+        const secPerBar  = secPerBeat * beatsPerBar;
+        const step = e.shiftKey ? secPerBar : secPerBeat;
+        const dir  = e.key==="ArrowRight" ? 1 : -1;
+
+        // barras de compás para el imán
+        const barTimes = [];
+        if(durationRef.current > 0){
+          const nBars = Math.ceil(durationRef.current / secPerBar) + 1;
+          for(let i=0;i<=nBars;i++) barTimes.push(i * secPerBar);
+        }
+        const SNAP_THRESH = secPerBeat * 0.25; // umbral de imán: 25% de un beat
+
+        // función que aplica el snap a un valor de tiempo
+        const snap = (t) => {
+          const nearest = barTimes.reduce((best, bt) =>
+            Math.abs(bt - t) < Math.abs(best - t) ? bt : best, Infinity
+          );
+          return Math.abs(nearest - t) < SNAP_THRESH ? nearest : t;
+        };
+
+        // construir mapa de regiones a mover igual que en el drag
+        const keysToMove = selectedRegIds.size > 0
+          ? [...selectedRegIds]
+          : [`${selectedReg.fid}:${selectedReg.id}`];
+
+        commitRegions(prev => {
+          const next = {...prev};
+          keysToMove.forEach(k => {
+            const [kfid,...rest] = k.split(":"); const krid = rest.join(":");
+            const kregs = next[kfid]; if(!kregs) return;
+            const kreg  = kregs.find(r=>r.id===krid); if(!kreg) return;
+            const kbuf  = buffers[kfid];
+            const kdur  = kbuf?.duration ?? durationRef.current;
+            const len   = kreg.end - kreg.start;
+            let newStart = snap(Math.max(0, kreg.start + dir * step));
+            // segundo snap: si la posición ya está en barra, saltar a la siguiente
+            if(Math.abs(newStart - kreg.start) < 0.001){
+              newStart = snap(Math.max(0, kreg.start + dir * step * 2));
+            }
+            let newEnd = newStart + len;
+            if(newEnd > kdur){ newEnd = kdur; newStart = newEnd - len; }
+            next[kfid] = kregs.map(r=>r.id===krid ? {...r, start:newStart, end:newEnd} : r);
+          });
+          return next;
+        });
       }
     };
     window.addEventListener("keydown",onKey);
     return ()=>window.removeEventListener("keydown",onKey);
-  },[selectedReg]); // eslint-disable-line
+  },[selectedReg, selectedRegIds, undo, deleteRegion, deleteSelectedRegions, bpm, beatsPerBar, buffers, commitRegions]); // eslint-disable-line
 
   /* ── playback ────────────────────────────────────────────────────────────── */
   const stopSources = useCallback(()=>{
     sourcesRef.current.forEach(s=>{ try{s.stop();}catch{} }); sourcesRef.current=[];
-    if(guiaSrcRef.current){ try{guiaSrcRef.current.stop();}catch{} guiaSrcRef.current=null; }
+    guiaSrcRef.current.forEach(s=>{ try{s.stop();}catch{} }); guiaSrcRef.current=[];
   },[]);
 
   const stopAll = useCallback(()=>{
@@ -228,7 +419,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     offsetRef.current=0; setCurrentTime(0); setPlaying(false); playingRef.current=false;
   },[stopSources]);
 
-  const startPlayback = useCallback((fromOffset, gClip=null)=>{
+  const startPlayback = useCallback((fromOffset)=>{
     const actx=ctxRef.current; if(!actx) return;
     const startAt=actx.currentTime+0.05;
     startTimeRef.current=startAt-fromOffset;
@@ -236,12 +427,17 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     if(!soloGuia){
       tracks.forEach(track=>{
         const fid=track.id||track.fileId; const buf=buffers[fid]; if(!buf) return;
-        const regs=trackRegions[fid]??[{id:`r0_${fid}`,start:0,end:buf.duration}];
+        const regs=trackRegions[fid]??[{id:`r0_${fid}`,start:0,end:buf.duration,fileOffset:0}];
         regs.forEach(r=>{
           if(fromOffset>=r.end) return;
-          const bufOff = fromOffset>=r.start ? fromOffset : r.start;
-          const segDur = r.end-bufOff;
-          const delay  = fromOffset>=r.start ? 0 : r.start-fromOffset;
+          // fileOffset: dónde en el archivo de audio empieza esta región
+          const fileOff = r.fileOffset ?? r.start;
+          const regionDur = r.end - r.start;
+          // si seekeamos dentro de la región, saltamos esa fracción del audio
+          const skipInRegion = fromOffset > r.start ? fromOffset - r.start : 0;
+          const bufOff  = fileOff + skipInRegion;
+          const segDur  = regionDur - skipInRegion;
+          const delay   = fromOffset < r.start ? r.start - fromOffset : 0;
           if(segDur<=0) return;
           const src=actx.createBufferSource(); src.buffer=buf;
           src.connect(masterGainRef.current);
@@ -251,18 +447,22 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
       });
     }
 
-    if(gClip){
-      const gBuf=guiaBuffers[gClip.fileId];
-      if(gBuf){
-        const off   = Math.max(0, fromOffset-gClip.startTime);
-        const delay = fromOffset<=gClip.startTime ? gClip.startTime-fromOffset : 0;
-        if(off<gBuf.duration){
-          const gs=actx.createBufferSource(); gs.buffer=gBuf;
-          gs.connect(guiaGainRef.current); gs.start(startAt+delay,off);
-          guiaSrcRef.current=gs;
-        }
-      }
-    }
+    // Reproducir TODOS los clips de guías en sus posiciones del timeline
+    if(guiaGainRef.current) guiaGainRef.current.gain.value = muteGuia ? 0 : (soloGuia ? 6.0 : 6.0);
+    guiaSrcRef.current = [];
+    clips.forEach(clip=>{
+      const gBuf=guiaBuffers[clip.fileId];
+      if(!gBuf) return;
+      const clipEnd = clip.startTime + gBuf.duration;
+      if(fromOffset >= clipEnd) return; // ya pasó
+      const off   = Math.max(0, fromOffset - clip.startTime);
+      const delay = clip.startTime > fromOffset ? clip.startTime - fromOffset : 0;
+      if(off >= gBuf.duration) return;
+      const gs=actx.createBufferSource(); gs.buffer=gBuf;
+      gs.connect(guiaGainRef.current);
+      gs.start(startAt+delay, off);
+      guiaSrcRef.current.push(gs);
+    });
 
     setPlaying(true); playingRef.current=true;
     tickRef.current=setInterval(()=>{
@@ -274,27 +474,62 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
       if(cont){ const ph=LABEL_W+cl*zoom; if(ph>cont.scrollLeft+cont.clientWidth-80) cont.scrollLeft=ph-cont.clientWidth/2; }
       if(el>=durationRef.current) stopAll();
     },50);
-  },[buffers,guiaBuffers,soloGuia,tracks,trackRegions,zoom,stopAll]);
+  },[buffers,guiaBuffers,clips,soloGuia,muteGuia,tracks,trackRegions,zoom,stopAll]);
 
   const doSeek = useCallback((t)=>{
     const was=playingRef.current;
     if(was){ clearInterval(tickRef.current); stopSources(); playingRef.current=false; setPlaying(false); }
     offsetRef.current=t; setCurrentTime(t);
-    if(was) startPlayback(t, activeGuiaClip);
-  },[activeGuiaClip,startPlayback,stopSources]);
+    if(was) startPlayback(t);
+  },[startPlayback,stopSources]);
 
-  const play  = async gc=>{
+  const play  = async ()=>{
     const actx=ctxRef.current; if(!actx) return;
     if(actx.state==="suspended") await actx.resume();
-    startPlayback(offsetRef.current, gc??activeGuiaClip);
+    startPlayback(offsetRef.current);
   };
   const pause = ()=>{
     clearInterval(tickRef.current);
     if(ctxRef.current){ const el=ctxRef.current.currentTime-startTimeRef.current; offsetRef.current=Math.min(Math.max(el,0),durationRef.current); }
     stopSources(); setPlaying(false); playingRef.current=false;
   };
-  const togglePlay = ()=>{ if(playing) pause(); else play(); };
+  const togglePlay = useCallback(()=>{ if(playing) pause(); else play(); },[playing,pause,play]);
+
+  /* barra espaciadora = play/pause */
+  useEffect(()=>{
+    const onSpace=e=>{
+      if(["INPUT","SELECT","TEXTAREA"].includes(e.target.tagName)) return;
+      if(e.key===" "||e.code==="Space"){ e.preventDefault(); togglePlay(); }
+    };
+    window.addEventListener("keydown",onSpace);
+    return ()=>window.removeEventListener("keydown",onSpace);
+  },[togglePlay]);
   const onSeekBar  = e=>doSeek(parseFloat(e.target.value));
+
+  /* ── corte multi-pista: aplica split en tiempo t a un conjunto de fids ── */
+  const applySplitToTracks = useCallback((fidSet, t) => {
+    const newRegs = {};
+    for (const tfid of fidSet) {
+      const tbuf = buffers[tfid];
+      const tdur = tbuf?.duration || durationRef.current;
+      const tregs = trackRegions[tfid] ?? [{id:`r0_${tfid}`, start:0, end:tdur}];
+      const idx = tregs.findIndex(r => t > r.start+0.05 && t < r.end-0.05);
+      if (idx === -1) continue;
+      const r = tregs[idx];
+      const next = [...tregs];
+      // fileOffset de la pieza izquierda = fileOffset del padre
+      // fileOffset de la pieza derecha = fileOffset del padre + duración de la parte izquierda
+      const rFileOff = r.fileOffset ?? r.start;
+      next.splice(idx, 1,
+        {id:uid(), start:r.start, end:t,     fileOffset: rFileOff},
+        {id:uid(), start:t,       end:r.end,  fileOffset: rFileOff + (t - r.start)}
+      );
+      newRegs[tfid] = next;
+    }
+    if (Object.keys(newRegs).length > 0)
+      commitRegions(prev => ({...prev, ...newRegs}));
+    return newRegs;
+  }, [buffers, trackRegions, commitRegions]);
 
   /* ── click sobre una pista ───────────────────────────────────────────────── */
   const onClickTrack = useCallback((e, fid, buf)=>{
@@ -307,36 +542,147 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     const regs=trackRegions[fid]??[{id:`r0_${fid}`,start:0,end:dur}];
 
     if(tool==="split"){
-      /* encontrar la región que contiene t y dividirla */
-      const idx=regs.findIndex(r=>t>r.start+0.05&&t<r.end-0.05);
-      if(idx===-1) return;
-      const r=regs[idx];
-      const next=[...regs];
-      const a={id:uid(),start:r.start,end:t};
-      const b={id:uid(),start:t,end:r.end};
-      next.splice(idx,1,a,b);
-      setTrackRegions(prev=>({...prev,[fid]:next}));
-      setSelectedReg({fid,id:b.id}); // selecciona el fragmento derecho
+      /*
+       * Modo SPLIT:
+       * - Si hay pistas pre-seleccionadas → cortar TODAS ellas (+ la clickeada si no está)
+       * - Si no hay ninguna seleccionada → cortar solo la clickeada
+       */
+      const targetFids = selectedRegIds.size > 0
+        ? new Set([...selectedRegIds].map(k => k.split(":")[0]))
+        : new Set([fid]);
+      const newRegs = applySplitToTracks(targetFids, t);
+      if (newRegs[fid]) setSelectedReg({fid, id: newRegs[fid].find(r => r.start === t)?.id});
+      // limpiar selección de regiones tras el corte para poder trabajar región por región
+      setSelectedRegIds(new Set());
+      anchorTrackRef.current = null;
     } else {
-      /* SELECT: clic en región → seleccionar; clic en hueco → seekear */
+      /*
+       * Modo SELECT:
+       * - Shift+click → selecciona la región clickeada; rango selecciona una región por pista al tiempo t
+       * - Click normal en región → selecciona la región
+       * - Click normal en hueco → seekear
+       */
+      if (e.shiftKey || e.metaKey) {
+        const hit = regs.find(r => t >= r.start && t <= r.end);
+        if (!hit) { doSeek(t); return; }
+        const regKey = `${fid}:${hit.id}`;
+        const anchor = anchorTrackRef.current; // {fid, id, t} o null
+        if (!anchor) {
+          // Primer Shift+click: fijar ancla, seleccionar solo esta región
+          anchorTrackRef.current = { fid, id: hit.id, t };
+          setSelectedRegIds(new Set([regKey]));
+        } else if (anchor.fid === fid && anchor.id === hit.id) {
+          // Click en la misma región ancla: deseleccionar todo
+          anchorTrackRef.current = null;
+          setSelectedRegIds(new Set());
+        } else {
+          // Segundo Shift+click en otra pista: seleccionar rango completo
+          // Intenta con anchorT primero; si no hay región, intenta con t del segundo click
+          const anchorT = anchor.t;
+          const trackFids = tracks.map(tr => tr.id||tr.fileId);
+          const iA = trackFids.indexOf(anchor.fid);
+          const iB = trackFids.indexOf(fid);
+          const lo = Math.min(iA, iB);
+          const hi = Math.max(iA, iB);
+          const newSet = new Set();
+          for (let i = lo; i <= hi; i++) {
+            const tfid = trackFids[i];
+            const tBuf = buffers[tfid];
+            const tRegs = trackRegions[tfid] ?? [{id:`r0_${tfid}`, start:0, end:tBuf?.duration??durationRef.current}];
+            const tHit = tRegs.find(r => anchorT >= r.start && anchorT <= r.end)
+                      ?? tRegs.find(r => t >= r.start && t <= r.end)
+                      ?? tRegs[0]; // fallback: primera región de la pista
+            if (tHit) newSet.add(`${tfid}:${tHit.id}`);
+          }
+          setSelectedRegIds(newSet);
+          // NO mover el ancla para permitir re-extender el rango
+        }
+        return;
+      }
+      // Click normal sin Shift: limpiar selección y ancla
+      anchorTrackRef.current = null;
+      setSelectedRegIds(new Set());
       const hit=regs.find(r=>t>=r.start&&t<=r.end);
       if(hit){ setSelectedReg({fid,id:hit.id}); }
       else   { setSelectedReg(null); doSeek(t); }
     }
-  },[tool,zoom,trackRegions,doSeek]);
+  },[tool,zoom,trackRegions,doSeek,selectedRegIds,applySplitToTracks,tracks,buffers]);
 
-  /* ── gestión de regiones ─────────────────────────────────────────────────── */
-  const deleteRegion = useCallback((fid,rid)=>{
-    setTrackRegions(prev=>{
-      const regs=prev[fid]; if(!regs) return prev;
-      return {...prev,[fid]:regs.filter(r=>r.id!==rid)};
+  /* ── drag de región (window pointermove) ────────────────────────────────── */
+  const onPointerDownRegion = useCallback((e, fid, rid, buf) => {
+    if (tool !== "select") return;
+    if (e.shiftKey || e.metaKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const regs = trackRegions[fid] ?? [{id:`r0_${fid}`, start:0, end:buf?.duration??durationRef.current}];
+    const reg  = regs.find(r => r.id === rid);
+    if (!reg) return;
+
+    setSelectedReg({fid, id: rid});
+
+    const regKey = `${fid}:${rid}`;
+    const keysToMove = selectedRegIds.has(regKey) && selectedRegIds.size > 1
+      ? [...selectedRegIds]
+      : [regKey];
+
+    const originals = {};
+    keysToMove.forEach(k => {
+      const [kfid, ...rest] = k.split(":"); const krid = rest.join(":");
+      const kbuf = buffers[kfid];
+      const kdur = kbuf?.duration ?? durationRef.current;
+      const kregs = trackRegions[kfid] ?? [{id:`r0_${kfid}`, start:0, end:kdur}];
+      const kreg  = kregs.find(r => r.id === krid);
+      if (kreg) originals[k] = { fid: kfid, rid: krid, start: kreg.start, end: kreg.end, dur: kdur };
     });
-  },[]);
 
+    // zoom guardado en el ref para que handleMove no tenga closure estale
+    dragRegRef.current = { startX: e.clientX, originals, zoom };
+
+    const handleMove = ev => {
+      const d = dragRegRef.current; if (!d) return;
+      const dtSec = (ev.clientX - d.startX) / d.zoom;
+      setTrackRegions(prev => {
+        const next = {...prev};
+        Object.values(d.originals).forEach(o => {
+          const len = o.end - o.start;
+          let newStart = Math.max(0, o.start + dtSec);
+          let newEnd   = newStart + len;
+          if (newEnd > o.dur) { newEnd = o.dur; newStart = newEnd - len; }
+          const cur = next[o.fid];
+          if (cur) {
+            // pista ya editada (split/eliminación previa): actualizar solo esta región
+            next[o.fid] = cur.map(rr => rr.id === o.rid ? {...rr, start:newStart, end:newEnd} : rr);
+          } else {
+            // pista sin editar: materializar la región virtual con la nueva posición
+            next[o.fid] = [{id: o.rid, start: newStart, end: newEnd}];
+          }
+        });
+        return next;
+      });
+    };
+
+    const handleUp = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup",   handleUp);
+      if (!dragRegRef.current) return;
+      setTrackRegions(prev => {
+        historyRef.current = [...historyRef.current.slice(-49), prev];
+        setCanUndo(true);
+        return prev;
+      });
+      dragRegRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup",   handleUp);
+  }, [tool, zoom, trackRegions, selectedRegIds, buffers]);
+
+  /* ── gestión de regiones (cont.) ──────────────────────────────────────────── */
   const resetRegions = useCallback((fid)=>{
-    setTrackRegions(prev=>{ const n={...prev}; delete n[fid]; return n; });
+    commitRegions(prev=>{ const n={...prev}; delete n[fid]; return n; });
     setSelectedReg(sr=>sr?.fid===fid?null:sr);
-  },[]);
+  },[commitRegions]);
 
   /* ── guías ───────────────────────────────────────────────────────────────── */
   const cargarGuiaBuffer = useCallback(async fid=>{
@@ -354,6 +700,15 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
       setGuiaBuffers(prev=>({...prev,[fid]:buf})); return buf;
     } catch { return null; }
   },[guiaBuffers,getToken]);
+
+  /* ── cargar buffers de clips ya guardados en DB cuando llegan ── */
+  useEffect(()=>{
+    if(!clips.length) return;
+    const actx=ctxRef.current; if(!actx||actx.state==="closed") return;
+    clips.forEach(clip=>{
+      if(!guiaBuffers[clip.fileId]) cargarGuiaBuffer(clip.fileId);
+    });
+  },[clips]); // eslint-disable-line
 
   const agregarClip = useCallback(async(file,startTime)=>{
     const clip={id:uid(),fileId:file.id,fileName:file.name,startTime:parseFloat(Math.max(0,startTime).toFixed(2)),duration:0};
@@ -386,9 +741,10 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     e.preventDefault();
     const fileId=e.dataTransfer.getData("fileId"); const fileName=e.dataTransfer.getData("fileName");
     if(!fileId) return;
-    const rect=guideLaneRef.current.getBoundingClientRect();
-    const sl=scrollContRef.current?.scrollLeft||0;
-    agregarClip({id:fileId,name:fileName},(e.clientX-rect.left+sl-LABEL_W)/zoom);
+    const cont=scrollContRef.current; if(!cont) return;
+    const rect=cont.getBoundingClientRect();
+    const t=Math.max(0,(e.clientX-rect.left+cont.scrollLeft-LABEL_W)/zoom);
+    agregarClip({id:fileId,name:fileName},t);
   },[zoom,agregarClip]);
 
   const togglePreview = file=>{
@@ -405,7 +761,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     try{
       const r=await fetch(`${API_URL}/api/musica/guias/${encodeURIComponent(folderId)}`,{
         method:"POST", headers:{Authorization:`Bearer ${getToken()}`,"Content-Type":"application/json"},
-        body:JSON.stringify({clips,trackRegions,bpm,beatsPerBar}),
+        body:JSON.stringify({clips,trackRegions,bpm,beatsPerBar,key:songKey}),
       });
       const d=await r.json(); if(d.error) throw new Error(d.error);
       onSaved?.(clips);
@@ -470,15 +826,39 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
         </div>
 
         {/* instrucción contextual */}
-        {tool==="split" && (
-          <span className="text-amber-400/70 text-[10px] shrink-0 hidden sm:block">
-            Clic sobre la waveform → divide · luego Selec. + Delete para borrar
+        {tool==="select" && selectedRegIds.size===0 && (
+          <span className="text-gray-500 text-[10px] shrink-0 hidden sm:block">
+            Shift+clic en 1ª pista → Shift+clic en última → selecciona el rango · o Shift+clic individual en cada región
           </span>
         )}
-        {selectedReg && tool==="select" && (
-          <button onClick={()=>{ deleteRegion(selectedReg.fid,selectedReg.id); setSelectedReg(null); }}
+        {tool==="select" && selectedRegIds.size>0 && (
+          <span className="text-indigo-300/90 text-[10px] shrink-0 hidden sm:block font-semibold">
+            {selectedRegIds.size} región{selectedRegIds.size>1?"es":""} marcada{selectedRegIds.size>1?"s":""} — Shift+clic para extender rango · cambia a Cortar y haz clic · Esc limpiar
+          </span>
+        )}
+        {tool==="split" && selectedRegIds.size===0 && (
+          <span className="text-amber-400/70 text-[10px] shrink-0 hidden sm:block">
+            Clic → corta solo esta pista (usa Selec. + Shift+clic para marcar varias primero)
+          </span>
+        )}
+        {tool==="split" && selectedRegIds.size>0 && (
+          <span className="text-amber-300/90 text-[10px] shrink-0 hidden sm:block font-semibold">
+            ✂ {selectedRegIds.size} región{selectedRegIds.size>1?"es":""} marcada{selectedRegIds.size>1?"s":""} — clic en cualquier waveform para cortar todas · Esc limpiar
+          </span>
+        )}
+        {(selectedRegIds.size > 0 || selectedReg) && tool==="select" && (
+          <button onClick={()=>{
+            if(selectedRegIds.size > 0){
+              deleteSelectedRegions(selectedRegIds);
+              setSelectedRegIds(new Set()); anchorTrackRef.current=null;
+              setSelectedReg(null);
+            } else if(selectedReg){
+              deleteRegion(selectedReg.fid,selectedReg.id);
+              setSelectedReg(null);
+            }
+          }}
             className="flex items-center gap-1 px-2 py-1.5 bg-red-700 hover:bg-red-600 text-white text-[11px] font-semibold rounded-lg transition shrink-0">
-            <Trash2 size={11}/> Eliminar región
+            <Trash2 size={11}/> Eliminar {selectedRegIds.size > 1 ? `${selectedRegIds.size} regiones` : "región"}
           </button>
         )}
 
@@ -489,8 +869,14 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
           {soloGuia?"Solo guía":"Todas"}
         </button>
 
-        {/* BPM + métrica */}
+        {/* BPM + métrica + clave */}
         <div className="flex items-center gap-1.5 shrink-0 bg-gray-900 rounded-lg px-2 py-1">
+          {/* Clave */}
+          <span className="text-gray-500 text-[10px]">Clave</span>
+          <input value={songKey} onChange={e=>setSongKey(e.target.value.slice(0,4))}
+            placeholder="—" maxLength={4}
+            className="w-10 bg-gray-800 text-amber-300 text-[11px] rounded px-1 py-0.5 text-center border border-gray-700 focus:outline-none focus:border-amber-500 font-semibold"/>
+          <div className="w-px h-4 bg-gray-700 mx-0.5"/>
           <span className="text-gray-500 text-[10px]">BPM</span>
           <input type="number" min={40} max={300} value={bpm}
             onChange={e=>setBpm(Math.max(40,Math.min(300,+e.target.value)))}
@@ -503,19 +889,65 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
             <input type="checkbox" checked={showBeats} onChange={e=>setShowBeats(e.target.checked)} className="w-3 h-3 accent-indigo-500"/>
             <span className="text-gray-500 text-[10px]">tiempos</span>
           </label>
+          {/* toggle compases / segundos */}
+          <div className="flex items-center bg-gray-800 rounded p-0.5 gap-0.5">
+            <button onClick={()=>setRulerMode("bars")}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${rulerMode==="bars"?"bg-indigo-600 text-white":"text-gray-400 hover:text-white"}`}>
+              Comp.
+            </button>
+            <button onClick={()=>setRulerMode("seconds")}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${rulerMode==="seconds"?"bg-indigo-600 text-white":"text-gray-400 hover:text-white"}`}>
+              Seg.
+            </button>
+          </div>
         </div>
 
         {/* zoom */}
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={()=>setZoom(z=>Math.max(2,z-1))} className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition"><ZoomOut size={13}/></button>
-          <span className="text-gray-500 text-[11px] tabular-nums w-10 text-center">{zoom}px/s</span>
-          <button onClick={()=>setZoom(z=>Math.min(48,z+2))} className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition"><ZoomIn size={13}/></button>
+          <button
+            onClick={()=>setZoom(z=>Math.max(2,z-10))}
+            className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition"
+            title="Alejar">
+            <ZoomOut size={13}/>
+          </button>
+          <span className="text-gray-500 text-[11px] tabular-nums w-12 text-center">{zoom}px/s</span>
+          <button
+            onClick={()=>setZoom(z=>Math.min(300,z+10))}
+            className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition"
+            title="Acercar">
+            <ZoomIn size={13}/>
+          </button>
+          <button
+            onClick={()=>{
+              const cont = scrollContRef.current;
+              if (!cont || duration <= 0) return;
+              const availW = cont.clientWidth - LABEL_W;
+              const newZoom = Math.max(2, Math.floor(availW / duration));
+              setZoom(newZoom);
+            }}
+            className="p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition"
+            title="Autoajustar zoom">
+            <Maximize2 size={13}/>
+          </button>
         </div>
+
+        <button onClick={undo} disabled={!canUndo||isLoading}
+          title="Deshacer (Ctrl+Z)"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white text-xs font-semibold rounded-lg transition disabled:opacity-30 shrink-0">
+          <Undo2 size={12}/> Deshacer
+        </button>
 
         <button onClick={guardar} disabled={saving||isLoading}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50 shrink-0">
           {saving?<Loader2 size={12} className="animate-spin"/>:<Save size={12}/>} Guardar
         </button>
+        {onSwitchToMultitrack && (
+          <button onClick={onSwitchToMultitrack}
+            title="Cambiar a Modo Multitrack"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-semibold rounded-lg transition shrink-0">
+            <Layers size={13}/> Modo Multitrack
+          </button>
+        )}
         <button onClick={onClose} className="text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-gray-800 transition shrink-0">
           <X size={18}/>
         </button>
@@ -553,7 +985,19 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                     <button onClick={()=>togglePreview(file)} className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition">
                       {previewId===file.id ? <Pause size={11}/> : <Play size={11}/>}
                     </button>
-                    <button onClick={()=>agregarClip(file,offsetRef.current)} className="p-1 rounded hover:bg-emerald-700 text-gray-400 hover:text-emerald-300 transition">
+                    <button onClick={()=>{
+                      agregarClip(file, offsetRef.current);
+                      // preview automático al insertar
+                      const a = previewAudio.current;
+                      if(previewId === file.id){ /* ya suena, no reiniciar */ } else {
+                        a.pause();
+                        setPreviewId(file.id);
+                        fetch(`${API_URL}/api/musica/stream/${file.id}`,{headers:{Authorization:`Bearer ${getToken()}`}})
+                          .then(r=>r.blob())
+                          .then(blob=>{ a.src=URL.createObjectURL(blob); a.play(); a.onended=()=>setPreviewId(null); })
+                          .catch(()=>setPreviewId(null));
+                      }
+                    }} className="p-1 rounded hover:bg-emerald-700 text-gray-400 hover:text-emerald-300 transition" title="Insertar y preescuchar">
                       <Plus size={11}/>
                     </button>
                   </div>
@@ -581,8 +1025,9 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                   className="flex border-b border-gray-800 bg-gray-900">
                   <div style={{width:LABEL_W,position:"sticky",left:0,zIndex:31,backgroundColor:"#111827"}}
                     className="shrink-0 flex flex-col items-center justify-center border-r border-gray-800 gap-0.5">
-                    <span className="text-gray-600 text-[9px] font-semibold tracking-widest">COMPÁS</span>
-                    <span className="text-gray-700 text-[9px]">SEG</span>
+                    <span className="text-gray-500 text-[9px] font-semibold tracking-widest">
+                      {rulerMode==="bars" ? "COMPÁS" : "SEGUNDOS"}
+                    </span>
                   </div>
                   <div className="relative cursor-pointer" style={{width:tlWidth,height:RULER_H}}
                     onClick={e=>{
@@ -592,28 +1037,30 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                       doSeek(Math.max(0,Math.min(x/zoom,durationRef.current)));
                     }}>
                     <div className="absolute w-full" style={{top:RULER_H/2,height:1,backgroundColor:"#1f2937"}}/>
-                    {/* compases */}
-                    {duration>0 && Array.from({length:barCount},(_,bi)=>{
+
+                    {/* modo COMPASES */}
+                    {rulerMode==="bars" && duration>0 && Array.from({length:barCount},(_,bi)=>{
                       const bSec=bi*secPerBar; if(bSec>duration+secPerBar) return null;
                       const x=bSec*zoom;
                       return (
                         <React.Fragment key={`b${bi}`}>
-                          <div className="absolute" style={{left:x,top:0,width:1,height:RULER_H/2,backgroundColor:"#374151"}}/>
-                          <span className="absolute text-[9px] text-gray-500 select-none whitespace-nowrap" style={{left:x+2,top:2,lineHeight:1}}>{bi+1}</span>
+                          <div className="absolute" style={{left:x,top:0,width:1,height:RULER_H,backgroundColor:"#4b5563"}}/>
+                          <span className="absolute text-[9px] text-gray-400 select-none whitespace-nowrap font-medium" style={{left:x+2,top:2,lineHeight:1}}>{bi+1}</span>
                           {showBeats && Array.from({length:beatsPerBar-1},(_,ti)=>{
                             const tSec=bSec+(ti+1)*secPerBeat; if(tSec>duration) return null;
-                            return <div key={`t${bi}_${ti}`} className="absolute" style={{left:tSec*zoom,top:RULER_H/4,width:1,height:RULER_H/4,backgroundColor:"#374151"}}/>;
+                            return <div key={`t${bi}_${ti}`} className="absolute" style={{left:tSec*zoom,top:RULER_H/3,width:1,height:RULER_H*2/3,backgroundColor:"#374151"}}/>;
                           })}
                         </React.Fragment>
                       );
                     })}
-                    {/* segundos */}
-                    {Array.from({length:Math.ceil(duration)+1},(_,i)=>i).map(sec=>{
+
+                    {/* modo SEGUNDOS */}
+                    {rulerMode==="seconds" && Array.from({length:Math.ceil(duration)+1},(_,i)=>i).map(sec=>{
                       const major=sec%5===0;
                       return (
-                        <div key={`s${sec}`} className="absolute" style={{left:sec*zoom,top:RULER_H/2}}>
-                          <div style={{width:1,height:major?10:5,backgroundColor:major?"#6b7280":"#374151"}}/>
-                          {major && <span className="absolute text-[9px] text-gray-500 ml-0.5 select-none whitespace-nowrap" style={{top:10}}>{fmt(sec)}</span>}
+                        <div key={`s${sec}`} className="absolute" style={{left:sec*zoom,top:0}}>
+                          <div style={{width:1,height:major?RULER_H:RULER_H*0.55,backgroundColor:major?"#6b7280":"#374151"}}/>
+                          {major && <span className="absolute text-[9px] text-gray-400 ml-0.5 select-none whitespace-nowrap font-medium" style={{top:RULER_H*0.55}}>{fmt(sec)}</span>}
                         </div>
                       );
                     })}
@@ -625,12 +1072,14 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                   const fid   = track.id||track.fileId;
                   const color = TRACK_COLORS[i%TRACK_COLORS.length];
                   const buf   = buffers[fid];
+                  const regs  = getRegs(fid, buf);
                   const hasEdits = !!trackRegions[fid];
-                  const cursor = tool==="split" ? "crosshair" : "default";
                   return (
                     <div key={fid} className="flex border-b border-gray-800" style={{height:TRACK_H}}>
                       {/* label */}
-                      <div style={{width:LABEL_W,position:"sticky",left:0,zIndex:10,backgroundColor:"#0d1117"}}
+                      <div style={{width:LABEL_W,position:"sticky",left:0,zIndex:10,
+                          backgroundColor: [...selectedRegIds].some(k=>k.startsWith(fid+":")) ? "#1e1b4b" : "#0d1117",
+                          borderLeft: [...selectedRegIds].some(k=>k.startsWith(fid+":")) ? "3px solid #6366f1" : "3px solid transparent"}}
                         className="shrink-0 flex items-center gap-1.5 px-2 border-r border-gray-800">
                         <div className="w-1.5 h-8 rounded-full shrink-0" style={{backgroundColor:color}}/>
                         <div className="min-w-0 flex-1">
@@ -638,7 +1087,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                             {sinExt(track.name||`Track ${i+1}`)}
                           </p>
                           {hasEdits && (
-                            <button onClick={()=>resetRegions(fid)}
+                            <button onClick={e=>{ e.stopPropagation(); resetRegions(fid); }}
                               className="text-[9px] text-amber-500 hover:text-amber-300 flex items-center gap-0.5 mt-0.5 transition">
                               <Scissors size={8}/> reset
                             </button>
@@ -646,7 +1095,10 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                         </div>
                       </div>
                       {/* waveform */}
-                      <div className="relative" style={{width:tlWidth,height:TRACK_H,cursor}}
+                      <div className="relative" style={{width:tlWidth,height:TRACK_H,
+                          cursor: tool==="split" ? "crosshair" : "default",
+                          outline: [...selectedRegIds].some(k=>k.startsWith(fid+":")) ? "2px solid #6366f1" : "none",
+                          outlineOffset:"-2px"}}
                         onClick={e=>onClickTrack(e,fid,buf)}>
                         {buf ? (
                           <canvas
@@ -657,7 +1109,23 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                             <span className="text-[10px]" style={{color:color+"50"}}>sin datos</span>
                           </div>
                         )}
-                        {/* pista activa seleccionada: botón delete flotante */}
+                        {/* overlays arrastrables por región (solo en modo select) */}
+                        {tool==="select" && buf && regs.map(r => {
+                          const x1 = Math.floor(r.start * zoom);
+                          const x2 = Math.ceil(r.end * zoom);
+                          return (
+                            <div key={r.id}
+                              onPointerDown={e => onPointerDownRegion(e, fid, r.id, buf)}
+                              onClick={e => {
+                                if (e.shiftKey || e.metaKey) return;
+                                e.stopPropagation();
+                              }}
+                              className="absolute top-0 bottom-0 z-[6]"
+                              style={{left: x1, width: x2-x1, cursor:"grab", background:"rgba(255,255,255,0.01)"}}
+                            />
+                          );
+                        })}
+                        {/* badge Delete en región seleccionada */}
                         {selectedReg?.fid===fid && (
                           <div className="absolute top-1 right-1 z-10 flex items-center gap-1 pointer-events-none">
                             <span className="bg-white/10 text-white text-[9px] px-1.5 py-0.5 rounded border border-white/20 select-none">Delete</span>
@@ -673,14 +1141,45 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                   <div style={{width:LABEL_W,position:"sticky",left:0,zIndex:10,backgroundColor:"#061612"}}
                     className="shrink-0 flex items-center gap-2 px-2 border-r border-gray-700">
                     <div className="w-1.5 h-8 rounded-full bg-emerald-500 shrink-0"/>
-                    <div>
+                    <div className="flex-1 min-w-0">
                       <p className="text-[11px] text-emerald-400 font-semibold leading-tight">GUÍAS</p>
                       <p className="text-[9px] text-gray-600 leading-tight">{clips.length} clip{clips.length!==1?"s":""}</p>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button
+                        onClick={()=>{ const next=!muteGuia; setMuteGuia(next); if(guiaGainRef.current) guiaGainRef.current.gain.value=next?0:6.0; }}
+                        title="Mute guías"
+                        className={`w-5 h-5 rounded text-[9px] font-bold transition flex items-center justify-center ${muteGuia?"bg-red-600 text-white":"bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"}`}>
+                        M
+                      </button>
+                      <button
+                        onClick={()=>setSoloGuia(s=>!s)}
+                        title="Solo guías"
+                        className={`w-5 h-5 rounded text-[9px] font-bold transition flex items-center justify-center ${soloGuia?"bg-yellow-400 text-gray-900":"bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"}`}>
+                        S
+                      </button>
                     </div>
                   </div>
                   <div className="relative" style={{width:tlWidth,height:GUIDE_H,backgroundColor:"#061612"}}
                     onDragOver={e=>e.preventDefault()} onDrop={onDropGuide}>
                     <div className="absolute inset-x-0" style={{top:"50%",height:1,backgroundColor:"#064e3b60"}}/>
+                    {/* líneas de compás sobre el carril guías */}
+                    {rulerMode==="bars" && duration>0 && Array.from({length:barCount},(_,bi)=>{
+                      const bSec=bi*secPerBar; if(bSec>duration+secPerBar) return null;
+                      const x=bSec*zoom;
+                      return (
+                        <React.Fragment key={`gl${bi}`}>
+                          <div className="absolute top-0 bottom-0" style={{left:x,width:1,backgroundColor:"#ffffff18",pointerEvents:"none"}}/>
+                          {showBeats && Array.from({length:beatsPerBar-1},(_,ti)=>{
+                            const tSec=bSec+(ti+1)*secPerBeat; if(tSec>duration) return null;
+                            return <div key={`gb${bi}_${ti}`} className="absolute top-0 bottom-0" style={{left:tSec*zoom,width:1,backgroundColor:"#ffffff08",pointerEvents:"none"}}/>
+                          })}
+                        </React.Fragment>
+                      );
+                    })}
+                    {rulerMode==="seconds" && Array.from({length:Math.ceil(duration)+1},(_,i)=>i).map(sec=>(
+                      <div key={`gs${sec}`} className="absolute top-0 bottom-0" style={{left:sec*zoom,width:1,backgroundColor:sec%5===0?"#ffffff14":"#ffffff07",pointerEvents:"none"}}/>
+                    ))}
                     {clips.length===0 && (
                       <p className="absolute inset-0 flex items-center justify-center text-emerald-900/60 text-xs pointer-events-none select-none">
                         ← Arrastra una guía aquí
