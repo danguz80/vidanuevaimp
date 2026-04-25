@@ -122,7 +122,7 @@ export default function MultitrackPlayer({
   const [guiasTrackRegions, setGuiasTrackRegions] = useState({}); // cortes/eliminaciones por fileId
   const [guiasVolume, setGuiasVolume] = useState(1);
   const [guiasMuted, setGuiasMuted] = useState(false);
-  const [guiasBoost, setGuiasBoost] = useState(6.0);
+  const [guiasBoost, setGuiasBoost] = useState(2.5);
   const [guiasSoloed, setGuiasSoloed] = useState(false);
   const [guiasPan, setGuiasPan] = useState(-1); // izquierda por defecto
   // Cada clip tiene: { id, fileId, fileName, startTime, duration }
@@ -161,6 +161,9 @@ export default function MultitrackPlayer({
   const durationRef = useRef(0);
   const folderNameRef = useRef(folderName);
   useEffect(() => { folderNameRef.current = folderName; }, [folderName]);
+
+  const presetAppliedRef   = useRef(false); // true cuando el preset ya fue cargado y aplicado
+  const presetSaveTimerRef = useRef(null);  // timer debounce para guardar preset
 
   const loadTracks = useCallback(async (trackList) => {
     const myId = ++loadTracksIdRef.current;
@@ -214,7 +217,7 @@ export default function MultitrackPlayer({
 
     // Gain + Panner para la pista de guías (independiente del master)
     const guiasGain = ctx.createGain();
-    guiasGain.gain.value = guiasVolume * 6.0;
+    guiasGain.gain.value = guiasVolume * 2.5;
     const guiasPanner = ctx.createStereoPanner();
     guiasPanner.pan.value = -1; // izquierda por defecto
     guiasGain.connect(guiasPanner);
@@ -334,6 +337,90 @@ export default function MultitrackPlayer({
       audioCtxRef.current?.close().catch(() => {});
     };
   }, [tracks, folderName]);
+
+  // Cargar preset de mixer personal del miembro (se activa cuando loading pasa a false)
+  useEffect(() => {
+    if (loading || !folderId) { presetAppliedRef.current = false; return; }
+    presetAppliedRef.current = false;
+    fetch(`${API_URL}/api/musica/mixer/${encodeURIComponent(folderId)}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(preset => {
+        if (preset) {
+          const nGV  = preset.guiasVolume  ?? 1;
+          const nGM  = preset.guiasMuted   ?? false;
+          const nGS  = preset.guiasSoloed  ?? false;
+          const nGP  = preset.guiasPan     ?? -1;
+          const nGB  = preset.guiasBoost   ?? 2.5;
+          const nMV  = preset.masterVolume ?? 0.85;
+          setGuiasVolume(nGV); setGuiasMuted(nGM); setGuiasSoloed(nGS);
+          setGuiasPan(nGP); setGuiasBoost(nGB);
+          setMasterVol(nMV);
+          if (guiasPannerRef.current) guiasPannerRef.current.pan.value = nGP;
+          // Metro
+          if (preset.metroEnabled != null) { setMetroEnabled(preset.metroEnabled); metroEnabledRef.current = preset.metroEnabled; }
+          if (preset.metroVolume  != null) { setMetroVolume(preset.metroVolume);  metroVolumeRef.current = preset.metroVolume;  if (metroGainRef.current) metroGainRef.current.gain.value = preset.metroVolume; }
+          if (preset.metroPan    != null) { setMetroPan(preset.metroPan);         metroPanRef.current = preset.metroPan;         if (metroPannerRef.current) metroPannerRef.current.pan.value = preset.metroPan; }
+          // BPM / Semitones / Key
+          if (preset.playBpm > 0) { setPlayBpm(preset.playBpm); setSongBpm(preset.playBpm); playBpmRef.current = preset.playBpm; songBpmRef.current = preset.playBpm; }
+          if (preset.songKey)     { setSongKey(preset.songKey); }
+          if (preset.playSemitones != null && preset.playSemitones !== 0) {
+            setPlaySemitones(preset.playSemitones);
+            playSemitonesRef.current = preset.playSemitones;
+            // Reprocesal el audio con el tono guardado (después de que React actualice el estado)
+            setTimeout(() => processBuffers(preset.playBpm > 0 ? preset.playBpm : playBpmRef.current, preset.playSemitones), 0);
+          }
+          setTrackStates(prev => {
+            const next = prev.map(t => {
+              const p = preset.tracks?.find(pt => pt.name === t.name);
+              if (!p) return t;
+              return { ...t, volume: p.volume ?? t.volume, muted: p.muted ?? t.muted,
+                soloed: p.soloed ?? t.soloed, pan: p.pan ?? t.pan, boost: p.boost ?? t.boost };
+            });
+            // Actualizar nodos de audio inmediatamente
+            const anySoloed = next.some(t => t.soloed) || nGS;
+            next.forEach((t, i) => {
+              const td = trackDataRef.current[i];
+              if (!td) return;
+              td.pannerNode.pan.value = t.pan;
+              const active = anySoloed ? t.soloed : !t.muted;
+              td.gainNode.gain.value = active ? (t.volume ?? 1) * (t.boost ?? 1) : 0;
+            });
+            if (guiasGainRef.current) {
+              const ga = anySoloed ? nGS : !nGM;
+              guiasGainRef.current.gain.value = ga ? nGV * nGB : 0;
+            }
+            return next;
+          });
+        }
+        presetAppliedRef.current = true;
+      })
+      .catch(() => { presetAppliedRef.current = true; });
+  }, [loading, folderId]); // eslint-disable-line
+
+  // Guardar preset con debounce cuando cambia cualquier control del mixer
+  useEffect(() => {
+    if (!folderId || !presetAppliedRef.current) return;
+    clearTimeout(presetSaveTimerRef.current);
+    const snapshot = {
+      tracks: trackStates.map(t => ({ name: t.name, volume: t.volume, muted: t.muted,
+        soloed: t.soloed, pan: t.pan, boost: t.boost })),
+      guiasVolume, guiasMuted, guiasSoloed, guiasPan, guiasBoost, masterVolume,
+      metroEnabled, metroVolume, metroPan,
+      playBpm: playBpm || undefined,
+      playSemitones: playSemitones || undefined,
+      songKey: songKey || undefined,
+    };
+    presetSaveTimerRef.current = setTimeout(() => {
+      fetch(`${API_URL}/api/musica/mixer/${encodeURIComponent(folderId)}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot),
+      }).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(presetSaveTimerRef.current);
+  }, [trackStates, guiasVolume, guiasMuted, guiasSoloed, guiasPan, guiasBoost, masterVolume, metroEnabled, metroVolume, metroPan, playBpm, playSemitones, songKey]); // eslint-disable-line
 
   // Cargar clips de guías desde la DB cuando folderId esté disponible y loading termine
   useEffect(() => {
@@ -1254,7 +1341,7 @@ export default function MultitrackPlayer({
                         recalcGains(trackStates, guiasSoloed, guiasMuted, v);
                       }}
                       onDoubleClick={() => {
-                        setGuiasBoost(6);
+                        setGuiasBoost(2.5);
                         recalcGains(trackStates, guiasSoloed, guiasMuted, 6);
                       }}
                       className="w-full h-4 opacity-100 cursor-pointer relative"

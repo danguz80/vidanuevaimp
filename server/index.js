@@ -2942,7 +2942,6 @@ async function initFamiliasTables() {
       CREATE INDEX IF NOT EXISTS idx_familia_miembros_miembro ON familia_miembros(miembro_id);
     `);
     client.release();
-    console.log("[DB] Tablas familias listas.");
   } catch (err) {
     console.error("[DB] Error al crear tablas familias:", err.message);
   }
@@ -3063,6 +3062,32 @@ pool.query(`
 })
 .catch(e => console.error("[musica_guias] Error creando/migrando tabla:", e.message));
 
+// Tabla para guardar el preset de mixer personal de cada miembro por carpeta
+pool.query(`
+  CREATE TABLE IF NOT EXISTS musica_mixer_presets (
+    id         SERIAL PRIMARY KEY,
+    miembro_id INTEGER NOT NULL,
+    folder_id  TEXT    NOT NULL,
+    preset     JSONB   NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(miembro_id, folder_id)
+  )
+`).catch(e => console.error("[musica_mixer_presets] Error creando tabla:", e.message));
+
+// Tabla para el setlist personal de cada miembro (orden de canciones para la sesión)
+pool.query(`
+  CREATE TABLE IF NOT EXISTS musica_setlist (
+    id           SERIAL PRIMARY KEY,
+    miembro_id   INTEGER NOT NULL,
+    carpeta_id   TEXT    NOT NULL,
+    carpeta_name TEXT    NOT NULL,
+    posicion     INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(miembro_id, carpeta_id)
+  )
+`).then(() =>
+  pool.query("CREATE INDEX IF NOT EXISTS idx_setlist_miembro ON musica_setlist(miembro_id)")
+).catch(e => console.error("[musica_setlist] Error creando tabla:", e.message));
+
 // GET /api/musica/guias/archivos — lista archivos de la carpeta "Guias en Español"
 app.get("/api/musica/guias/archivos", authenticateMiembro, async (req, res) => {
   try {
@@ -3159,9 +3184,7 @@ app.get("/api/musica/stream/:fileId", authenticateMiembro, async (req, res) => {
   try {
     // Intentar obtener access token de Service Account (preferido)
     const serviceToken = await getDriveAccessToken();
-    if (serviceToken) {
-      console.log(`[stream] Usando Service Account para fileId=${req.params.fileId}`);
-    } else {
+    if (!serviceToken) {
       console.warn(`[stream] Sin Service Account — usando API key para fileId=${req.params.fileId}`);
     }
     let driveRes;
@@ -3206,6 +3229,71 @@ app.get("/api/musica/stream/:fileId", authenticateMiembro, async (req, res) => {
     const { Readable } = await import("node:stream");
     Readable.fromWeb(driveRes.body).pipe(res);
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Mixer presets personales ───────────────────────────────────────────────
+
+// GET /api/musica/mixer/:folderId — carga el preset del miembro para esta carpeta
+app.get("/api/musica/mixer/:folderId", authenticateMiembro, async (req, res) => {
+  try {
+    const r = await pool.query(
+      "SELECT preset FROM musica_mixer_presets WHERE miembro_id=$1 AND folder_id=$2",
+      [req.miembro.id, req.params.folderId]
+    );
+    res.json(r.rows[0]?.preset ?? null);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /api/musica/mixer/:folderId — guarda/actualiza el preset del miembro
+app.put("/api/musica/mixer/:folderId", authenticateMiembro, async (req, res) => {
+  try {
+    await pool.query(
+      `INSERT INTO musica_mixer_presets (miembro_id, folder_id, preset, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (miembro_id, folder_id) DO UPDATE SET preset=$3, updated_at=NOW()`,
+      [req.miembro.id, req.params.folderId, JSON.stringify(req.body)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Playlists ──────────────────────────────────────────────────────────────
+
+// ── Setlist personal por miembro ───────────────────────────────────────────
+
+// GET /api/musica/setlist — obtiene el setlist del miembro ordenado por posición
+app.get("/api/musica/setlist", authenticateMiembro, async (req, res) => {
+  try {
+    const r = await pool.query(
+      "SELECT carpeta_id, carpeta_name FROM musica_setlist WHERE miembro_id=$1 ORDER BY posicion ASC",
+      [req.miembro.id]
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /api/musica/setlist — reemplaza el setlist completo del miembro
+app.put("/api/musica/setlist", authenticateMiembro, async (req, res) => {
+  const items = req.body; // [{ carpeta_id, carpeta_name }]
+  if (!Array.isArray(items)) return res.status(400).json({ error: "Se esperaba un array" });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM musica_setlist WHERE miembro_id=$1", [req.miembro.id]);
+    for (let i = 0; i < items.length; i++) {
+      const { carpeta_id, carpeta_name } = items[i];
+      if (!carpeta_id) continue;
+      await client.query(
+        "INSERT INTO musica_setlist (miembro_id, carpeta_id, carpeta_name, posicion) VALUES ($1,$2,$3,$4)",
+        [req.miembro.id, carpeta_id, carpeta_name, i]
+      );
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally { client.release(); }
 });
 
 // ── Playlists ──────────────────────────────────────────────────────────────
@@ -4425,7 +4513,6 @@ app.delete("/api/chordpro", authenticateToken, async (req, res) => {
         updated_at  TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-    console.log("[DB] Tabla planificacion_eventos lista.");
   } catch (err) {
     console.error("[DB] Error tabla planificacion_eventos:", err.message);
   }
@@ -4788,7 +4875,6 @@ app.listen(PORT, async () => {
       )
     `);
     await pool.query("CREATE INDEX IF NOT EXISTS idx_cumple_saludos_para ON cumple_saludos(para_miembro_id)");
-    console.log("[DB] Tabla cumple_saludos lista.");
   } catch (err) {
     console.error("[DB] Error al migrar cumple_saludos:", err.message);
   }
@@ -4797,7 +4883,6 @@ app.listen(PORT, async () => {
     await pool.query(
       "ALTER TABLE hero_slides ADD COLUMN IF NOT EXISTS evento_id INTEGER REFERENCES eventos(id) ON DELETE SET NULL"
     );
-    console.log("[DB] Columna evento_id en hero_slides lista.");
   } catch (err) {
     console.error("[DB] Error al migrar hero_slides:", err.message);
   }
@@ -4819,7 +4904,6 @@ app.listen(PORT, async () => {
     await pool.query(
       "CREATE INDEX IF NOT EXISTS idx_disp_fechas ON disponibilidad_bloqueada(fecha_inicio, fecha_fin)"
     );
-    console.log("[DB] Tabla disponibilidad_bloqueada lista.");
   } catch (err) {
     console.error("[DB] Error al migrar disponibilidad_bloqueada:", err.message);
   }
@@ -4857,7 +4941,6 @@ app.listen(PORT, async () => {
     await pool.query(
       "ALTER TABLE playlist_canciones ADD COLUMN IF NOT EXISTS carpeta TEXT"
     );
-    console.log("[DB] Tablas de música listas.");
   } catch (err) {
     console.error("[DB] Error al migrar tablas música:", err.message);
   }
@@ -4908,7 +4991,6 @@ app.listen(PORT, async () => {
     await pool.query(
       "CREATE INDEX IF NOT EXISTS idx_sec_asist_reg ON secretaria_asistencia_registros(asistencia_id)"
     );
-    console.log("[DB] Tablas secretaría listas.");
   } catch (err) {
     console.error("[DB] Error al migrar tablas secretaría:", err.message);
   }
@@ -4931,14 +5013,12 @@ app.listen(PORT, async () => {
     // Limpiar tablas antiguas si existen
     await pool.query("DROP TABLE IF EXISTS google_photos_cache CASCADE");
     await pool.query("DROP TABLE IF EXISTS google_photos_albums CASCADE");
-    console.log("[DB] Tabla galeria_albums lista.");
   } catch (err) {
     console.error("[DB] Error al migrar tabla galería:", err.message);
   }
   // Migración: columna sexo en miembros
   try {
     await pool.query("ALTER TABLE miembros ADD COLUMN IF NOT EXISTS sexo TEXT");
-    console.log("[DB] Columna sexo en miembros lista.");
   } catch (err) {
     console.error("[DB] Error al migrar columna sexo:", err.message);
   }

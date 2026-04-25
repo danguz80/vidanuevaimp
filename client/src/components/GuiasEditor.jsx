@@ -157,7 +157,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const trackPannerNodesRef = useRef({}); // fid → StereoPannerNode por pista
   const guiaPannerRef       = useRef(null);
   const guiaVolumeRef       = useRef(1);
-  const guiaBoostRef        = useRef(6.0);
+  const guiaBoostRef        = useRef(2.5);
   const guiaPanValRef       = useRef(-1);
   const metroGainRef        = useRef(null);
   const metroPannerRef      = useRef(null);
@@ -197,7 +197,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const [metroVolume,   setMetroVolume]   = useState(1);
   const [metroPan,      setMetroPan]      = useState(-1);
   const [guiaVolume,    setGuiaVolume]    = useState(1);
-  const [guiaBoost,     setGuiaBoost]     = useState(6.0);
+  const [guiaBoost,     setGuiaBoost]     = useState(2.5);
   const [guiaPan,       setGuiaPan]       = useState(-1);
   const [saving,        setSaving]        = useState(false);
   const [savedOk,       setSavedOk]       = useState(false);
@@ -1389,7 +1389,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                       <span className="text-[8px] text-gray-600">G</span>
                       <input type="range" min={0.1} max={12} step={0.1} value={guiaBoost}
                         onPointerDown={e=>e.stopPropagation()}
-                        onDoubleClick={()=>{ setGuiaBoost(6); guiaBoostRef.current=6; recalcTrackGains(trackMixer,soloGuia,muteGuia); }}
+                        onDoubleClick={()=>{ setGuiaBoost(2.5); guiaBoostRef.current=2.5; recalcTrackGains(trackMixer,soloGuia,muteGuia); }}
                         onChange={e=>{
                           const v=parseFloat(e.target.value); setGuiaBoost(v); guiaBoostRef.current=v;
                           const anySoloed=Object.values(trackMixer).some(m=>m?.soloed)||soloGuia;
