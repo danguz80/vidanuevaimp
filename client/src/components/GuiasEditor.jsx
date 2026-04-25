@@ -25,8 +25,8 @@ const TRACK_COLORS = [
 
 const LABEL_W = 164;
 const RULER_H  = 40;
-const TRACK_H  = 82;
-const GUIDE_H  = 104;
+const TRACK_H  = 100;
+const GUIDE_H  = 124;
 
 function fmt(s)   { if (!Number.isFinite(s)||s<0) return "0:00"; return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`; }
 function fmtMs(s) { if (!Number.isFinite(s)||s<0) return "0:00.0"; return `${Math.floor(s/60)}:${(s%60).toFixed(1).padStart(4,"0")}`; }
@@ -157,6 +157,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const trackPannerNodesRef = useRef({}); // fid → StereoPannerNode por pista
   const guiaPannerRef       = useRef(null);
   const guiaVolumeRef       = useRef(1);
+  const guiaBoostRef        = useRef(6.0);
   const guiaPanValRef       = useRef(-1);
   const metroGainRef        = useRef(null);
   const metroPannerRef      = useRef(null);
@@ -196,6 +197,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const [metroVolume,   setMetroVolume]   = useState(1);
   const [metroPan,      setMetroPan]      = useState(-1);
   const [guiaVolume,    setGuiaVolume]    = useState(1);
+  const [guiaBoost,     setGuiaBoost]     = useState(6.0);
   const [guiaPan,       setGuiaPan]       = useState(-1);
   const [saving,        setSaving]        = useState(false);
   const [savedOk,       setSavedOk]       = useState(false);
@@ -446,13 +448,13 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     Object.entries(trackGainNodesRef.current).forEach(([fid, gNode])=>{
       const m = mixer[fid] ?? {};
       const active = anySoloed ? !!(m.soloed) : !(m.muted);
-      gNode.gain.value = active ? (m.volume ?? 1) : 0;
+      gNode.gain.value = active ? (m.volume ?? 1) * (m.boost ?? 1) : 0;
       const pNode = trackPannerNodesRef.current[fid];
       if(pNode) pNode.pan.value = m.pan ?? 0;
     });
     if(guiaGainRef.current){
       const guiasActive = anySoloed ? _soloGuia : !_muteGuia;
-      guiaGainRef.current.gain.value = guiasActive ? 6.0 * guiaVolumeRef.current : 0;
+      guiaGainRef.current.gain.value = guiasActive ? guiaBoostRef.current * guiaVolumeRef.current : 0;
     }
     if(guiaPannerRef.current) guiaPannerRef.current.pan.value = guiaPanValRef.current;
   };
@@ -1273,16 +1275,25 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                                 <span className="text-[8px] text-gray-600 ml-0.5">V</span>
                                 <input type="range" min={0} max={1} step={0.01} value={ms.volume??1}
                                   onClick={e=>e.stopPropagation()}
-                                  onChange={e=>{ const v=parseFloat(e.target.value); const nm={...trackMixer,[fid]:{...ms,volume:v}}; setTrackMixer(nm); const gn=trackGainNodesRef.current[fid]; if(gn) gn.gain.value=active?v:0; }}
+                                  onChange={e=>{ const v=parseFloat(e.target.value); const nm={...trackMixer,[fid]:{...ms,volume:v}}; setTrackMixer(nm); const gn=trackGainNodesRef.current[fid]; if(gn) gn.gain.value=active?v*(ms.boost??1):0; }}
                                   className="flex-1 h-1 cursor-pointer accent-indigo-400 min-w-0"/>
                               </div>
-                              <div className="flex items-center gap-0.5 px-2 pb-1">
+                              <div className="flex items-center gap-0.5 px-2 py-0.5">
                                 <span className="text-[8px] text-gray-600">P</span>
                                 <input type="range" min={-1} max={1} step={0.01} value={ms.pan??0}
                                   onClick={e=>e.stopPropagation()}
                                   onChange={e=>{ const v=parseFloat(e.target.value); const nm={...trackMixer,[fid]:{...ms,pan:v}}; setTrackMixer(nm); const pn=trackPannerNodesRef.current[fid]; if(pn) pn.pan.value=v; }}
                                   className="flex-1 h-1 cursor-pointer accent-purple-400 min-w-0"/>
                                 <span className="text-[8px] text-gray-500 tabular-nums w-6 text-right">{Math.round((ms.pan??0)*100)}</span>
+                              </div>
+                              <div className="flex items-center gap-0.5 px-2 pb-1">
+                                <span className="text-[8px] text-gray-600">G</span>
+                                <input type="range" min={0.1} max={8} step={0.05} value={ms.boost??1}
+                                  onClick={e=>e.stopPropagation()}
+                                  onDoubleClick={e=>{ e.stopPropagation(); const nm={...trackMixer,[fid]:{...ms,boost:1}}; setTrackMixer(nm); const gn=trackGainNodesRef.current[fid]; if(gn) gn.gain.value=active?(ms.volume??1)*1:0; }}
+                                  onChange={e=>{ const v=parseFloat(e.target.value); const nm={...trackMixer,[fid]:{...ms,boost:v}}; setTrackMixer(nm); const gn=trackGainNodesRef.current[fid]; if(gn) gn.gain.value=active?(ms.volume??1)*v:0; }}
+                                  className="flex-1 h-1 cursor-pointer accent-indigo-600 min-w-0"/>
+                                <span className="text-[8px] text-gray-500 tabular-nums w-7 text-right">×{(ms.boost??1).toFixed(1)}</span>
                               </div>
                             </>
                           );
@@ -1357,12 +1368,12 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                           const v=parseFloat(e.target.value); setGuiaVolume(v); guiaVolumeRef.current=v;
                           const anySoloed=Object.values(trackMixer).some(m=>m?.soloed)||soloGuia;
                           const active=anySoloed?soloGuia:!muteGuia;
-                          if(guiaGainRef.current) guiaGainRef.current.gain.value=active?6.0*v:0;
+                          if(guiaGainRef.current) guiaGainRef.current.gain.value=active?guiaBoostRef.current*v:0;
                         }}
                         className="flex-1 h-1 cursor-pointer accent-emerald-400 min-w-0"/>
                     </div>
                     {/* fila 3: P */}
-                    <div className="flex items-center gap-0.5 px-2 pb-1">
+                    <div className="flex items-center gap-0.5 px-2 pb-0.5">
                       <span className="text-[8px] text-gray-600">P</span>
                       <input type="range" min={-1} max={1} step={0.01} value={guiaPan}
                         onPointerDown={e=>e.stopPropagation()}
@@ -1372,6 +1383,21 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                         }}
                         className="flex-1 h-1 cursor-pointer accent-teal-400 min-w-0"/>
                       <span className="text-[8px] text-gray-500 tabular-nums w-6 text-right">{Math.round(guiaPan*100)}</span>
+                    </div>
+                    {/* fila 4: G boost — doble clic = ×6 */}
+                    <div className="flex items-center gap-0.5 px-2 pb-1">
+                      <span className="text-[8px] text-gray-600">G</span>
+                      <input type="range" min={0.1} max={12} step={0.1} value={guiaBoost}
+                        onPointerDown={e=>e.stopPropagation()}
+                        onDoubleClick={()=>{ setGuiaBoost(6); guiaBoostRef.current=6; recalcTrackGains(trackMixer,soloGuia,muteGuia); }}
+                        onChange={e=>{
+                          const v=parseFloat(e.target.value); setGuiaBoost(v); guiaBoostRef.current=v;
+                          const anySoloed=Object.values(trackMixer).some(m=>m?.soloed)||soloGuia;
+                          const active=anySoloed?soloGuia:!muteGuia;
+                          if(guiaGainRef.current) guiaGainRef.current.gain.value=active?v*guiaVolumeRef.current:0;
+                        }}
+                        className="flex-1 h-1 cursor-pointer accent-emerald-600 min-w-0"/>
+                      <span className="text-[8px] text-gray-500 tabular-nums w-7 text-right">×{guiaBoost.toFixed(1)}</span>
                     </div>
                   </div>
                   <div className="relative" style={{width:tlWidth,height:GUIDE_H,backgroundColor:"#061612"}}

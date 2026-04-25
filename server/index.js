@@ -23,8 +23,15 @@ let _driveJwtClient = null;
 function getDriveJwtClient() {
   if (_driveJwtClient) return _driveJwtClient;
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (!email || !key) return null;
+  // Normaliza la clave: soporta tanto \n como newlines reales (Render puede guardar cualquiera)
+  const rawKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  const key = rawKey?.includes("\\n")
+    ? rawKey.replace(/\\n/g, "\n")
+    : rawKey;
+  if (!email || !key) {
+    console.warn("[Drive] GOOGLE_SERVICE_ACCOUNT_EMAIL o PRIVATE_KEY no configurados — se usará API key");
+    return null;
+  }
   _driveJwtClient = new GoogleJWT({
     email,
     key,
@@ -35,8 +42,16 @@ function getDriveJwtClient() {
 async function getDriveAccessToken() {
   const client = getDriveJwtClient();
   if (!client) return null;
-  const { token } = await client.getAccessToken();
-  return token;
+  try {
+    const { token } = await client.getAccessToken();
+    if (!token) throw new Error("getAccessToken devolvió token vacío");
+    return token;
+  } catch (err) {
+    console.error("[Drive] Error autenticando Service Account:", err.message);
+    // Resetear cliente para que el siguiente request reintente desde cero
+    _driveJwtClient = null;
+    return null;
+  }
 }
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -3143,8 +3158,12 @@ app.get("/api/musica/stream/:fileId", authenticateMiembro, async (req, res) => {
 
   try {
     // Intentar obtener access token de Service Account (preferido)
-    const serviceToken = await getDriveAccessToken().catch(() => null);
-
+    const serviceToken = await getDriveAccessToken();
+    if (serviceToken) {
+      console.log(`[stream] Usando Service Account para fileId=${req.params.fileId}`);
+    } else {
+      console.warn(`[stream] Sin Service Account — usando API key para fileId=${req.params.fileId}`);
+    }
     let driveRes;
     // Hasta 5 intentos con backoff exponencial
     for (let attempt = 1; attempt <= 5; attempt++) {

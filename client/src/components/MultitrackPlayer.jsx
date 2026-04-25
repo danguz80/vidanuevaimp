@@ -122,6 +122,7 @@ export default function MultitrackPlayer({
   const [guiasTrackRegions, setGuiasTrackRegions] = useState({}); // cortes/eliminaciones por fileId
   const [guiasVolume, setGuiasVolume] = useState(1);
   const [guiasMuted, setGuiasMuted] = useState(false);
+  const [guiasBoost, setGuiasBoost] = useState(6.0);
   const [guiasSoloed, setGuiasSoloed] = useState(false);
   const [guiasPan, setGuiasPan] = useState(-1); // izquierda por defecto
   // Cada clip tiene: { id, fileId, fileName, startTime, duration }
@@ -312,7 +313,7 @@ export default function MultitrackPlayer({
       const initialStates = loaded.map((t) => {
         const pan = isMetro(t.name) ? -1 : 1;
         t.pannerNode.pan.value = pan;
-        return { name: t.name, volume: 1, muted: false, soloed: false, pan };
+        return { name: t.name, volume: 1, muted: false, soloed: false, pan, boost: 1.0 };
       });
       setTrackStates(initialStates);
       setLoading(false);
@@ -768,6 +769,16 @@ export default function MultitrackPlayer({
 
   const togglePlay = () => { if (playing) pause(); else play(); };
 
+  /* barra espaciadora = play/pause */
+  useEffect(() => {
+    const onSpace = (e) => {
+      if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+      if (e.key === " " || e.code === "Space") { e.preventDefault(); togglePlay(); }
+    };
+    window.addEventListener("keydown", onSpace);
+    return () => window.removeEventListener("keydown", onSpace);
+  }, [playing]); // eslint-disable-line
+
   const seek = (time) => {
     const wasPlaying = playingRef.current;
     if (wasPlaying) { clearInterval(timerRef.current); stopSources(); playingRef.current = false; setPlaying(false); }
@@ -776,15 +787,15 @@ export default function MultitrackPlayer({
     if (wasPlaying) startPlayback(time);
   };
 
-  const recalcGains = (states, nextGuiasSoloed = guiasSoloed, nextGuiasMuted = guiasMuted) => {
+  const recalcGains = (states, nextGuiasSoloed = guiasSoloed, nextGuiasMuted = guiasMuted, nextGuiasBoost = guiasBoost) => {
     const anySoloed = states.some((t) => t.soloed) || nextGuiasSoloed;
     states.forEach((t, i) => {
       const active = anySoloed ? t.soloed : !t.muted;
-      trackDataRef.current[i].gainNode.gain.value = active ? t.volume : 0;
+      trackDataRef.current[i].gainNode.gain.value = active ? t.volume * (t.boost ?? 1.0) : 0;
     });
     // Actualizar gain de guías
     const guiasActive = anySoloed ? nextGuiasSoloed : !nextGuiasMuted;
-    if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasActive ? guiasVolume * 6.0 : 0;
+    if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasActive ? guiasVolume * nextGuiasBoost : 0;
   };
 
   const toggleGuiasSolo = () => {
@@ -803,7 +814,17 @@ export default function MultitrackPlayer({
       const next = prev.map((t, j) => (j === i ? { ...t, volume: v } : t));
       const anySoloed = next.some((t) => t.soloed);
       const active = anySoloed ? next[i].soloed : !next[i].muted;
-      if (active) trackDataRef.current[i].gainNode.gain.value = v;
+      if (active) trackDataRef.current[i].gainNode.gain.value = v * (next[i].boost ?? 1.0);
+      return next;
+    });
+  };
+
+  const setTrackBoost = (i, v) => {
+    setTrackStates((prev) => {
+      const next = prev.map((t, j) => (j === i ? { ...t, boost: v } : t));
+      const anySoloed = next.some((t) => t.soloed);
+      const active = anySoloed ? next[i].soloed : !next[i].muted;
+      if (active) trackDataRef.current[i].gainNode.gain.value = (next[i].volume ?? 1) * v;
       return next;
     });
   };
@@ -1129,6 +1150,22 @@ export default function MultitrackPlayer({
                         style={{ accentColor: color }}
                       />
                     </div>
+
+                    {/* Boost (gain trim) — doble clic para reset ×1 */}
+                    <span className="text-gray-500 text-[10px] tabular-nums">G×{(t.boost ?? 1).toFixed(1)}</span>
+                    <div className="w-full relative mb-1" title="Boost de ganancia (doble clic = ×1)">
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={8}
+                        step={0.05}
+                        value={t.boost ?? 1}
+                        onChange={(e) => setTrackBoost(i, parseFloat(e.target.value))}
+                        onDoubleClick={() => setTrackBoost(i, 1)}
+                        className="w-full h-4 opacity-100 cursor-pointer relative"
+                        style={{ accentColor: color }}
+                      />
+                    </div>
                   </div>
                 );
               })}
@@ -1162,7 +1199,7 @@ export default function MultitrackPlayer({
                       onChange={(e) => {
                         const v = parseFloat(e.target.value);
                         setGuiasVolume(v);
-                        if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasMuted ? 0 : v * 6.0;
+                        if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasMuted ? 0 : v * guiasBoost;
                       }}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                       style={{ writingMode: "vertical-lr", direction: "rtl", WebkitAppearance: "slider-vertical" }}
@@ -1201,6 +1238,25 @@ export default function MultitrackPlayer({
                       type="range" min={-1} max={1} step={0.02} value={guiasPan}
                       onChange={(e) => setGuiasPanValue(parseFloat(e.target.value))}
                       onDoubleClick={() => setGuiasPanValue(0)}
+                      className="w-full h-4 opacity-100 cursor-pointer relative"
+                      style={{ accentColor: "#10b981" }}
+                    />
+                  </div>
+
+                  {/* Boost de Guías — doble clic = ×6 */}
+                  <span className="text-gray-500 text-[10px] tabular-nums">G×{guiasBoost.toFixed(1)}</span>
+                  <div className="w-full relative mb-1" title="Boost de ganancia (doble clic = ×6)">
+                    <input
+                      type="range" min={0.1} max={12} step={0.1} value={guiasBoost}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        setGuiasBoost(v);
+                        recalcGains(trackStates, guiasSoloed, guiasMuted, v);
+                      }}
+                      onDoubleClick={() => {
+                        setGuiasBoost(6);
+                        recalcGains(trackStates, guiasSoloed, guiasMuted, 6);
+                      }}
                       className="w-full h-4 opacity-100 cursor-pointer relative"
                       style={{ accentColor: "#10b981" }}
                     />
