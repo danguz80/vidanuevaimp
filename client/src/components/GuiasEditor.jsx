@@ -23,10 +23,10 @@ const TRACK_COLORS = [
   "#06b6d4","#84cc16","#f97316","#ec4899","#14b8a6",
 ];
 
-const LABEL_W = 128;
+const LABEL_W = 164;
 const RULER_H  = 40;
-const TRACK_H  = 60;
-const GUIDE_H  = 68;
+const TRACK_H  = 82;
+const GUIDE_H  = 104;
 
 function fmt(s)   { if (!Number.isFinite(s)||s<0) return "0:00"; return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`; }
 function fmtMs(s) { if (!Number.isFinite(s)||s<0) return "0:00.0"; return `${Math.floor(s/60)}:${(s%60).toFixed(1).padStart(4,"0")}`; }
@@ -153,6 +153,22 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const tickRef       = useRef(null);
   const durationRef   = useRef(0);
   const guiaSrcRef    = useRef([]);  // array de BufferSourceNodes activos de guías
+  const trackGainNodesRef   = useRef({}); // fid → GainNode por pista
+  const trackPannerNodesRef = useRef({}); // fid → StereoPannerNode por pista
+  const guiaPannerRef       = useRef(null);
+  const guiaVolumeRef       = useRef(1);
+  const guiaPanValRef       = useRef(-1);
+  const metroGainRef        = useRef(null);
+  const metroPannerRef      = useRef(null);
+  const metroSchedulerRef   = useRef(null);
+  const metroNodesRef       = useRef([]);
+  const metroNextBeatRef    = useRef(0);
+  const metroNextIdxRef     = useRef(0);
+  const metroEnabledRef     = useRef(false);
+  const metroVolumeRef      = useRef(1);
+  const metroPanRef         = useRef(-1);
+  const bpmRef              = useRef(120);
+  const beatsPerBarRef      = useRef(4);
 
   /* state */
   const [buffers,       setBuffers]       = useState({});
@@ -175,7 +191,14 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const [tool,          setTool]          = useState("select");
   const [soloGuia,      setSoloGuia]      = useState(false);
   const [muteGuia,      setMuteGuia]      = useState(false);
+  const [trackMixer,    setTrackMixer]    = useState({}); // { [fid]: { muted, soloed, volume, pan } }
+  const [metroEnabled,  setMetroEnabled]  = useState(false);
+  const [metroVolume,   setMetroVolume]   = useState(1);
+  const [metroPan,      setMetroPan]      = useState(-1);
+  const [guiaVolume,    setGuiaVolume]    = useState(1);
+  const [guiaPan,       setGuiaPan]       = useState(-1);
   const [saving,        setSaving]        = useState(false);
+  const [savedOk,       setSavedOk]       = useState(false);
   const [playing,       setPlaying]       = useState(false);
   const [currentTime,   setCurrentTime]   = useState(0);
   const [duration,      setDuration]      = useState(0);
@@ -192,7 +215,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   const scrollContRef = useRef(null);
   const guideLaneRef  = useRef(null);
 
-  const tlWidth = Math.max(800, Math.ceil(duration)*zoom);
+  const tlWidth = Math.max(800, Math.ceil(duration)*zoom + zoom*30); // 30s extra siempre
 
   /* helper: obtiene regiones de un track */
   const getRegs = (fid, buf) =>
@@ -204,7 +227,12 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     const actx = new (window.AudioContext||window.webkitAudioContext)();
     ctxRef.current = actx;
     const mg = actx.createGain(); mg.gain.value=.85; mg.connect(actx.destination); masterGainRef.current=mg;
-    const gg = actx.createGain(); gg.gain.value=6.0; gg.connect(actx.destination); guiaGainRef.current=gg;
+    const gg = actx.createGain(); gg.gain.value=6.0; guiaGainRef.current=gg;
+    const gp = actx.createStereoPanner(); gp.pan.value=-1;
+    gg.connect(gp); gp.connect(actx.destination); guiaPannerRef.current=gp;
+    const mGain = actx.createGain(); mGain.gain.value=1; metroGainRef.current=mGain;
+    const mPan  = actx.createStereoPanner(); mPan.pan.value=-1;
+    mGain.connect(mPan); mPan.connect(actx.destination); metroPannerRef.current=mPan;
 
     let done=0, total=tracks.length;
     (async()=>{
@@ -235,12 +263,11 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
 
     fetch(`${API_URL}/api/musica/guias/${encodeURIComponent(folderId)}`,{headers:hdrs})
       .then(r=>r.json()).then(d=>{
-        if(Array.isArray(d.clips))     setClips(d.clips);
-        if(d.trackRegions)             setTrackRegions(d.trackRegions);
-        if(d.bpm)                      setBpm(d.bpm);
-        if(d.beatsPerBar)              setBeatsPerBar(d.beatsPerBar);
-        if(d.key)                      setSongKey(d.key);
-        if(d.beatsPerBar)              setBeatsPerBar(d.beatsPerBar);
+        if(Array.isArray(d.clips))                      setClips(d.clips);
+        if(d.trackRegions)                              setTrackRegions(d.trackRegions);
+        if(d.bpm       && folderMeta.bpm       == null) setBpm(d.bpm);
+        if(d.beatsPerBar && folderMeta.beatsPerBar == null) setBeatsPerBar(d.beatsPerBar);
+        if(d.key       && !folderMeta.key)              setSongKey(d.key);
       }).catch(()=>{}).finally(()=>setLoadingClips(false));
 
     return ()=>{
@@ -328,7 +355,11 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     });
   },[commitRegions]);
 
-  /* ── teclado: Delete · Escape · Ctrl+Z · ← → mover región con imán ──────── */
+  /* ── teclado: Delete · Escape · Ctrl+Z · ← → mover región ─────────────────
+     Sin modificador : mueve la región seleccionada al cursor del playhead
+     Shift+← / Shift+→ : paso de 1 beat
+     Shift+Meta+← / Shift+Meta+→ : paso de 1 compás
+  ────────────────────────────────────────────────────────────────────────── */
   useEffect(()=>{
     const onKey=e=>{
       if(["INPUT","SELECT","TEXTAREA"].includes(e.target.tagName)) return;
@@ -349,35 +380,16 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
         return;
       }
 
-      /* ── mover regiones con ← → ────────────────────────────────────────── */
       if(e.key==="ArrowLeft" || e.key==="ArrowRight"){
         const hasSelection = selectedRegIds.size > 0 || selectedReg;
         if(!hasSelection) return;
         e.preventDefault();
 
-        // paso base: 1 tiempo (beat), o compás completo si se mantiene Shift
         const secPerBeat = 60 / bpm;
         const secPerBar  = secPerBeat * beatsPerBar;
-        const step = e.shiftKey ? secPerBar : secPerBeat;
-        const dir  = e.key==="ArrowRight" ? 1 : -1;
+        const dir = e.key==="ArrowRight" ? 1 : -1;
 
-        // barras de compás para el imán
-        const barTimes = [];
-        if(durationRef.current > 0){
-          const nBars = Math.ceil(durationRef.current / secPerBar) + 1;
-          for(let i=0;i<=nBars;i++) barTimes.push(i * secPerBar);
-        }
-        const SNAP_THRESH = secPerBeat * 0.25; // umbral de imán: 25% de un beat
-
-        // función que aplica el snap a un valor de tiempo
-        const snap = (t) => {
-          const nearest = barTimes.reduce((best, bt) =>
-            Math.abs(bt - t) < Math.abs(best - t) ? bt : best, Infinity
-          );
-          return Math.abs(nearest - t) < SNAP_THRESH ? nearest : t;
-        };
-
-        // construir mapa de regiones a mover igual que en el drag
+        // construir lista de regiones a mover
         const keysToMove = selectedRegIds.size > 0
           ? [...selectedRegIds]
           : [`${selectedReg.fid}:${selectedReg.id}`];
@@ -386,18 +398,37 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
           const next = {...prev};
           keysToMove.forEach(k => {
             const [kfid,...rest] = k.split(":"); const krid = rest.join(":");
-            const kregs = next[kfid]; if(!kregs) return;
+            const kbuf = buffers[kfid];
+            const kdur = kbuf?.duration ?? durationRef.current;
+            // materializar región virtual si no existe aún
+            const kregs = next[kfid] ?? [{id:`r0_${kfid}`, start:0, end:kdur, fileOffset:0}];
             const kreg  = kregs.find(r=>r.id===krid); if(!kreg) return;
-            const kbuf  = buffers[kfid];
-            const kdur  = kbuf?.duration ?? durationRef.current;
             const len   = kreg.end - kreg.start;
-            let newStart = snap(Math.max(0, kreg.start + dir * step));
-            // segundo snap: si la posición ya está en barra, saltar a la siguiente
-            if(Math.abs(newStart - kreg.start) < 0.001){
-              newStart = snap(Math.max(0, kreg.start + dir * step * 2));
+
+            let newStart;
+            if(e.shiftKey && (e.metaKey||e.ctrlKey)){
+              // Shift+Meta/Ctrl: paso de 1 compás
+              newStart = Math.max(0, kreg.start + dir * secPerBar);
+            } else if(e.shiftKey){
+              // Shift: paso de 1 beat
+              newStart = Math.max(0, kreg.start + dir * secPerBeat);
+            } else {
+              // Sin modificador: mover al cursor del playhead
+              // → alínea el inicio de la región con el playhead
+              // ← alínea el final de la región con el playhead
+              if(dir === 1){
+                newStart = Math.max(0, offsetRef.current);
+              } else {
+                newStart = Math.max(0, offsetRef.current - len);
+              }
             }
-            let newEnd = newStart + len;
-            if(newEnd > kdur){ newEnd = kdur; newStart = newEnd - len; }
+
+            const newEnd = newStart + len;
+            // expandir timeline si la región supera la duración actual
+            if(newEnd > durationRef.current){
+              durationRef.current = newEnd;
+              setDuration(newEnd);
+            }
             next[kfid] = kregs.map(r=>r.id===krid ? {...r, start:newStart, end:newEnd} : r);
           });
           return next;
@@ -409,9 +440,76 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   },[selectedReg, selectedRegIds, undo, deleteRegion, deleteSelectedRegions, bpm, beatsPerBar, buffers, commitRegions]); // eslint-disable-line
 
   /* ── playback ────────────────────────────────────────────────────────────── */
+  /* aplica mute/solo/vol/pan de mixer a los GainNodes/PannerNodes */
+  const recalcTrackGains = (mixer, _soloGuia, _muteGuia) => {
+    const anySoloed = Object.values(mixer).some(m=>m?.soloed) || _soloGuia;
+    Object.entries(trackGainNodesRef.current).forEach(([fid, gNode])=>{
+      const m = mixer[fid] ?? {};
+      const active = anySoloed ? !!(m.soloed) : !(m.muted);
+      gNode.gain.value = active ? (m.volume ?? 1) : 0;
+      const pNode = trackPannerNodesRef.current[fid];
+      if(pNode) pNode.pan.value = m.pan ?? 0;
+    });
+    if(guiaGainRef.current){
+      const guiasActive = anySoloed ? _soloGuia : !_muteGuia;
+      guiaGainRef.current.gain.value = guiasActive ? 6.0 * guiaVolumeRef.current : 0;
+    }
+    if(guiaPannerRef.current) guiaPannerRef.current.pan.value = guiaPanValRef.current;
+  };
+
+  /* ── Metrónomo DAW ─────────────────────────────────────────────────────────── */
+  const stopMetroScheduler = () => {
+    if(metroSchedulerRef.current){ clearTimeout(metroSchedulerRef.current); metroSchedulerRef.current=null; }
+    metroNodesRef.current.forEach(n=>{ try{n.stop();}catch{} });
+    metroNodesRef.current=[];
+  };
+
+  const scheduleMetroBeats = () => {
+    const actx=ctxRef.current;
+    if(!actx||actx.state==='closed'||!metroEnabledRef.current||!playingRef.current||!bpmRef.current||!metroGainRef.current) return;
+    const beatInterval=60/bpmRef.current;
+    const scheduleAhead=0.15;
+    while(metroNextBeatRef.current < actx.currentTime+scheduleAhead){
+      const beatTime=metroNextBeatRef.current;
+      const beatIndex=metroNextIdxRef.current;
+      if(beatTime >= actx.currentTime-0.01){
+        const isDown=(beatIndex%beatsPerBarRef.current)===0;
+        const freq=isDown?1600:900;
+        const amp=isDown?0.9:0.55;
+        const osc=actx.createOscillator();
+        const env=actx.createGain();
+        osc.type='sine'; osc.frequency.value=freq;
+        env.gain.setValueAtTime(0,beatTime);
+        env.gain.setValueAtTime(amp,beatTime);
+        env.gain.exponentialRampToValueAtTime(0.001,beatTime+0.035);
+        osc.connect(env); env.connect(metroGainRef.current);
+        osc.start(beatTime); osc.stop(beatTime+0.04);
+        metroNodesRef.current.push(osc);
+      }
+      metroNextBeatRef.current+=beatInterval;
+      metroNextIdxRef.current+=1;
+    }
+    metroNodesRef.current=metroNodesRef.current.filter(n=>{ try{return n.playbackState!==n.FINISHED_STATE;}catch{return false;} });
+    metroSchedulerRef.current=setTimeout(scheduleMetroBeats,25);
+  };
+
+  const startMetroScheduler = (fromOffset, startAt) => {
+    stopMetroScheduler();
+    if(!metroEnabledRef.current||!bpmRef.current||!metroGainRef.current) return;
+    const beatInterval=60/bpmRef.current;
+    const firstBeatIdx=Math.round(fromOffset/beatInterval);
+    const firstBeatOffset=firstBeatIdx*beatInterval;
+    const adjustedIdx=firstBeatOffset<fromOffset-0.001?firstBeatIdx+1:firstBeatIdx;
+    const adjustedOffset=adjustedIdx*beatInterval;
+    metroNextBeatRef.current=startAt+(adjustedOffset-fromOffset);
+    metroNextIdxRef.current=adjustedIdx;
+    scheduleMetroBeats();
+  };
+
   const stopSources = useCallback(()=>{
     sourcesRef.current.forEach(s=>{ try{s.stop();}catch{} }); sourcesRef.current=[];
     guiaSrcRef.current.forEach(s=>{ try{s.stop();}catch{} }); guiaSrcRef.current=[];
+    stopMetroScheduler(); // eslint-disable-line
   },[]);
 
   const stopAll = useCallback(()=>{
@@ -424,31 +522,31 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     const startAt=actx.currentTime+0.05;
     startTimeRef.current=startAt-fromOffset;
 
-    if(!soloGuia){
-      tracks.forEach(track=>{
-        const fid=track.id||track.fileId; const buf=buffers[fid]; if(!buf) return;
-        const regs=trackRegions[fid]??[{id:`r0_${fid}`,start:0,end:buf.duration,fileOffset:0}];
-        regs.forEach(r=>{
-          if(fromOffset>=r.end) return;
-          // fileOffset: dónde en el archivo de audio empieza esta región
-          const fileOff = r.fileOffset ?? r.start;
-          const regionDur = r.end - r.start;
-          // si seekeamos dentro de la región, saltamos esa fracción del audio
-          const skipInRegion = fromOffset > r.start ? fromOffset - r.start : 0;
-          const bufOff  = fileOff + skipInRegion;
-          const segDur  = regionDur - skipInRegion;
-          const delay   = fromOffset < r.start ? r.start - fromOffset : 0;
-          if(segDur<=0) return;
-          const src=actx.createBufferSource(); src.buffer=buf;
-          src.connect(masterGainRef.current);
-          src.start(startAt+delay, bufOff, segDur);
-          sourcesRef.current.push(src);
-        });
-      });
-    }
+    // Aplica estado del mixer a los nodos de gain persistentes
+    recalcTrackGains(trackMixer, soloGuia, muteGuia);
 
-    // Reproducir TODOS los clips de guías en sus posiciones del timeline
-    if(guiaGainRef.current) guiaGainRef.current.gain.value = muteGuia ? 0 : (soloGuia ? 6.0 : 6.0);
+    tracks.forEach(track=>{
+      const fid=track.id||track.fileId; const buf=buffers[fid]; if(!buf) return;
+      const regs=trackRegions[fid]??[{id:`r0_${fid}`,start:0,end:buf.duration,fileOffset:0}];
+      regs.forEach(r=>{
+        if(fromOffset>=r.end) return;
+        // fileOffset: dónde en el archivo de audio empieza esta región
+        const fileOff = r.fileOffset ?? r.start;
+        const regionDur = r.end - r.start;
+        // si seekeamos dentro de la región, saltamos esa fracción del audio
+        const skipInRegion = fromOffset > r.start ? fromOffset - r.start : 0;
+        const bufOff  = fileOff + skipInRegion;
+        const segDur  = regionDur - skipInRegion;
+        const delay   = fromOffset < r.start ? r.start - fromOffset : 0;
+        if(segDur<=0) return;
+        const src=actx.createBufferSource(); src.buffer=buf;
+        src.connect(trackGainNodesRef.current[fid] ?? masterGainRef.current);
+        src.start(startAt+delay, bufOff, segDur);
+        sourcesRef.current.push(src);
+      });
+    });
+
+    // Reproducir TODOS los clips de guías (gain ya actualizado por recalcTrackGains)
     guiaSrcRef.current = [];
     clips.forEach(clip=>{
       const gBuf=guiaBuffers[clip.fileId];
@@ -465,6 +563,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     });
 
     setPlaying(true); playingRef.current=true;
+    startMetroScheduler(fromOffset, startAt); // eslint-disable-line
     tickRef.current=setInterval(()=>{
       if(!playingRef.current||!ctxRef.current) return;
       const el=ctxRef.current.currentTime-startTimeRef.current;
@@ -474,7 +573,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
       if(cont){ const ph=LABEL_W+cl*zoom; if(ph>cont.scrollLeft+cont.clientWidth-80) cont.scrollLeft=ph-cont.clientWidth/2; }
       if(el>=durationRef.current) stopAll();
     },50);
-  },[buffers,guiaBuffers,clips,soloGuia,muteGuia,tracks,trackRegions,zoom,stopAll]);
+  },[buffers,guiaBuffers,clips,soloGuia,muteGuia,trackMixer,tracks,trackRegions,zoom,stopAll]);
 
   const doSeek = useCallback((t)=>{
     const was=playingRef.current;
@@ -644,27 +743,31 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
       const dtSec = (ev.clientX - d.startX) / d.zoom;
       setTrackRegions(prev => {
         const next = {...prev};
+        let maxEnd = durationRef.current;
         Object.values(d.originals).forEach(o => {
           const len = o.end - o.start;
           let newStart = Math.max(0, o.start + dtSec);
           let newEnd   = newStart + len;
-          if (newEnd > o.dur) { newEnd = o.dur; newStart = newEnd - len; }
+          if (newEnd > maxEnd) maxEnd = newEnd;
           const cur = next[o.fid];
           if (cur) {
-            // pista ya editada (split/eliminación previa): actualizar solo esta región
             next[o.fid] = cur.map(rr => rr.id === o.rid ? {...rr, start:newStart, end:newEnd} : rr);
           } else {
-            // pista sin editar: materializar la región virtual con la nueva posición
-            next[o.fid] = [{id: o.rid, start: newStart, end: newEnd}];
+            next[o.fid] = [{id: o.rid, start: newStart, end: newEnd, fileOffset: o.start}];
           }
         });
+        // expandir timeline si las regiones superan la duración actual
+        if (maxEnd > durationRef.current) {
+          durationRef.current = maxEnd;
+          setDuration(maxEnd);
+        }
         return next;
       });
     };
 
     const handleUp = () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup",   handleUp);
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup",   handleUp);
       if (!dragRegRef.current) return;
       setTrackRegions(prev => {
         historyRef.current = [...historyRef.current.slice(-49), prev];
@@ -674,8 +777,8 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
       dragRegRef.current = null;
     };
 
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup",   handleUp);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup",   handleUp);
   }, [tool, zoom, trackRegions, selectedRegIds, buffers]);
 
   /* ── gestión de regiones (cont.) ──────────────────────────────────────────── */
@@ -709,6 +812,24 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
       if(!guiaBuffers[clip.fileId]) cargarGuiaBuffer(clip.fileId);
     });
   },[clips]); // eslint-disable-line
+
+  /* ── sincronizar refs de BPM y beats ── */
+  useEffect(()=>{ bpmRef.current=bpm; beatsPerBarRef.current=beatsPerBar; },[bpm,beatsPerBar]);
+
+  /* ── crear nodos gain/panner por pista cuando se cargan los buffers ── */
+  useEffect(()=>{
+    const actx=ctxRef.current;
+    if(!actx||actx.state==="closed"||!masterGainRef.current) return;
+    Object.keys(buffers).forEach(fid=>{
+      if(!trackGainNodesRef.current[fid]){
+        const g=actx.createGain(); g.gain.value=1;
+        const p=actx.createStereoPanner(); p.pan.value=0;
+        g.connect(p); p.connect(masterGainRef.current);
+        trackGainNodesRef.current[fid]=g;
+        trackPannerNodesRef.current[fid]=p;
+      }
+    });
+  },[buffers]); // eslint-disable-line
 
   const agregarClip = useCallback(async(file,startTime)=>{
     const clip={id:uid(),fileId:file.id,fileName:file.name,startTime:parseFloat(Math.max(0,startTime).toFixed(2)),duration:0};
@@ -757,14 +878,15 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
   };
 
   const guardar = async()=>{
-    setSaving(true);
+    setSaving(true); setSavedOk(false);
     try{
       const r=await fetch(`${API_URL}/api/musica/guias/${encodeURIComponent(folderId)}`,{
         method:"POST", headers:{Authorization:`Bearer ${getToken()}`,"Content-Type":"application/json"},
         body:JSON.stringify({clips,trackRegions,bpm,beatsPerBar,key:songKey}),
       });
       const d=await r.json(); if(d.error) throw new Error(d.error);
-      onSaved?.(clips);
+      setSavedOk(true);
+      setTimeout(()=>setSavedOk(false), 3000);
     }catch(err){ alert("Error guardando: "+err.message); }
     finally{ setSaving(false); }
   };
@@ -863,7 +985,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
         )}
 
         {/* solo guía */}
-        <button onClick={()=>setSoloGuia(s=>!s)}
+        <button onClick={()=>{ const next=!soloGuia; setSoloGuia(next); recalcTrackGains(trackMixer, next, muteGuia); }}
           className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] transition shrink-0 ${soloGuia?"bg-emerald-700 text-white":"bg-gray-800 text-gray-400 hover:text-white"}`}>
           {soloGuia ? <VolumeX size={12}/> : <Volume2 size={12}/>}
           {soloGuia?"Solo guía":"Todas"}
@@ -902,6 +1024,44 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
           </div>
         </div>
 
+        {/* ── Metrónomo ── */}
+        <div className="flex items-center gap-1 shrink-0 bg-gray-900 rounded-lg px-2 py-1">
+          <button
+            onClick={()=>{
+              const next=!metroEnabled; setMetroEnabled(next); metroEnabledRef.current=next;
+              if(!next){ stopMetroScheduler(); }
+              else if(playingRef.current){
+                const actx=ctxRef.current;
+                if(actx&&bpmRef.current>0){
+                  const off=actx.currentTime-startTimeRef.current;
+                  startMetroScheduler(Math.max(0,off),actx.currentTime+0.02);
+                }
+              }
+            }}
+            className={`text-[10px] font-bold px-2 py-0.5 rounded transition select-none ${
+              metroEnabled?"bg-emerald-600 text-white":"bg-gray-800 text-gray-500 hover:text-white hover:bg-gray-700"}`}>
+            ♪ METRO
+          </button>
+          <input type="range" min={0} max={3} step={0.05} value={metroVolume}
+            onPointerDown={e=>e.stopPropagation()}
+            onChange={e=>{
+              const v=parseFloat(e.target.value); setMetroVolume(v); metroVolumeRef.current=v;
+              if(metroGainRef.current) metroGainRef.current.gain.value=v;
+            }}
+            className="w-14 h-1 accent-emerald-500 cursor-pointer"
+            title="Volumen metrónomo"/>
+          <button
+            onClick={()=>{
+              const next=metroPan===-1?0:-1; setMetroPan(next); metroPanRef.current=next;
+              if(metroPannerRef.current) metroPannerRef.current.pan.value=next;
+            }}
+            className={`text-[10px] font-bold rounded px-1.5 py-0.5 transition select-none ${
+              metroPan===-1?"bg-gray-700 text-white":"bg-emerald-600 text-white"}`}
+            title={metroPan===-1?"Centrar metrónomo":"Metrónomo a la izquierda"}>
+            {metroPan===-1?"L":"C"}
+          </button>
+        </div>
+
         {/* zoom */}
         <div className="flex items-center gap-1 shrink-0">
           <button
@@ -938,8 +1098,10 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
         </button>
 
         <button onClick={guardar} disabled={saving||isLoading}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50 shrink-0">
-          {saving?<Loader2 size={12} className="animate-spin"/>:<Save size={12}/>} Guardar
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50 shrink-0 ${
+            savedOk ? "bg-green-600" : "bg-emerald-600 hover:bg-emerald-500"}` }>
+          {saving ? <Loader2 size={12} className="animate-spin"/> : <Save size={12}/>}
+          {saving ? "Guardando…" : savedOk ? "✓ Guardado" : "Guardar"}
         </button>
         {onSwitchToMultitrack && (
           <button onClick={onSwitchToMultitrack}
@@ -1076,23 +1238,55 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                   const hasEdits = !!trackRegions[fid];
                   return (
                     <div key={fid} className="flex border-b border-gray-800" style={{height:TRACK_H}}>
-                      {/* label */}
+                      {/* label + mixer */}
                       <div style={{width:LABEL_W,position:"sticky",left:0,zIndex:10,
                           backgroundColor: [...selectedRegIds].some(k=>k.startsWith(fid+":")) ? "#1e1b4b" : "#0d1117",
                           borderLeft: [...selectedRegIds].some(k=>k.startsWith(fid+":")) ? "3px solid #6366f1" : "3px solid transparent"}}
-                        className="shrink-0 flex items-center gap-1.5 px-2 border-r border-gray-800">
-                        <div className="w-1.5 h-8 rounded-full shrink-0" style={{backgroundColor:color}}/>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] text-gray-400 truncate leading-tight" title={track.name}>
+                        className="shrink-0 flex flex-col justify-center border-r border-gray-800 overflow-hidden">
+                        {/* fila 1: colorbar + nombre */}
+                        <div className="flex items-center gap-1 px-2 pt-1">
+                          <div className="w-1.5 h-5 rounded-full shrink-0" style={{backgroundColor:color}}/>
+                          <p className="text-[10px] text-gray-400 truncate flex-1 leading-tight" title={track.name}>
                             {sinExt(track.name||`Track ${i+1}`)}
                           </p>
                           {hasEdits && (
-                            <button onClick={e=>{ e.stopPropagation(); resetRegions(fid); }}
-                              className="text-[9px] text-amber-500 hover:text-amber-300 flex items-center gap-0.5 mt-0.5 transition">
-                              <Scissors size={8}/> reset
+                            <button onClick={e=>{ e.stopPropagation(); resetRegions(fid); }} title="Reset ediciones"
+                              className="text-[8px] text-amber-500 hover:text-amber-300 transition shrink-0">
+                              <Scissors size={8}/>
                             </button>
                           )}
                         </div>
+                        {/* fila 2: M S Vol */}
+                        {(()=>{
+                          const ms = trackMixer[fid] ?? {};
+                          const anySoloed = Object.values(trackMixer).some(m=>m?.soloed) || soloGuia;
+                          const active = anySoloed ? !!(ms.soloed) : !(ms.muted);
+                          return (
+                            <>
+                              <div className="flex items-center gap-0.5 px-2 py-0.5">
+                                <button
+                                  onClick={e=>{ e.stopPropagation(); const next=!ms.muted; const nm={...trackMixer,[fid]:{...ms,muted:next}}; setTrackMixer(nm); recalcTrackGains(nm,soloGuia,muteGuia); }}
+                                  className={`w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center transition ${ms.muted?"bg-red-600 text-white":"bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"}`}>M</button>
+                                <button
+                                  onClick={e=>{ e.stopPropagation(); const next=!ms.soloed; const nm={...trackMixer,[fid]:{...ms,soloed:next}}; setTrackMixer(nm); recalcTrackGains(nm,soloGuia,muteGuia); }}
+                                  className={`w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center transition ${ms.soloed?"bg-yellow-400 text-gray-900":"bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"}`}>S</button>
+                                <span className="text-[8px] text-gray-600 ml-0.5">V</span>
+                                <input type="range" min={0} max={1} step={0.01} value={ms.volume??1}
+                                  onClick={e=>e.stopPropagation()}
+                                  onChange={e=>{ const v=parseFloat(e.target.value); const nm={...trackMixer,[fid]:{...ms,volume:v}}; setTrackMixer(nm); const gn=trackGainNodesRef.current[fid]; if(gn) gn.gain.value=active?v:0; }}
+                                  className="flex-1 h-1 cursor-pointer accent-indigo-400 min-w-0"/>
+                              </div>
+                              <div className="flex items-center gap-0.5 px-2 pb-1">
+                                <span className="text-[8px] text-gray-600">P</span>
+                                <input type="range" min={-1} max={1} step={0.01} value={ms.pan??0}
+                                  onClick={e=>e.stopPropagation()}
+                                  onChange={e=>{ const v=parseFloat(e.target.value); const nm={...trackMixer,[fid]:{...ms,pan:v}}; setTrackMixer(nm); const pn=trackPannerNodesRef.current[fid]; if(pn) pn.pan.value=v; }}
+                                  className="flex-1 h-1 cursor-pointer accent-purple-400 min-w-0"/>
+                                <span className="text-[8px] text-gray-500 tabular-nums w-6 text-right">{Math.round((ms.pan??0)*100)}</span>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                       {/* waveform */}
                       <div className="relative" style={{width:tlWidth,height:TRACK_H,
@@ -1115,7 +1309,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                           const x2 = Math.ceil(r.end * zoom);
                           return (
                             <div key={r.id}
-                              onPointerDown={e => onPointerDownRegion(e, fid, r.id, buf)}
+                              onMouseDown={e => onPointerDownRegion(e, fid, r.id, buf)}
                               onClick={e => {
                                 if (e.shiftKey || e.metaKey) return;
                                 e.stopPropagation();
@@ -1139,25 +1333,45 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                 {/* CARRIL GUÍAS */}
                 <div className="flex border-b border-gray-700" style={{height:GUIDE_H}} ref={guideLaneRef}>
                   <div style={{width:LABEL_W,position:"sticky",left:0,zIndex:10,backgroundColor:"#061612"}}
-                    className="shrink-0 flex items-center gap-2 px-2 border-r border-gray-700">
-                    <div className="w-1.5 h-8 rounded-full bg-emerald-500 shrink-0"/>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] text-emerald-400 font-semibold leading-tight">GUÍAS</p>
-                      <p className="text-[9px] text-gray-600 leading-tight">{clips.length} clip{clips.length!==1?"s":""}</p>
+                    className="shrink-0 flex flex-col justify-center border-r border-gray-700 overflow-hidden">
+                    {/* fila 1: colorbar + nombre + clips */}
+                    <div className="flex items-center gap-1.5 px-2 pt-1">
+                      <div className="w-1.5 h-5 rounded-full bg-emerald-500 shrink-0"/>
+                      <p className="text-[10px] text-emerald-400 font-semibold leading-tight flex-1">GUÍAS</p>
+                      <span className="text-[9px] text-gray-600">{clips.length}cl</span>
                     </div>
-                    <div className="flex gap-1 shrink-0">
+                    {/* fila 2: M S V */}
+                    <div className="flex items-center gap-0.5 px-2 py-0.5">
                       <button
-                        onClick={()=>{ const next=!muteGuia; setMuteGuia(next); if(guiaGainRef.current) guiaGainRef.current.gain.value=next?0:6.0; }}
+                        onClick={()=>{ const next=!muteGuia; setMuteGuia(next); recalcTrackGains(trackMixer, soloGuia, next); }}
                         title="Mute guías"
-                        className={`w-5 h-5 rounded text-[9px] font-bold transition flex items-center justify-center ${muteGuia?"bg-red-600 text-white":"bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"}`}>
-                        M
-                      </button>
+                        className={`w-5 h-5 rounded text-[9px] font-bold transition flex items-center justify-center ${muteGuia?"bg-red-600 text-white":"bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"}`}>M</button>
                       <button
-                        onClick={()=>setSoloGuia(s=>!s)}
+                        onClick={()=>{ const next=!soloGuia; setSoloGuia(next); recalcTrackGains(trackMixer, next, muteGuia); }}
                         title="Solo guías"
-                        className={`w-5 h-5 rounded text-[9px] font-bold transition flex items-center justify-center ${soloGuia?"bg-yellow-400 text-gray-900":"bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"}`}>
-                        S
-                      </button>
+                        className={`w-5 h-5 rounded text-[9px] font-bold transition flex items-center justify-center ${soloGuia?"bg-yellow-400 text-gray-900":"bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white"}`}>S</button>
+                      <span className="text-[8px] text-gray-600 ml-0.5">V</span>
+                      <input type="range" min={0} max={1} step={0.01} value={guiaVolume}
+                        onPointerDown={e=>e.stopPropagation()}
+                        onChange={e=>{
+                          const v=parseFloat(e.target.value); setGuiaVolume(v); guiaVolumeRef.current=v;
+                          const anySoloed=Object.values(trackMixer).some(m=>m?.soloed)||soloGuia;
+                          const active=anySoloed?soloGuia:!muteGuia;
+                          if(guiaGainRef.current) guiaGainRef.current.gain.value=active?6.0*v:0;
+                        }}
+                        className="flex-1 h-1 cursor-pointer accent-emerald-400 min-w-0"/>
+                    </div>
+                    {/* fila 3: P */}
+                    <div className="flex items-center gap-0.5 px-2 pb-1">
+                      <span className="text-[8px] text-gray-600">P</span>
+                      <input type="range" min={-1} max={1} step={0.01} value={guiaPan}
+                        onPointerDown={e=>e.stopPropagation()}
+                        onChange={e=>{
+                          const v=parseFloat(e.target.value); setGuiaPan(v); guiaPanValRef.current=v;
+                          if(guiaPannerRef.current) guiaPannerRef.current.pan.value=v;
+                        }}
+                        className="flex-1 h-1 cursor-pointer accent-teal-400 min-w-0"/>
+                      <span className="text-[8px] text-gray-500 tabular-nums w-6 text-right">{Math.round(guiaPan*100)}</span>
                     </div>
                   </div>
                   <div className="relative" style={{width:tlWidth,height:GUIDE_H,backgroundColor:"#061612"}}
