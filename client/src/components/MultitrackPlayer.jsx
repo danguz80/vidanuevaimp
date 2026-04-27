@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { X, Play, Pause, Square, Volume2, Loader2, SkipBack, SkipForward, ListMusic, Pencil } from "lucide-react";
+import { X, Play, Pause, Square, Volume2, Loader2, SkipBack, SkipForward, Pencil } from "lucide-react";
 import { SoundTouch, SimpleFilter, WebAudioBufferSource, getWebAudioNode } from 'soundtouchjs';
 import { idbGet, idbSet } from "../utils/audioOfflineCache";
 
@@ -101,9 +101,11 @@ export default function MultitrackPlayer({
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [customDuration, setCustomDuration] = useState(null); // null = usar duración auto
+  const [editingDuration, setEditingDuration] = useState(false);
+  const [durationInput, setDurationInput] = useState('');
   const [masterVolume, setMasterVolume] = useState(0.85);
   const [trackStates, setTrackStates] = useState([]);
-  const [showSetlist, setShowSetlist] = useState(false);
 
   // ── Info canción (del editor de guías) ──
   const [songBpm, setSongBpm] = useState(0);
@@ -150,6 +152,19 @@ export default function MultitrackPlayer({
   const metroVolumeRef = useRef(2);
   const metroPanRef = useRef(-1);
 
+  // ── MIDI Learn ──
+  const [midiLearnMode, setMidiLearnMode] = useState(false);
+  const [midiLearnTarget, setMidiLearnTarget] = useState(null);
+  const [midiMappings, setMidiMappings] = useState({});
+  const [midiEnabled, setMidiEnabled] = useState(false);
+  const midiLearnModeRef = useRef(false);
+  const midiLearnTargetRef = useRef(null);
+  const midiMappingsRef = useRef({});
+  const midiAccessRef = useRef(null);
+  const applyMidiCCRef = useRef(null);
+  const midiHandlerRef = useRef(null);
+  const prevMidiValuesRef = useRef({});  // edge detection por ccKey
+
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
   const trackDataRef = useRef([]);
@@ -159,6 +174,12 @@ export default function MultitrackPlayer({
   const playingRef = useRef(false);
   const timerRef = useRef(null);
   const durationRef = useRef(0);
+  const effectiveDurationRef = useRef(0); // respeta customDuration si está definido
+  const isScrubbingRef = useRef(false);    // true mientras el usuario arrastra el slider
+  const scrubWasPlayingRef = useRef(false); // estaba reproduciendo antes de scrub
+  const activeSourceNodesRef = useRef([]); // TODOS los BufferSourceNodes activos
+  const markersScrollRef = useRef(null);   // contenedor scroll de la lista de marcadores
+  const activeMarkerIdxRef = useRef(-1);   // índice del marcador activo (para scroll automático)
   const folderNameRef = useRef(folderName);
   useEffect(() => { folderNameRef.current = folderName; }, [folderName]);
 
@@ -178,7 +199,8 @@ export default function MultitrackPlayer({
     offsetRef.current = 0;
 
     clearInterval(timerRef.current);
-    trackDataRef.current.forEach((t) => { try { t.sourceNode?.stop(); } catch {} });
+    activeSourceNodesRef.current.forEach(src => { try { src.stop(); } catch {} });
+    activeSourceNodesRef.current = [];
     trackDataRef.current = [];
     playingRef.current = false;
     setPlaying(false);
@@ -332,8 +354,8 @@ export default function MultitrackPlayer({
     loadTracks(tracks);
     return () => {
       clearInterval(timerRef.current);
-      trackDataRef.current.forEach((t) => { try { t.sourceNode?.stop(); } catch {} });
-      guiasDataRef.current.forEach((g) => { try { g.sourceNode?.stop(); } catch {} });
+      activeSourceNodesRef.current.forEach(src => { try { src.stop(); } catch {} });
+      activeSourceNodesRef.current = [];
       audioCtxRef.current?.close().catch(() => {});
     };
   }, [tracks, folderName]);
@@ -362,9 +384,10 @@ export default function MultitrackPlayer({
           if (preset.metroEnabled != null) { setMetroEnabled(preset.metroEnabled); metroEnabledRef.current = preset.metroEnabled; }
           if (preset.metroVolume  != null) { setMetroVolume(preset.metroVolume);  metroVolumeRef.current = preset.metroVolume;  if (metroGainRef.current) metroGainRef.current.gain.value = preset.metroVolume; }
           if (preset.metroPan    != null) { setMetroPan(preset.metroPan);         metroPanRef.current = preset.metroPan;         if (metroPannerRef.current) metroPannerRef.current.pan.value = preset.metroPan; }
-          // BPM / Semitones / Key
+          // BPM / Semitones / Key / Duración personalizada
           if (preset.playBpm > 0) { setPlayBpm(preset.playBpm); setSongBpm(preset.playBpm); playBpmRef.current = preset.playBpm; songBpmRef.current = preset.playBpm; }
           if (preset.songKey)     { setSongKey(preset.songKey); }
+          if (preset.customDuration > 0) { setCustomDuration(preset.customDuration); }
           if (preset.playSemitones != null && preset.playSemitones !== 0) {
             setPlaySemitones(preset.playSemitones);
             playSemitonesRef.current = preset.playSemitones;
@@ -399,6 +422,12 @@ export default function MultitrackPlayer({
       .catch(() => { presetAppliedRef.current = true; });
   }, [loading, folderId]); // eslint-disable-line
 
+  // Sincronizar effectiveDurationRef: customDuration tiene prioridad sobre la auto-calculada
+  useEffect(() => {
+    const eff = (customDuration != null && customDuration > 0) ? customDuration : duration;
+    effectiveDurationRef.current = eff;
+  }, [customDuration, duration]);
+
   // Guardar preset con debounce cuando cambia cualquier control del mixer
   useEffect(() => {
     if (!folderId || !presetAppliedRef.current) return;
@@ -411,6 +440,7 @@ export default function MultitrackPlayer({
       playBpm: playBpm || undefined,
       playSemitones: playSemitones || undefined,
       songKey: songKey || undefined,
+      customDuration: customDuration ?? undefined,
     };
     presetSaveTimerRef.current = setTimeout(() => {
       fetch(`${API_URL}/api/musica/mixer/${encodeURIComponent(folderId)}`, {
@@ -420,7 +450,7 @@ export default function MultitrackPlayer({
       }).catch(() => {});
     }, 1500);
     return () => clearTimeout(presetSaveTimerRef.current);
-  }, [trackStates, guiasVolume, guiasMuted, guiasSoloed, guiasPan, guiasBoost, masterVolume, metroEnabled, metroVolume, metroPan, playBpm, playSemitones, songKey]); // eslint-disable-line
+  }, [trackStates, guiasVolume, guiasMuted, guiasSoloed, guiasPan, guiasBoost, masterVolume, metroEnabled, metroVolume, metroPan, playBpm, playSemitones, songKey, customDuration]); // eslint-disable-line
 
   // Cargar clips de guías desde la DB cuando folderId esté disponible y loading termine
   useEffect(() => {
@@ -431,7 +461,7 @@ export default function MultitrackPlayer({
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data.clips) && data.clips.length > 0) {
-          setGuiasClips(data.clips);
+          setGuiasClips([...data.clips].sort((a, b) => a.startTime - b.startTime));
         }
         if (data.trackRegions && typeof data.trackRegions === 'object') {
           setGuiasTrackRegions(data.trackRegions);
@@ -512,6 +542,28 @@ export default function MultitrackPlayer({
 
     return () => { cancelled = true; };
   }, [guiasClips, loading, getToken]);
+
+  // ── Auto-scroll marcadores: desplaza la lista cuando cambia el marcador activo ──
+  useEffect(() => {
+    if (!guiasClips.length) return;
+    const idx = guiasClips.findIndex((clip, ci) =>
+      currentTime >= clip.startTime &&
+      (ci === guiasClips.length - 1 || currentTime < guiasClips[ci + 1].startTime)
+    );
+    if (idx !== -1 && idx !== activeMarkerIdxRef.current) {
+      activeMarkerIdxRef.current = idx;
+      const container = markersScrollRef.current;
+      const el = container?.children[idx];
+      if (container && el) {
+        const contRect = container.getBoundingClientRect();
+        const elRect   = el.getBoundingClientRect();
+        // posición del elemento relativa al contenedor + scrollTop actual
+        const elRelTop = elRect.top - contRect.top + container.scrollTop;
+        const target   = elRelTop - container.clientHeight / 2 + el.offsetHeight / 2;
+        container.scrollTo({ top: target, behavior: 'smooth' });
+      }
+    }
+  }, [currentTime, guiasClips]);
 
   // ── Transponer tonalidad ──
   const KEY_SHARPS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
@@ -749,15 +801,12 @@ export default function MultitrackPlayer({
   };
 
   const stopSources = () => {
-    trackDataRef.current.forEach((t) => {
-      try { t.sourceNode?.stop(); } catch {}
-      t.sourceNode = null;
-    });
-    // Detener clips de guías
-    guiasDataRef.current.forEach((g) => {
-      try { g.sourceNode?.stop(); } catch {}
-      g.sourceNode = null;
-    });
+    // Detener TODOS los BufferSourceNodes activos (puede haber múltiples por pista con regiones)
+    activeSourceNodesRef.current.forEach(src => { try { src.stop(); } catch {} });
+    activeSourceNodesRef.current = [];
+    // Limpiar referencias individuales (por compatibilidad con cleanup del useEffect)
+    trackDataRef.current.forEach((t) => { t.sourceNode = null; });
+    guiasDataRef.current.forEach((g) => { g.sourceNode = null; });
     // Detener metrónomo DAW (scheduler)
     stopMetroScheduler();
   };
@@ -766,6 +815,7 @@ export default function MultitrackPlayer({
     const ctx = audioCtxRef.current;
     const startAt = ctx.currentTime + 0.05;
     startTimeRef.current = startAt - fromOffset;
+    activeSourceNodesRef.current = []; // limpiar nodos previos
 
     // Reproducir pistas principales aplicando trackRegions (cortes/eliminaciones del editor)
     trackDataRef.current.forEach((t) => {
@@ -785,7 +835,8 @@ export default function MultitrackPlayer({
           src.buffer = t.buffer;
           src.connect(t.gainNode);
           src.start(startAt + delay, bufOff, Math.min(segDur, t.buffer.duration - bufOff));
-          t.sourceNode = src;
+          activeSourceNodesRef.current.push(src); // registrar para poder detenerlo
+          t.sourceNode = src; // referencia individual (compatibilidad)
         });
       } else {
         // Sin editar: reproducir completa
@@ -794,6 +845,7 @@ export default function MultitrackPlayer({
         src.buffer = t.buffer;
         src.connect(t.gainNode);
         src.start(startAt, fromOffset);
+        activeSourceNodesRef.current.push(src);
         t.sourceNode = src;
       }
     });
@@ -809,6 +861,7 @@ export default function MultitrackPlayer({
       src.buffer = g.buffer;
       src.connect(guiasGainRef.current);
       src.start(startAt + delay, clipOffset);
+      activeSourceNodesRef.current.push(src); // registrar para poder detenerlo
       g.sourceNode = src;
     });
 
@@ -824,9 +877,10 @@ export default function MultitrackPlayer({
     timerRef.current = setInterval(() => {
       if (!playingRef.current) return;
       const elapsed = audioCtxRef.current.currentTime - startTimeRef.current;
-      const clamped = Math.min(elapsed, durationRef.current);
+      const effDur = effectiveDurationRef.current || durationRef.current;
+      const clamped = Math.min(elapsed, effDur);
       setCurrentTime(clamped);
-      if (elapsed >= durationRef.current) stopAll();
+      if (elapsed >= effDur) stopAll();
     }, 50);
   };
 
@@ -866,6 +920,29 @@ export default function MultitrackPlayer({
     return () => window.removeEventListener("keydown", onSpace);
   }, [playing]); // eslint-disable-line
 
+  // Scrubbing sin scratch: pausar al iniciar drag, actualizar posición durante, reanudar al soltar
+  const startScrub = () => {
+    scrubWasPlayingRef.current = playingRef.current;
+    if (playingRef.current) {
+      clearInterval(timerRef.current);
+      stopSources();
+      playingRef.current = false;
+      setPlaying(false);
+    }
+    isScrubbingRef.current = true;
+  };
+
+  const scrubTo = (time) => {
+    offsetRef.current = time;
+    setCurrentTime(time);
+  };
+
+  const endScrub = () => {
+    isScrubbingRef.current = false;
+    if (scrubWasPlayingRef.current) startPlayback(offsetRef.current);
+  };
+
+  // seek programático (desde MIDI u otro código)
   const seek = (time) => {
     const wasPlaying = playingRef.current;
     if (wasPlaying) { clearInterval(timerRef.current); stopSources(); playingRef.current = false; setPlaying(false); }
@@ -942,6 +1019,114 @@ export default function MultitrackPlayer({
     setMasterVolume(v);
   };
 
+  // ── MIDI Learn helpers ──
+  const midiParamId = (param) => {
+    if (!param) return '';
+    return param.index !== undefined ? param.type + '_' + param.index : param.type;
+  };
+
+  const midiParamLabel = (param) => {
+    if (!param) return '?';
+    if (param.index !== undefined) {
+      const n = trackStates[param.index]?.name ?? ('#' + param.index);
+      return ({ track_vol: 'Vol: ', track_pan: 'Pan: ', track_mute: 'Mute: ' }[param.type] ?? '') + n;
+    }
+    return { guias_vol: 'Vol: Guías', guias_pan: 'Pan: Guías', metro_vol: 'Vol: Metro', master_vol: 'Vol: Master', play_stop: 'Play/Stop' }[param.type] ?? param.type;
+  };
+
+  const isMapped = (param) => {
+    const pid = midiParamId(param);
+    return Object.values(midiMappingsRef.current).some(p => midiParamId(p) === pid);
+  };
+
+  const clearMidiMapping = (param) => {
+    const pid = midiParamId(param);
+    const newM = Object.fromEntries(Object.entries(midiMappingsRef.current).filter(([, p]) => midiParamId(p) !== pid));
+    midiMappingsRef.current = newM;
+    setMidiMappings({ ...newM });
+    localStorage.setItem('midi_mt_' + (folderId || 'nofolder'), JSON.stringify(newM));
+  };
+
+  const startMidiLearn = (param) => {
+    setMidiLearnTarget(param);
+    midiLearnTargetRef.current = param;
+  };
+
+  const applyMidiCC = (param, ccValue) => {
+    const norm = Math.max(0, Math.min(1, ccValue / 127)); // siempre 0–1
+    if (param.type === 'track_vol') { setTrackVolume(param.index, norm); }
+    else if (param.type === 'track_pan') { setTrackPan(param.index, norm * 2 - 1); }
+    else if (param.type === 'track_mute') { if (ccValue > 63) toggleMute(param.index); }
+    else if (param.type === 'guias_vol') { setGuiasVolume(norm); if (guiasGainRef.current) guiasGainRef.current.gain.value = guiasMuted ? 0 : norm * guiasBoost; }
+    else if (param.type === 'guias_pan') { setGuiasPanValue(norm * 2 - 1); }
+    else if (param.type === 'metro_vol') { const v = norm * 3; setMetroVolume(v); metroVolumeRef.current = v; if (metroGainRef.current) metroGainRef.current.gain.value = v; }
+    else if (param.type === 'master_vol') { setMasterVol(norm); } // 0–127 → 0–1
+    // play_stop: usar ref directamente para evitar closure stale — solo en flanco ascendente
+    else if (param.type === 'play_stop') { /* manejado por edge detection en midiHandlerRef */ }
+  };
+  applyMidiCCRef.current = applyMidiCC;
+
+  midiHandlerRef.current = (e) => {
+    if (!e.data || e.data.length < 3) return;
+    const status = e.data[0], data1 = e.data[1], data2 = e.data[2];
+    if ((status & 0xF0) !== 0xB0) return;
+    const ccKey = (status & 0x0F) + ':' + data1;
+    if (midiLearnModeRef.current && midiLearnTargetRef.current) {
+      const newM = { ...midiMappingsRef.current, [ccKey]: midiLearnTargetRef.current };
+      midiMappingsRef.current = newM;
+      setMidiMappings({ ...newM });
+      midiLearnTargetRef.current = null;
+      setMidiLearnTarget(null);
+      localStorage.setItem('midi_mt_' + (folderId || 'nofolder'), JSON.stringify(newM));
+      return;
+    }
+    const param = midiMappingsRef.current[ccKey];
+    if (!param) return;
+
+    // Play/Stop: flanco ascendente (prev ≤63, actual >63) para evitar disparos múltiples
+    if (param.type === 'play_stop') {
+      const prev = prevMidiValuesRef.current[ccKey] ?? 0;
+      prevMidiValuesRef.current[ccKey] = data2;
+      if (prev <= 63 && data2 > 63) {
+        // Usar playingRef directamente para evitar closure stale de estado React
+        if (playingRef.current) {
+          pause();
+        } else {
+          play();
+        }
+      }
+      return;
+    }
+
+    prevMidiValuesRef.current[ccKey] = data2;
+    applyMidiCCRef.current?.(param, data2);
+  };
+
+  // Inicializar Web MIDI (una vez al montar)
+  useEffect(() => {
+    if (!navigator.requestMIDIAccess) return;
+    const handler = (e) => midiHandlerRef.current?.(e);
+    navigator.requestMIDIAccess({ sysex: false })
+      .then(access => {
+        midiAccessRef.current = access;
+        setMidiEnabled(true);
+        access.inputs.forEach(inp => { inp.onmidimessage = handler; });
+        access.onstatechange = () => { access.inputs.forEach(inp => { inp.onmidimessage = handler; }); };
+      })
+      .catch(() => {});
+    return () => { midiAccessRef.current?.inputs.forEach(inp => { inp.onmidimessage = null; }); };
+  }, []); // eslint-disable-line
+
+  // Cargar mappings MIDI guardados al cambiar de carpeta
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('midi_mt_' + (folderId || 'nofolder'));
+      const m = saved ? JSON.parse(saved) : {};
+      midiMappingsRef.current = m;
+      setMidiMappings(m);
+    } catch { midiMappingsRef.current = {}; setMidiMappings({}); }
+  }, [folderId]); // eslint-disable-line
+
   const isSetlist = setlistSongs && setlistSongs.length > 1;
 
   return (
@@ -965,15 +1150,6 @@ export default function MultitrackPlayer({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {isSetlist && (
-            <button
-              onClick={() => setShowSetlist((v) => !v)}
-              title="Ver setlist"
-              className={`p-1.5 rounded-lg transition ${showSetlist ? "bg-indigo-600 text-white" : "text-gray-400 hover:text-white hover:bg-gray-800"}`}
-            >
-              <ListMusic size={17} />
-            </button>
-          )}
           {onSwitchToEditor && (
             <button
               onClick={onSwitchToEditor}
@@ -982,6 +1158,18 @@ export default function MultitrackPlayer({
             >
               <Pencil size={13}/> Modo Edición
             </button>
+          )}
+          {midiEnabled && (
+            <button
+              onClick={() => {
+                const next = !midiLearnMode;
+                setMidiLearnMode(next);
+                midiLearnModeRef.current = next;
+                if (!next) { setMidiLearnTarget(null); midiLearnTargetRef.current = null; }
+              }}
+              title="Modo MIDI Learn — asigna controles de tu controlador"
+              className={'px-2 py-1 rounded-lg text-[10px] font-bold transition select-none ' + (midiLearnMode ? 'bg-amber-500 text-black' : 'bg-gray-800 text-gray-500 hover:text-amber-400 hover:bg-gray-700')}
+            >MIDI</button>
           )}
           <button
             onClick={onClose}
@@ -1097,6 +1285,33 @@ export default function MultitrackPlayer({
                   title={metroPan === -1 ? 'Centrar metrónomo' : 'Metrónomo a la izquierda'}
                 >{metroPan === -1 ? 'L' : 'C'}</button>
               </div>
+              <div className="w-px h-4 bg-gray-700 shrink-0" />
+              {/* Centrar */}
+              <button
+                onClick={() => {
+                  trackStates.forEach((_, i) => setTrackPan(i, 0));
+                  setGuiasPanValue(0);
+                  setMetroPan(0); metroPanRef.current = 0;
+                  if (metroPannerRef.current) metroPannerRef.current.pan.value = 0;
+                }}
+                className="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white transition select-none"
+                title="Panear todos los canales al centro"
+              >Centrar</button>
+              {/* Modo en vivo */}
+              <button
+                onClick={() => {
+                  setGuiasPanValue(-1);
+                  setMetroPan(-1); metroPanRef.current = -1;
+                  if (metroPannerRef.current) metroPannerRef.current.pan.value = -1;
+                  // Metro/click/guías → izquierda; resto → derecha
+                  trackStates.forEach((t, i) => {
+                    const isMetro = /\b(metro(nome)?|click|clic|clave|beat|tempo|drum\s*machine)\b/i.test(t.name);
+                    setTrackPan(i, isMetro ? -1 : 1);
+                  });
+                }}
+                className="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white transition select-none"
+                title="Metro/Guías → izquierda · Resto → derecha"
+              >Modo en vivo</button>
               {/* Indicador de procesamiento */}
               {processing && (
                 <div className="flex items-center gap-1 ml-auto">
@@ -1107,36 +1322,16 @@ export default function MultitrackPlayer({
             </div>
           )}
 
-          {/* Panel setlist — lateral derecho, no tapa los faders */}
-          {showSetlist && isSetlist && (
-            <div className="absolute right-0 top-0 bottom-0 z-10 w-56 bg-gray-900 border-l border-gray-700 flex flex-col shadow-2xl">
-              <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-700 shrink-0">
-                <p className="text-white font-semibold text-xs tracking-wide">SETLIST</p>
-                <button onClick={() => setShowSetlist(false)} className="text-gray-400 hover:text-white p-1"><X size={15} /></button>
-              </div>
-              <div className="flex-1 overflow-y-auto py-1">
-                {setlistSongs.map((song, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      setShowSetlist(false);
-                      const delta = idx - songIndex;
-                      if (delta < 0 && onPrevSong) onPrevSong(-delta);
-                      else if (delta > 0 && onNextSong) onNextSong(delta);
-                    }}
-                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition ${
-                      idx === songIndex ? "bg-indigo-600/25 text-indigo-300" : "hover:bg-gray-800 text-gray-300"
-                    }`}
-                  >
-                    <span className={`text-[10px] w-4 text-center tabular-nums shrink-0 ${idx === songIndex ? "text-indigo-400" : "text-gray-600"}`}>{idx + 1}</span>
-                    <span className="flex-1 text-xs truncate">{song.name}</span>
-                    {song.cached && <span className="text-[10px] text-green-500 shrink-0">✓</span>}
-                    {song.caching && <Loader2 size={10} className="animate-spin text-indigo-400 shrink-0" />}
-                  </button>
-                ))}
-              </div>
+          {/* MIDI Learn banner */}
+          {midiLearnMode && (
+            <div className={'shrink-0 px-4 py-1.5 flex items-center gap-2 text-[11px] font-semibold border-b border-amber-500/20 ' + (midiLearnTarget ? 'bg-amber-500/15 text-amber-300' : 'bg-amber-500/10 text-amber-400')}>
+              <span className={midiLearnTarget ? 'animate-pulse' : ''}>⬤</span>
+              <span className="flex-1 truncate">{midiLearnTarget ? ('Mueve un knob/fader → "' + midiParamLabel(midiLearnTarget) + '"') : 'MIDI Learn — haz clic en fader, mute o pan'}</span>
+              {midiLearnTarget && <button onClick={() => { setMidiLearnTarget(null); midiLearnTargetRef.current = null; }} className="shrink-0 text-amber-500 hover:text-amber-300 ml-1">✕</button>}
             </div>
           )}
+          {/* ── ÁREA MIXER + PANEL DERECHO ── */}
+          <div className="flex flex-1 overflow-hidden" style={{ minHeight: 0 }}>
 
           {/* ── MIXER VERTICAL ── */}
           <div className="flex-1 overflow-x-auto overflow-y-hidden" style={{ minHeight: 0 }}>
@@ -1150,6 +1345,9 @@ export default function MultitrackPlayer({
                 const isVocalTrack   = /\bvocals?\b|\bvocales\b|\bvoz\b|\blead\b/i.test(t.name) && !/backing|bg[\s_-]?vocals?|bv\d?\b/i.test(t.name);
                 const isBackingTrack = /\b(backing[\s_-]?vocals?|bg[\s_-]?vocals?|bv\d?|coro)\b/i.test(t.name);
                 const cssOrder = isMetroTrack ? 999 : isVocalTrack ? 0 : isBackingTrack ? 1 : i + 10;
+                const mlFader = midiLearnMode && midiLearnTarget && midiParamId(midiLearnTarget) === 'track_vol_' + i;
+                const mlMute  = midiLearnMode && midiLearnTarget && midiParamId(midiLearnTarget) === 'track_mute_' + i;
+                const mlPan   = midiLearnMode && midiLearnTarget && midiParamId(midiLearnTarget) === 'track_pan_' + i;
 
                 return (
                   <div
@@ -1173,6 +1371,7 @@ export default function MultitrackPlayer({
 
                     {/* Vertical fader */}
                     <div className="flex-1 flex items-center justify-center w-full py-1 relative" style={{ minHeight: 100 }}>
+                      {midiLearnMode && <div className={'absolute inset-0 z-10 rounded cursor-crosshair transition-colors ' + (mlFader ? 'bg-amber-500/20 ring-1 ring-inset ring-amber-400' : 'hover:bg-amber-500/10')} onClick={() => startMidiLearn({ type: 'track_vol', index: i })} title="Clic → asignar fader de volumen" />}
                       {/* Track bg */}
                       <div className="absolute w-1.5 rounded-full bg-gray-700 top-2 bottom-2 left-1/2 -translate-x-1/2" />
                       {/* Fill */}
@@ -1202,11 +1401,9 @@ export default function MultitrackPlayer({
 
                     {/* M button */}
                     <button
-                      onClick={() => toggleMute(i)}
-                      className={`w-full py-1 rounded text-[10px] font-bold transition select-none ${
-                        t.muted ? "bg-red-500 text-white" : "bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700"
-                      }`}
-                    >M</button>
+                      onClick={() => midiLearnMode ? startMidiLearn({ type: 'track_mute', index: i }) : toggleMute(i)}
+                      className={'w-full py-1 rounded text-[10px] font-bold transition select-none relative ' + (mlMute ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-400 cursor-crosshair' : midiLearnMode ? 'cursor-crosshair ring-1 ring-amber-500/40 ' + (t.muted ? 'bg-red-500 text-white' : 'bg-gray-800 text-gray-500') : t.muted ? 'bg-red-500 text-white' : 'bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700')}
+                    >M{isMapped({ type: 'track_mute', index: i }) && !midiLearnMode && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400 block" />}</button>
 
                     {/* S button */}
                     <button
@@ -1222,7 +1419,8 @@ export default function MultitrackPlayer({
                     </span>
 
                     {/* Pan slider horizontal — doble clic para centrar */}
-                    <div className="w-full relative mb-1" title="Balance (doble clic = centro)">
+                    <div className="w-full relative mb-1" title={midiLearnMode ? 'Clic → asignar pan' : 'Balance (doble clic = centro)'}>
+                      {midiLearnMode && <div className={'absolute inset-0 z-10 rounded cursor-crosshair ' + (mlPan ? 'bg-amber-500/20 ring-1 ring-inset ring-amber-400' : 'hover:bg-amber-500/10')} onClick={() => startMidiLearn({ type: 'track_pan', index: i })} />}
                       <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-700 -translate-y-1/2 pointer-events-none" />
                       <div className="absolute top-1/2 left-1/2 w-px h-2 bg-gray-600 -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
                       <input
@@ -1272,6 +1470,7 @@ export default function MultitrackPlayer({
                   </div>
                   {/* Fader vertical */}
                   <div className="flex-1 flex items-center justify-center w-full py-1 relative" style={{ minHeight: 100 }}>
+                    {midiLearnMode && <div className={'absolute inset-0 z-10 rounded cursor-crosshair transition-colors ' + (midiLearnTarget?.type === 'guias_vol' ? 'bg-amber-500/20 ring-1 ring-inset ring-amber-400' : 'hover:bg-amber-500/10')} onClick={() => startMidiLearn({ type: 'guias_vol' })} title="Clic → asignar fader de guías" />}
                     <div className="absolute w-1.5 rounded-full bg-gray-700 top-2 bottom-2 left-1/2 -translate-x-1/2" />
                     <div
                       className="absolute w-1.5 rounded-full left-1/2 -translate-x-1/2 bottom-2 bg-emerald-500 transition-none"
@@ -1362,6 +1561,7 @@ export default function MultitrackPlayer({
                   <p className="text-[10px] text-indigo-400 font-bold tracking-widest text-center">MSTR</p>
                 </div>
                 <div className="flex-1 flex items-center justify-center w-full py-1 relative" style={{ minHeight: 100 }}>
+                  {midiLearnMode && <div className={'absolute inset-0 z-10 rounded cursor-crosshair transition-colors ' + (midiLearnTarget?.type === 'master_vol' ? 'bg-amber-500/20 ring-1 ring-inset ring-amber-400' : 'hover:bg-amber-500/10')} onClick={() => startMidiLearn({ type: 'master_vol' })} title="Clic → asignar Master Vol" />}
                   <div className="absolute w-1.5 rounded-full bg-gray-700 top-2 bottom-2 left-1/2 -translate-x-1/2" />
                   <div
                     className="absolute w-1.5 rounded-full left-1/2 -translate-x-1/2 bottom-2 bg-indigo-500 transition-none"
@@ -1388,16 +1588,233 @@ export default function MultitrackPlayer({
             </div>
           </div>
 
+          {/* ── PANEL DERECHO ── */}
+          <div className="w-72 shrink-0 bg-gray-950 border-l border-gray-800 flex flex-col overflow-hidden">
+
+            {/* ─ Sección 1: Setlist ─ */}
+            <div className="flex-1 flex flex-col overflow-hidden border-b border-gray-800">
+              <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase px-4 pt-3 pb-2 shrink-0">Setlist</p>
+              {isSetlist ? (
+                <div className="flex-1 overflow-y-auto px-2 pb-2 flex flex-col gap-1.5">
+                  {setlistSongs.map((song, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        const delta = idx - songIndex;
+                        if (delta < 0 && onPrevSong) onPrevSong(-delta);
+                        else if (delta > 0 && onNextSong) onNextSong(delta);
+                      }}
+                      disabled={idx === songIndex}
+                      className={`w-full flex items-center gap-2 px-3 py-3 rounded-xl text-left transition active:scale-95 ${
+                        idx === songIndex
+                          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-default"
+                          : "bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white"
+                      }`}
+                    >
+                      <span className={`text-xs font-bold w-5 text-center tabular-nums shrink-0 ${
+                        idx === songIndex ? "text-indigo-200" : "text-gray-500"
+                      }`}>{idx + 1}</span>
+                      <span className="flex-1 text-sm font-medium truncate leading-tight">{song.name}</span>
+                      {song.cached && <span className="text-xs text-green-400 shrink-0">✓</span>}
+                      {song.caching && <Loader2 size={11} className="animate-spin text-indigo-300 shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center">
+                  <span className="text-gray-700 text-xs text-center px-4">No hay setlist activo</span>
+                </div>
+              )}
+            </div>
+
+            {/* ─ Sección Marcadores de Guías ─ */}
+            {guiasClips.length > 0 && (
+              <div className="flex flex-col border-b border-gray-800 overflow-hidden" style={{ flex: '1 1 0', minHeight: 80, maxHeight: isSetlist ? 220 : '100%' }}>
+                <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase px-3 pt-2.5 pb-2 shrink-0">Marcadores</p>
+                <div ref={markersScrollRef} className="flex-1 overflow-y-auto px-3 pb-2.5 flex flex-col gap-1.5">
+                  {guiasClips.map((clip, ci) => {
+                    const label = clip.fileName
+                      ? clip.fileName.replace(/\.[^.]+$/, '')
+                      : `Guía ${ci + 1}`;
+                    const isActive = currentTime >= clip.startTime &&
+                      (ci === guiasClips.length - 1 || currentTime < guiasClips[ci + 1].startTime);
+                    return (
+                      <button
+                        key={clip.id ?? ci}
+                        onClick={() => seek(clip.startTime)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition active:scale-95 ${
+                          isActive
+                            ? 'bg-emerald-600/20 border border-emerald-600/50 text-emerald-300'
+                            : 'bg-gray-800 border border-transparent text-gray-300 hover:bg-gray-700 hover:text-white hover:border-gray-600'
+                        }`}
+                      >
+                        <div className={`shrink-0 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[10px] border-l-transparent border-r-transparent ${isActive ? 'border-t-emerald-400' : 'border-t-emerald-600'}`} />
+                        <span className="flex-1 text-sm font-medium truncate leading-tight">{label}</span>
+                        <span className={`text-[10px] tabular-nums shrink-0 font-mono ${isActive ? 'text-emerald-400' : 'text-gray-500'}`}>
+                          {fmt(clip.startTime)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ─ Sección 2: Patrones de batería (placeholder) ─ */}
+            <div className="shrink-0 px-3 py-2.5 flex flex-col gap-2" style={{ minHeight: 90 }}>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Patrones</p>
+                {playBpm > 0 && (
+                  <span className="text-[10px] text-gray-600 font-mono tabular-nums">{playBpm} bpm</span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {['Rock', 'Pop', 'Balada', 'Shuffle', 'Latin'].map((name) => (
+                  <button
+                    key={name}
+                    disabled
+                    className="px-2 py-0.5 rounded text-[10px] bg-gray-800 text-gray-600 cursor-not-allowed"
+                  >{name}</button>
+                ))}
+              </div>
+              <span className="text-[10px] text-gray-700">Próximamente</span>
+            </div>
+
+            {/* ─ Sección 3: MIDI ─ */}
+            {midiEnabled && (
+              <div className="shrink-0 border-t border-gray-800 px-3 py-2 flex flex-col gap-1.5" style={{ maxHeight: 200, overflowY: 'auto' }}>
+                <div className="flex items-center justify-between shrink-0">
+                  <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase">MIDI</p>
+                  {Object.keys(midiMappings).length > 0 && (
+                    <button onClick={() => { midiMappingsRef.current = {}; setMidiMappings({}); localStorage.removeItem('midi_mt_' + (folderId || 'nofolder')); }} className="text-[10px] text-red-500/60 hover:text-red-400">Borrar todo</button>
+                  )}
+                </div>
+                {midiLearnMode && (
+                  <div className="flex flex-col gap-px border-b border-gray-800/60 pb-1.5 shrink-0">
+                    <p className="text-[9px] text-gray-700 uppercase tracking-widest mb-0.5">Clic para asignar</p>
+                    {[
+                      { type: 'guias_vol' }, { type: 'guias_pan' },
+                      { type: 'metro_vol' }, { type: 'master_vol' }, { type: 'play_stop' },
+                    ].map((param) => {
+                      const isTarget = midiLearnTarget && midiParamId(midiLearnTarget) === midiParamId(param);
+                      return (
+                        <button key={param.type} onClick={() => startMidiLearn(param)}
+                          className={'w-full text-left px-1.5 py-0.5 rounded text-[10px] transition cursor-crosshair ' + (isTarget ? 'bg-amber-500/20 text-amber-300 animate-pulse' : 'text-gray-500 hover:bg-gray-800 hover:text-gray-300')}
+                        >{midiParamLabel(param)}{isMapped(param) ? ' ●' : ''}</button>
+                      );
+                    })}
+                  </div>
+                )}
+                {Object.keys(midiMappings).length === 0 ? (
+                  <span className="text-gray-700 text-[10px] shrink-0">{midiLearnMode ? 'Clic en fader/mute/pan del mixer' : 'Sin asignaciones — activa MIDI'}</span>
+                ) : (
+                  <div className="flex flex-col gap-px">
+                    {Object.entries(midiMappings).map(([ccKey, param]) => (
+                      <div key={ccKey} className="flex items-center gap-1.5 py-px">
+                        <span className="text-amber-400/80 text-[10px] font-mono shrink-0 w-8">CC{ccKey.split(':')[1]}</span>
+                        <span className="text-gray-400 text-[10px] flex-1 truncate">{midiParamLabel(param)}</span>
+                        <button onClick={() => clearMidiMapping(param)} className="text-gray-700 hover:text-red-400 text-[10px] shrink-0 px-0.5">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
+          {/* ── FIN ÁREA MIXER + PANEL DERECHO ── */}
+          </div>
+
           {/* Transport bar */}
           <div className="bg-gray-900 border-t border-gray-800 px-4 pt-2.5 pb-4 shrink-0">
             <div className="flex items-center gap-2 mb-3">
               <span className="text-gray-500 text-[11px] w-9 shrink-0 tabular-nums">{fmt(currentTime)}</span>
-              <input
-                type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
-                onChange={(e) => seek(parseFloat(e.target.value))}
-                className="flex-1 h-1 cursor-pointer accent-indigo-500"
-              />
-              <span className="text-gray-500 text-[11px] w-9 text-right shrink-0 tabular-nums">{fmt(duration)}</span>
+
+              {/* Slider + marcadores de guías superpuestos */}
+              <div className="flex-1 relative flex flex-col justify-center" style={{ minHeight: 28 }}>
+                {/* Marcadores de guías */}
+                {guiasClips.length > 0 && (() => {
+                  const effDur = (customDuration != null && customDuration > 0 ? customDuration : duration) || 0;
+                  if (effDur <= 0) return null;
+                  return guiasClips.map((clip, ci) => {
+                    const pct = Math.min(100, Math.max(0, (clip.startTime / effDur) * 100));
+                    const label = clip.fileName
+                      ? clip.fileName.replace(/\.[^.]+$/, '').slice(0, 18)
+                      : `G${ci + 1}`;
+                    return (
+                      <button
+                        key={clip.id ?? ci}
+                        title={`Ir a: ${label} (${fmt(clip.startTime)})`}
+                        onPointerDown={(e) => { e.stopPropagation(); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          seek(clip.startTime);
+                        }}
+                        className="absolute flex flex-col items-center group z-10"
+                        style={{ left: `${pct}%`, transform: 'translateX(-50%)', top: 0 }}
+                      >
+                        {/* Triángulo marcador */}
+                        <div className="w-0 h-0 border-l-[5px] border-r-[5px] border-t-[8px] border-l-transparent border-r-transparent border-t-emerald-400 group-hover:border-t-emerald-300 transition-colors" />
+                        {/* Etiqueta (visible al hover) */}
+                        <span className="absolute top-full mt-0.5 whitespace-nowrap text-[9px] bg-gray-900 text-emerald-400 border border-emerald-800 px-1 py-px rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20" style={{ left: '50%', transform: 'translateX(-50%)' }}>
+                          {label}
+                        </span>
+                      </button>
+                    );
+                  });
+                })()}
+
+                {/* Slider de tiempo */}
+                <input
+                  type="range" min={0}
+                  max={(customDuration != null && customDuration > 0 ? customDuration : duration) || 0}
+                  step={0.1} value={currentTime}
+                  onPointerDown={startScrub}
+                  onChange={(e) => scrubTo(parseFloat(e.target.value))}
+                  onPointerUp={endScrub}
+                  className="w-full h-1 cursor-pointer accent-indigo-500 relative"
+                  style={{ marginTop: 10 }}
+                />
+              </div>
+              {/* Duración: editable para recortar la canción */}
+              {editingDuration ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    // Acepta m:ss o segundos
+                    const raw = durationInput.trim();
+                    let secs = 0;
+                    if (raw.includes(':')) {
+                      const [m, s] = raw.split(':');
+                      secs = parseInt(m || 0) * 60 + parseFloat(s || 0);
+                    } else {
+                      secs = parseFloat(raw);
+                    }
+                    if (!isNaN(secs) && secs > 0) setCustomDuration(secs);
+                    else setCustomDuration(null); // vacío = restaurar auto
+                    setEditingDuration(false);
+                  }}
+                  className="flex items-center gap-1"
+                >
+                  <input
+                    autoFocus
+                    value={durationInput}
+                    onChange={(e) => setDurationInput(e.target.value)}
+                    onBlur={() => setEditingDuration(false)}
+                    placeholder={fmt(customDuration ?? duration)}
+                    className="w-14 text-[11px] text-center bg-gray-800 border border-indigo-500 rounded px-1 py-0.5 text-white outline-none"
+                  />
+                </form>
+              ) : (
+                <button
+                  onClick={() => { setDurationInput(fmt(customDuration ?? duration)); setEditingDuration(true); }}
+                  title="Ajustar duración de la canción"
+                  className={"flex items-center gap-0.5 tabular-nums text-[11px] w-14 text-right justify-end shrink-0 transition " + (customDuration != null ? "text-amber-400 hover:text-amber-300" : "text-gray-500 hover:text-gray-300")}
+                >
+                  {fmt(customDuration != null && customDuration > 0 ? customDuration : duration)}
+                  <Pencil size={9} className="ml-0.5 shrink-0" />
+                </button>
+              )}
             </div>
 
             <div className="flex items-center justify-center gap-3">
@@ -1417,8 +1834,9 @@ export default function MultitrackPlayer({
                 <Square size={14} fill="currentColor" />
               </button>
               <button
-                onClick={togglePlay}
-                className="w-14 h-14 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center transition shadow-lg shadow-indigo-600/30"
+                onClick={() => midiLearnMode ? startMidiLearn({ type: 'play_stop' }) : togglePlay()}
+                className={'w-14 h-14 rounded-2xl text-white flex items-center justify-center transition shadow-lg ' + (midiLearnTarget?.type === 'play_stop' ? 'bg-amber-500 shadow-amber-500/30 cursor-crosshair' : midiLearnMode ? 'bg-indigo-600 ring-2 ring-amber-500/60 shadow-indigo-600/30 cursor-crosshair' : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/30')}
+                title={midiLearnMode ? 'Clic → asignar Play/Stop' : undefined}
               >
                 {playing ? <Pause size={24} /> : <Play size={24} />}
               </button>

@@ -265,7 +265,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
 
     fetch(`${API_URL}/api/musica/guias/${encodeURIComponent(folderId)}`,{headers:hdrs})
       .then(r=>r.json()).then(d=>{
-        if(Array.isArray(d.clips))                      setClips(d.clips);
+        if(Array.isArray(d.clips))                      setClips([...d.clips].sort((a,b)=>a.startTime-b.startTime));
         if(d.trackRegions)                              setTrackRegions(d.trackRegions);
         if(d.bpm       && folderMeta.bpm       == null) setBpm(d.bpm);
         if(d.beatsPerBar && folderMeta.beatsPerBar == null) setBeatsPerBar(d.beatsPerBar);
@@ -835,7 +835,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
 
   const agregarClip = useCallback(async(file,startTime)=>{
     const clip={id:uid(),fileId:file.id,fileName:file.name,startTime:parseFloat(Math.max(0,startTime).toFixed(2)),duration:0};
-    setClips(prev=>[...prev,clip]); setActiveGuiaClip(clip);
+    setClips(prev=>[...prev,clip].sort((a,b)=>a.startTime-b.startTime)); setActiveGuiaClip(clip);
     await cargarGuiaBuffer(file.id);
     offsetRef.current=clip.startTime; setCurrentTime(clip.startTime);
   },[cargarGuiaBuffer]);
@@ -844,7 +844,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
 
   const moverClip = (id,delta)=>{
     const ns=c=>parseFloat(Math.max(0,c.startTime+delta).toFixed(3));
-    setClips(p=>p.map(c=>c.id===id?{...c,startTime:ns(c)}:c));
+    setClips(p=>p.map(c=>c.id===id?{...c,startTime:ns(c)}:c).sort((a,b)=>a.startTime-b.startTime));
     setActiveGuiaClip(p=>p?.id===id?{...p,startTime:ns(p)}:p);
   };
 
@@ -853,7 +853,7 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
     const sx=e.clientX, st=clip.startTime;
     const onMove=ev=>{
       const ns=parseFloat(Math.max(0,st+(ev.clientX-sx)/zoom).toFixed(3));
-      setClips(p=>p.map(c=>c.id===clip.id?{...c,startTime:ns}:c));
+      setClips(p=>p.map(c=>c.id===clip.id?{...c,startTime:ns}:c).sort((a,b)=>a.startTime-b.startTime));
       setActiveGuiaClip(p=>p?.id===clip.id?{...p,startTime:ns}:p);
     };
     const onUp=()=>{ window.removeEventListener("mousemove",onMove); window.removeEventListener("mouseup",onUp); };
@@ -1468,7 +1468,16 @@ export default function GuiasEditor({ folderId, folderName, tracks=[], getToken,
                     return (
                       <div key={clip.id}
                         className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 border cursor-pointer transition ${isAct?"bg-emerald-900/40 border-emerald-600":"bg-gray-800 border-gray-700 hover:border-gray-500"}`}
-                        onClick={()=>{ setActiveGuiaClip(clip); offsetRef.current=clip.startTime; setCurrentTime(clip.startTime); }}>
+                        onClick={()=>{
+                          setActiveGuiaClip(clip);
+                          doSeek(clip.startTime);
+                          // Centrar vista en el punto del clip
+                          const cont = scrollContRef.current;
+                          if (cont) {
+                            const targetX = LABEL_W + clip.startTime * zoom;
+                            cont.scrollLeft = Math.max(0, targetX - cont.clientWidth / 2);
+                          }
+                        }}>
                         <span className="text-emerald-400 text-[11px] font-medium max-w-[90px] truncate">{sinExt(clip.fileName)}</span>
                         <div className="flex items-center gap-0.5">
                           <button onClick={e=>{ e.stopPropagation(); moverClip(clip.id,-0.1); }}
