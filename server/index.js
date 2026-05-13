@@ -54,11 +54,12 @@ async function getDriveAccessToken() {
   }
 }
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 import { sendDonationReceipt, saveDonation, sendCashDonationReceipt } from "./emailService.js";
 
 // ✅ Cargar .env lo antes posible
 dotenv.config();
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // ✅ Configurar cloudinary después de cargar variables
 cloudinary.config({
