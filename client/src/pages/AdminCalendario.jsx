@@ -558,14 +558,6 @@ export default function AdminCalendario() {
         );
       });
 
-      // ── GRILLA — celdas vacías pre-mes ─────────────────────────────────────────
-      doc.setDrawColor(200, 210, 225);
-      doc.setLineWidth(0.3);
-      for (let c = 0; c < pDia; c++) {
-        doc.setFillColor(246, 247, 250);
-        doc.rect(colX[c], topGrilla, colWidths[c], altoCelda, "FD");
-      }
-
       // ── Constantes de layout (jsPDF, helvetica sin emojis) ────────────────────
       const PAD    = 3;       // padding horizontal
       const NR     = 7;       // radio círculo número de día
@@ -575,7 +567,35 @@ export default function AdminCalendario() {
       const H_PERS = 13;      // fila persona — foto 11mm + texto 20pt
       const H_NLIN = 9;       // línea de nota
       const GAP    = 4;       // separación entre eventos
-      const OY_INI = NR * 2 + 10;  // offset inicial desde top de celda (~22mm, deja espacio al número del día)
+      const OY_INI = NR * 2 + 10;  // offset inicial desde top de celda (~24mm, deja espacio al número del día)
+
+      // ── GRILLA — celdas vacías pre-mes (con cumpleaños del mes anterior) ────────
+      const mesPrev    = mesActual === 0 ? 11 : mesActual - 1;
+      const anioPrev   = mesActual === 0 ? anioActual - 1 : anioActual;
+      const diasPrevMes = diasEnMes(anioPrev, mesPrev);
+      doc.setDrawColor(200, 210, 225);
+      doc.setLineWidth(0.3);
+      for (let c = 0; c < pDia; c++) {
+        const diaPrev = diasPrevMes - (pDia - 1 - c);
+        const xPrev   = colX[c];
+        const cwPrev  = colWidths[c];
+        doc.setFillColor(246, 247, 250);
+        doc.rect(xPrev, topGrilla, cwPrev, altoCelda, "FD");
+        const cumplesPrev = miembros.filter(m => {
+          if (!m.fecha_nacimiento) return false;
+          const f = new Date(m.fecha_nacimiento);
+          return f.getUTCMonth() === mesPrev && f.getUTCDate() === diaPrev;
+        });
+        let oyPrev = topGrilla + OY_INI;
+        cumplesPrev.forEach(m => {
+          if (oyPrev + 16 > topGrilla + altoCelda - 2) return;
+          doc.setFontSize(17);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(219, 39, 119);
+          doc.text(`Cumpleanios: ${m.nombre} ${m.apellido}`, xPrev + PAD, oyPrev + 8, { maxWidth: cwPrev - PAD * 2 - 2 });
+          oyPrev += 16;
+        });
+      }
 
       let col = pDia, fila = 0;
 
@@ -624,11 +644,10 @@ export default function AdminCalendario() {
         });
         if (cumplesPDF.length > 0 && oy + cumplesPDF.length * 16 < y + altoCelda - 2) {
           cumplesPDF.forEach(m => {
-            const edad = anioActual - new Date(m.fecha_nacimiento).getUTCFullYear();
             doc.setFontSize(17);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(219, 39, 119); // rosa
-            const texto = `Cumpleanios: ${m.nombre} ${m.apellido} (${edad} anos)`;
+            const texto = `Cumpleanios: ${m.nombre} ${m.apellido}`;
             doc.text(texto, x + PAD, oy + 8, { maxWidth: cw - PAD * 2 - 2 });
             oy += 16;
           });
@@ -745,6 +764,37 @@ export default function AdminCalendario() {
 
         col++;
         if (col === 7) { col = 0; fila++; }
+      }
+
+      // ── GRILLA — celdas post-mes (días del mes siguiente visibles en la grilla) ──
+      if (col > 0) {
+        const mesSig = mesActual === 11 ? 0 : mesActual + 1;
+        let diaSig = 1;
+        doc.setDrawColor(200, 210, 225);
+        doc.setLineWidth(0.3);
+        while (col < 7) {
+          const xSig  = colX[col];
+          const ySig  = topGrilla + fila * altoCelda;
+          const cwSig = colWidths[col];
+          doc.setFillColor(246, 247, 250);
+          doc.rect(xSig, ySig, cwSig, altoCelda, "FD");
+          const cumplesSig = miembros.filter(m => {
+            if (!m.fecha_nacimiento) return false;
+            const f = new Date(m.fecha_nacimiento);
+            return f.getUTCMonth() === mesSig && f.getUTCDate() === diaSig;
+          });
+          let oySig = ySig + OY_INI;
+          cumplesSig.forEach(m => {
+            if (oySig + 16 > ySig + altoCelda - 2) return;
+            doc.setFontSize(17);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(219, 39, 119);
+            doc.text(`Cumpleanios: ${m.nombre} ${m.apellido}`, xSig + PAD, oySig + 8, { maxWidth: cwSig - PAD * 2 - 2 });
+            oySig += 16;
+          });
+          col++;
+          diaSig++;
+        }
       }
 
       // ── PIE DE PÁGINA ─────────────────────────────────────────────────────────
