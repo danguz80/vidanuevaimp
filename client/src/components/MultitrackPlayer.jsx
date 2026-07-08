@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { X, Play, Pause, Square, Volume2, Loader2, SkipBack, SkipForward, Pencil } from "lucide-react";
+import { X, Play, Pause, Square, Volume2, Loader2, SkipBack, SkipForward, Pencil, Download } from "lucide-react";
 import { SoundTouch, SimpleFilter, WebAudioBufferSource, getWebAudioNode } from 'soundtouchjs';
 import { idbGet, idbSet } from "../utils/audioOfflineCache";
 
@@ -22,6 +22,87 @@ function fmt(seg) {
 
 function sinExtension(nombre) {
   return (nombre || "").replace(/\.[^.]+$/, "");
+}
+
+function sanitizeFileName(name) {
+  return (name || "stem")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120) || "stem";
+}
+
+function encodeWav16FromStereo(left, right, sampleRate) {
+  const length = Math.min(left.length, right.length);
+  const bytesPerSample = 2;
+  const channels = 2;
+  const blockAlign = channels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = length * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  let offset = 0;
+  const writeString = (s) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset++, s.charCodeAt(i));
+  };
+
+  writeString("RIFF");
+  view.setUint32(offset, 36 + dataSize, true); offset += 4;
+  writeString("WAVE");
+  writeString("fmt ");
+  view.setUint32(offset, 16, true); offset += 4; // PCM chunk size
+  view.setUint16(offset, 1, true); offset += 2; // format PCM
+  view.setUint16(offset, channels, true); offset += 2;
+  view.setUint32(offset, sampleRate, true); offset += 4;
+  view.setUint32(offset, byteRate, true); offset += 4;
+  view.setUint16(offset, blockAlign, true); offset += 2;
+  view.setUint16(offset, 16, true); offset += 2; // bits per sample
+  writeString("data");
+  view.setUint32(offset, dataSize, true); offset += 4;
+
+  for (let i = 0; i < length; i++) {
+    const l = Math.max(-1, Math.min(1, left[i]));
+    const r = Math.max(-1, Math.min(1, right[i]));
+    view.setInt16(offset, l < 0 ? l * 0x8000 : l * 0x7fff, true); offset += 2;
+    view.setInt16(offset, r < 0 ? r * 0x8000 : r * 0x7fff, true); offset += 2;
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function mixRegionsIntoStereo({ targetL, targetR, sourceBuffer, regions, timelineStart = 0, sampleRate }) {
+  if (!sourceBuffer || !Array.isArray(regions) || regions.length === 0) return;
+  const srcL = sourceBuffer.getChannelData(0);
+  const srcR = sourceBuffer.numberOfChannels > 1 ? sourceBuffer.getChannelData(1) : srcL;
+  const totalSamples = targetL.length;
+
+  for (const reg of regions) {
+    const start = Number(reg.start ?? 0);
+    const end = Number(reg.end ?? start);
+    const fileOff = Number(reg.fileOffset ?? reg.start ?? 0);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+
+    const destStartSec = timelineStart + start;
+    const regDurSec = end - start;
+
+    let destStart = Math.max(0, Math.round(destStartSec * sampleRate));
+    let srcStart = Math.max(0, Math.round(fileOff * sampleRate));
+    let count = Math.max(0, Math.round(regDurSec * sampleRate));
+
+    if (destStart >= totalSamples || srcStart >= srcL.length || count <= 0) continue;
+    if (destStart + count > totalSamples) count = totalSamples - destStart;
+    if (srcStart + count > srcL.length) count = srcL.length - srcStart;
+    if (count <= 0) continue;
+
+    for (let i = 0; i < count; i++) {
+      const d = destStart + i;
+      const s = srcStart + i;
+      targetL[d] += srcL[s] || 0;
+      targetR[d] += srcR[s] || 0;
+    }
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -127,6 +208,8 @@ export default function MultitrackPlayer({
   const [guiasBoost, setGuiasBoost] = useState(2.5);
   const [guiasSoloed, setGuiasSoloed] = useState(false);
   const [guiasPan, setGuiasPan] = useState(-1); // izquierda por defecto
+  const [exportingStems, setExportingStems] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
   // Cada clip tiene: { id, fileId, fileName, startTime, duration }
   // Al reproducir se programan BufferSources por cada región activa del clip
   const guiasDataRef = useRef([]); // [{ fileId, buffer, regions, startTime, sourceNode }]
@@ -951,6 +1034,175 @@ export default function MultitrackPlayer({
     if (wasPlaying) startPlayback(time);
   };
 
+  const buildDefaultRegions = (buffer) => ([{
+    id: "r0",
+    start: 0,
+    end: buffer?.duration || 0,
+    fileOffset: 0,
+  }]);
+
+  const getMaxTimelineDuration = useCallback(() => {
+    let maxDur = effectiveDurationRef.current || durationRef.current || 0;
+
+    // Pistas principales (con regiones editadas)
+    for (const t of trackDataRef.current) {
+      if (!t?.buffer) continue;
+      const regs = savedTrackRegionsRef.current?.[t.id];
+      if (Array.isArray(regs) && regs.length > 0) {
+        const rMax = regs.reduce((m, r) => Math.max(m, Number(r.end || 0)), 0);
+        maxDur = Math.max(maxDur, rMax);
+      } else {
+        maxDur = Math.max(maxDur, t.buffer.duration || 0);
+      }
+    }
+
+    // Pista de guías (clips posicionados en timeline)
+    const guíaBufferByFileId = new Map();
+    guiasDataRef.current.forEach(g => {
+      if (g?.fileId && g?.buffer && !guíaBufferByFileId.has(g.fileId)) {
+        guíaBufferByFileId.set(g.fileId, g.buffer);
+      }
+    });
+
+    for (const clip of guiasClips) {
+      const gBuf = guíaBufferByFileId.get(clip.fileId);
+      if (!gBuf) continue;
+      const clipRegions = savedTrackRegionsRef.current?.[clip.fileId];
+      if (Array.isArray(clipRegions) && clipRegions.length > 0) {
+        const cMax = clipRegions.reduce((m, r) => Math.max(m, Number(r.end || 0)), 0);
+        maxDur = Math.max(maxDur, Number(clip.startTime || 0) + cMax);
+      } else {
+        maxDur = Math.max(maxDur, Number(clip.startTime || 0) + gBuf.duration);
+      }
+    }
+
+    return Math.max(1, maxDur);
+  }, [guiasClips]);
+
+  const exportStemForTrack = (buffer, regions, totalSamples, sampleRate) => {
+    const left = new Float32Array(totalSamples);
+    const right = new Float32Array(totalSamples);
+    mixRegionsIntoStereo({
+      targetL: left,
+      targetR: right,
+      sourceBuffer: buffer,
+      regions,
+      timelineStart: 0,
+      sampleRate,
+    });
+    return encodeWav16FromStereo(left, right, sampleRate);
+  };
+
+  const exportGuiasStem = (totalSamples, sampleRate) => {
+    const left = new Float32Array(totalSamples);
+    const right = new Float32Array(totalSamples);
+
+    const guíaBufferByFileId = new Map();
+    guiasDataRef.current.forEach(g => {
+      if (g?.fileId && g?.buffer && !guíaBufferByFileId.has(g.fileId)) {
+        guíaBufferByFileId.set(g.fileId, g.buffer);
+      }
+    });
+
+    const orderedClips = [...guiasClips].sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
+    for (const clip of orderedClips) {
+      const gBuf = guíaBufferByFileId.get(clip.fileId);
+      if (!gBuf) continue;
+      const clipRegions = savedTrackRegionsRef.current?.[clip.fileId];
+      const regions = Array.isArray(clipRegions) && clipRegions.length > 0
+        ? clipRegions
+        : buildDefaultRegions(gBuf);
+
+      mixRegionsIntoStereo({
+        targetL: left,
+        targetR: right,
+        sourceBuffer: gBuf,
+        regions,
+        timelineStart: Number(clip.startTime || 0),
+        sampleRate,
+      });
+    }
+
+    return encodeWav16FromStereo(left, right, sampleRate);
+  };
+
+  const downloadStemsZip = async () => {
+    if (exportingStems || loading) return;
+    if (!trackDataRef.current.length) {
+      alert("No hay pistas cargadas para exportar.");
+      return;
+    }
+
+    try {
+      setExportingStems(true);
+      setExportProgress(0);
+
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      const stemsFolder = zip.folder(sanitizeFileName(folderName || "stems"));
+
+      const sampleRate = audioCtxRef.current?.sampleRate || 44100;
+      const totalDuration = getMaxTimelineDuration();
+      const totalSamples = Math.ceil(totalDuration * sampleRate);
+
+      const entries = [...trackDataRef.current];
+      const includeGuias = guiasClips.length > 0;
+      const totalItems = entries.length + (includeGuias ? 1 : 0);
+      let done = 0;
+
+      for (let i = 0; i < entries.length; i++) {
+        const t = entries[i];
+        const regs = Array.isArray(savedTrackRegionsRef.current?.[t.id]) && savedTrackRegionsRef.current[t.id].length > 0
+          ? savedTrackRegionsRef.current[t.id]
+          : buildDefaultRegions(t.buffer);
+
+        const wavBlob = exportStemForTrack(t.buffer, regs, totalSamples, sampleRate);
+        stemsFolder.file(`${sanitizeFileName(t.name)}.wav`, wavBlob);
+
+        done += 1;
+        setExportProgress(Math.round((done / totalItems) * 100));
+      }
+
+      if (includeGuias) {
+        const guiasBlob = exportGuiasStem(totalSamples, sampleRate);
+        stemsFolder.file("GUIAS.wav", guiasBlob);
+        done += 1;
+        setExportProgress(Math.round((done / totalItems) * 100));
+      }
+
+      stemsFolder.file(
+        "README.txt",
+        [
+          `Cancion: ${folderName || "Sin nombre"}`,
+          `Duracion comun stems: ${totalDuration.toFixed(3)} segundos`,
+          `Sample rate: ${sampleRate} Hz`,
+          "",
+          "Todos los stems tienen exactamente la misma duracion para importar en cualquier DAW y mantener sincronizacion.",
+        ].join("\n")
+      );
+
+      const zipBlob = await zip.generateAsync(
+        { type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } },
+        ({ percent }) => setExportProgress(Math.max(1, Math.round(percent)))
+      );
+
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${sanitizeFileName(folderName || "stems")}_stems.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error exportando stems:", err);
+      alert("No se pudo generar el ZIP de stems. Revisa consola para más detalles.");
+    } finally {
+      setExportingStems(false);
+      setExportProgress(0);
+    }
+  };
+
   const recalcGains = (states, nextGuiasSoloed = guiasSoloed, nextGuiasMuted = guiasMuted, nextGuiasBoost = guiasBoost) => {
     const anySoloed = states.some((t) => t.soloed) || nextGuiasSoloed;
     states.forEach((t, i) => {
@@ -1150,6 +1402,15 @@ export default function MultitrackPlayer({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={downloadStemsZip}
+            disabled={exportingStems || loading}
+            title="Descargar ZIP con stems alineados (incluye Guías)"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-semibold transition shrink-0 disabled:opacity-50"
+          >
+            {exportingStems ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            {exportingStems ? `Exportando ${exportProgress}%` : "Descargar stems"}
+          </button>
           {onSwitchToEditor && (
             <button
               onClick={onSwitchToEditor}
