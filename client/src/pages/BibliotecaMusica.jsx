@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMemberAuth } from "../context/MemberAuthContext";
 import {
   ArrowLeft, Music, Play, Pause, SkipBack, SkipForward,
   Volume2, Trash2, FolderOpen, Loader2, X, Layers,
-  CheckCircle2, Radio, HardDriveDownload, Music2,
+  CheckCircle2, Radio, HardDriveDownload, Music2, Link2,
 } from "lucide-react";
 import MultitrackPlayer, { precacheTrackList } from "../components/MultitrackPlayer";
 import GuiasEditor from "../components/GuiasEditor";
@@ -25,6 +25,7 @@ function sinExtension(nombre) {
 
 export default function BibliotecaMusica() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { miembro, loading: authLoading, getToken } = useMemberAuth();
 
   // ── Navegación tabs ──
@@ -120,6 +121,59 @@ export default function BibliotecaMusica() {
     cargarCarpetas();
     cargarSetlist();
   }, [miembro]);
+
+  // ── Deep link: ?folderId=XXX&mode=multitrack ──
+  // Se ejecuta después de que las carpetas se cargaron (carpetas cambia de [] a [datos])
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    const folderId = searchParams.get("folderId");
+    const mode     = searchParams.get("mode");
+    if (!folderId || deepLinkHandled.current || carpetas.length === 0) return;
+    deepLinkHandled.current = true;
+
+    const abrirDeepLink = async () => {
+      // Buscar si folderId coincide con una carpeta raíz
+      const carpetaRaiz = carpetas.find(c => c.id === folderId);
+      if (carpetaRaiz) {
+        await seleccionarCarpeta(carpetaRaiz);
+        if (mode === "multitrack") {
+          // Las canciones se cargarán en seleccionarCarpeta; abrimos multitrack después
+          const r = await fetch(`${API_URL}/api/musica/canciones?folderId=${encodeURIComponent(folderId)}`, { headers: hdrs() });
+          const tracks = await r.json();
+          if (Array.isArray(tracks) && tracks.length > 1) {
+            setMultitrackFolder(carpetaRaiz.name);
+            setMultitrackTracks(tracks);
+          }
+        }
+        return;
+      }
+      // Buscar en subcarpetas de cada carpeta raíz
+      for (const carpeta of carpetas) {
+        try {
+          const r = await fetch(`${API_URL}/api/musica/carpetas?folderId=${encodeURIComponent(carpeta.id)}`, { headers: hdrs() });
+          const subs = await r.json();
+          if (!Array.isArray(subs)) continue;
+          const sub = subs.find(s => s.id === folderId);
+          if (sub) {
+            setCarpetaActiva(carpeta);
+            setSubcarpetas(subs);
+            await cargarCanciones(sub);
+            if (mode === "multitrack") {
+              const r2 = await fetch(`${API_URL}/api/musica/canciones?folderId=${encodeURIComponent(folderId)}`, { headers: hdrs() });
+              const tracks = await r2.json();
+              if (Array.isArray(tracks) && tracks.length > 1) {
+                setMultitrackFolder(sub.name);
+                setMultitrackTracks(tracks);
+              }
+            }
+            return;
+          }
+        } catch {}
+      }
+    };
+
+    abrirDeepLink();
+  }, [carpetas]); // eslint-disable-line
 
   // ── Carga de datos ──
   const cargarCarpetas = async () => {
@@ -457,6 +511,16 @@ export default function BibliotecaMusica() {
                                 >
                                   {enSetlist ? "✓" : "+"}
                                 </button>
+                                <button
+                                  title="Copiar link de acceso directo (modo multitrack)"
+                                  onClick={() => {
+                                    const url = `${window.location.origin}/portal/musica?folderId=${encodeURIComponent(s.id)}&mode=multitrack`;
+                                    navigator.clipboard.writeText(url);
+                                  }}
+                                  className="w-5 h-5 rounded-full flex items-center justify-center transition text-xs shrink-0 bg-gray-100 text-gray-400 hover:bg-blue-100 hover:text-blue-600"
+                                >
+                                  <Link2 size={11} />
+                                </button>
                               </div>
                             );
                           })}
@@ -495,6 +559,17 @@ export default function BibliotecaMusica() {
                       </div>
                       {canciones.length > 1 && (
                         <div className="flex gap-2 shrink-0">
+                          <button
+                            title="Copiar link de acceso directo (modo multitrack)"
+                            onClick={() => {
+                              const fid = subcarpetaActiva?.id || carpetaActiva?.id;
+                              const url = `${window.location.origin}/portal/musica?folderId=${encodeURIComponent(fid)}&mode=multitrack`;
+                              navigator.clipboard.writeText(url);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-500 hover:bg-blue-100 hover:text-blue-600 transition shadow"
+                          >
+                            <Link2 size={13} /> Copiar link
+                          </button>
                           <button
                             onClick={() => {
                               const fid = subcarpetaActiva?.id || carpetaActiva?.id;
