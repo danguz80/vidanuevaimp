@@ -512,7 +512,7 @@ export default function AdminCalendario() {
       doc.setFillColor(cR, cG, cB);
       doc.rect(0, 0, W, altoCabecera, "F");
       doc.setTextColor(255, 255, 255);
-      doc.setFontSize(36);
+      doc.setFontSize(44);
       doc.setFont("helvetica", "bold");
       doc.text(`CALENDARIO ${MESES[mesActual].toUpperCase()} ${anioActual}`, W / 2, 30, { align: "center" });
 
@@ -522,16 +522,16 @@ export default function AdminCalendario() {
         const fotoW = 36;
         if (fotoPortero) doc.addImage(fotoPortero, "PNG", W - margen - fotoW, 4, fotoW, fotoW);
         const xTxt = W - margen - (fotoPortero ? fotoW + 4 : 0);
-        doc.setFontSize(12);
+        doc.setFontSize(15);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(200, 225, 255);
         doc.text("Portero/a del Mes:", xTxt, 16, { align: "right" });
-        doc.setFontSize(19);
+        doc.setFontSize(24);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(255, 255, 255);
         doc.text(`${portero.nombre} ${portero.apellido}`, xTxt, 32, { align: "right" });
       }
-      doc.setFontSize(11);
+      doc.setFontSize(13);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(200, 225, 255);
       doc.text(`Generado: ${new Date().toLocaleDateString("es-CL")}`, margen, 40);
@@ -548,7 +548,7 @@ export default function AdminCalendario() {
         doc.setLineWidth(0.3);
         doc.rect(colX[i], altoCabecera, cw, altoDiasLabel);
         doc.setTextColor(50, 70, 120);
-        doc.setFontSize(colEst[i] ? 11 : 14);
+        doc.setFontSize(colEst[i] ? 13 : 17);
         doc.setFont("helvetica", "bold");
         doc.text(
           colEst[i] ? DIAS_CORTO[i] : d.toUpperCase(),
@@ -558,24 +558,44 @@ export default function AdminCalendario() {
         );
       });
 
-      // ── GRILLA — celdas vacías pre-mes ─────────────────────────────────────────
+      // ── Constantes de layout (jsPDF, helvetica sin emojis) ────────────────────
+      const PAD    = 3;       // padding horizontal
+      const NR     = 7;       // radio círculo número de día
+      const fotoSz = 11;      // foto de persona (mm)
+      const H_BAR  = 15;      // barra título evento
+      const H_LUG  = 10;      // fila lugar
+      const H_PERS = 13;      // fila persona — foto 11mm + texto 20pt
+      const H_NLIN = 9;       // línea de nota
+      const GAP    = 4;       // separación entre eventos
+      const OY_INI = NR * 2 + 10;  // offset inicial desde top de celda (~24mm, deja espacio al número del día)
+
+      // ── GRILLA — celdas vacías pre-mes (con cumpleaños del mes anterior) ────────
+      const mesPrev    = mesActual === 0 ? 11 : mesActual - 1;
+      const anioPrev   = mesActual === 0 ? anioActual - 1 : anioActual;
+      const diasPrevMes = diasEnMes(anioPrev, mesPrev);
       doc.setDrawColor(200, 210, 225);
       doc.setLineWidth(0.3);
       for (let c = 0; c < pDia; c++) {
+        const diaPrev = diasPrevMes - (pDia - 1 - c);
+        const xPrev   = colX[c];
+        const cwPrev  = colWidths[c];
         doc.setFillColor(246, 247, 250);
-        doc.rect(colX[c], topGrilla, colWidths[c], altoCelda, "FD");
+        doc.rect(xPrev, topGrilla, cwPrev, altoCelda, "FD");
+        const cumplesPrev = miembros.filter(m => {
+          if (!m.fecha_nacimiento) return false;
+          const f = new Date(m.fecha_nacimiento);
+          return f.getUTCMonth() === mesPrev && f.getUTCDate() === diaPrev;
+        });
+        let oyPrev = topGrilla + OY_INI;
+        cumplesPrev.forEach(m => {
+          if (oyPrev + 16 > topGrilla + altoCelda - 2) return;
+          doc.setFontSize(17);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(219, 39, 119);
+          doc.text(`Cumpleanios: ${m.nombre} ${m.apellido}`, xPrev + PAD, oyPrev + 8, { maxWidth: cwPrev - PAD * 2 - 2 });
+          oyPrev += 16;
+        });
       }
-
-      // ── Constantes de layout (jsPDF, helvetica sin emojis) ────────────────────
-      const PAD    = 3;       // padding horizontal
-      const NR     = 6;       // radio círculo número de día
-      const fotoSz = 10;      // foto de persona (mm)
-      const H_BAR  = 12;      // barra título evento
-      const H_LUG  = 8;       // fila lugar
-      const H_PERS = 10;      // fila persona — foto 10mm + texto 16pt
-      const H_NLIN = 7;       // línea de nota
-      const GAP    = 4;       // separación entre eventos
-      const OY_INI = NR * 2 + 10;  // offset inicial desde top de celda (~22mm, deja espacio al número del día)
 
       let col = pDia, fila = 0;
 
@@ -599,14 +619,14 @@ export default function AdminCalendario() {
         } else {
           doc.setTextColor(esDomCol ? 150 : 80, esDomCol ? 50 : 80, esDomCol ? 60 : 110);
         }
-        doc.setFontSize(18);
+        doc.setFontSize(22);
         doc.setFont("helvetica", "bold");
-        doc.text(String(dia), x + cw - NR - 4, y + NR + 7.5, { align: "center" });
+        doc.text(String(dia), x + cw - NR - 4, y + NR + 8.5, { align: "center" });
 
         // Feriado chileno (texto rojo pequeño, sin tildes ni caracteres especiales)
         const keyF = `${mesActual + 1}-${dia}`;
         if (feriados[keyF]) {
-          doc.setFontSize(8);
+          doc.setFontSize(10);
           doc.setFont("helvetica", "bold");
           doc.setTextColor(180, 20, 20);
           const maxFW = cw - PAD * 2 - NR * 2 - 8;
@@ -622,15 +642,14 @@ export default function AdminCalendario() {
           const f = new Date(m.fecha_nacimiento);
           return f.getUTCMonth() === mesActual && f.getUTCDate() === dia;
         });
-        if (cumplesPDF.length > 0 && oy + cumplesPDF.length * 13 < y + altoCelda - 2) {
+        if (cumplesPDF.length > 0 && oy + cumplesPDF.length * 16 < y + altoCelda - 2) {
           cumplesPDF.forEach(m => {
-            const edad = anioActual - new Date(m.fecha_nacimiento).getUTCFullYear();
-            doc.setFontSize(14);
+            doc.setFontSize(17);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(219, 39, 119); // rosa
-            const texto = `Cumpleanios: ${m.nombre} ${m.apellido} (${edad} anos)`;
-            doc.text(texto, x + PAD, oy + 7, { maxWidth: cw - PAD * 2 - 2 });
-            oy += 13;
+            const texto = `Cumpleanios: ${m.nombre} ${m.apellido}`;
+            doc.text(texto, x + PAD, oy + 8, { maxWidth: cw - PAD * 2 - 2 });
+            oy += 16;
           });
           oy += 3;
         }
@@ -652,7 +671,7 @@ export default function AdminCalendario() {
           // Notas
           let notaLines = [], altoNotas = 0;
           if (ev.notas) {
-            doc.setFontSize(12);
+            doc.setFontSize(14);
             notaLines = doc.splitTextToSize(ev.notas, cw - PAD * 2 - 4);
             altoNotas = 4 + Math.min(notaLines.length, 2) * H_NLIN;
           }
@@ -674,27 +693,27 @@ export default function AdminCalendario() {
           doc.roundedRect(x + PAD, oy, cw - PAD * 2, H_BAR, 2, 2, "F");
           doc.setTextColor(255, 255, 255);
           if (hora) {
-            doc.setFontSize(11);
+            doc.setFontSize(13);
             doc.setFont("helvetica", "normal");
             const hw = doc.getTextWidth(hora);
-            doc.text(hora, x + cw - PAD - 2.5, oy + 8.5, { align: "right" });
-            doc.setFontSize(14);
+            doc.text(hora, x + cw - PAD - 2.5, oy + 10, { align: "right" });
+            doc.setFontSize(17);
             doc.setFont("helvetica", "bold");
-            doc.text(ev.titulo, x + PAD + 3, oy + 8.5, { maxWidth: cw - PAD * 2 - hw - 7 });
+            doc.text(ev.titulo, x + PAD + 3, oy + 10, { maxWidth: cw - PAD * 2 - hw - 7 });
           } else {
-            doc.setFontSize(14);
+            doc.setFontSize(17);
             doc.setFont("helvetica", "bold");
-            doc.text(ev.titulo, x + PAD + 3, oy + 8.5, { maxWidth: cw - PAD * 2 - 5 });
+            doc.text(ev.titulo, x + PAD + 3, oy + 10, { maxWidth: cw - PAD * 2 - 5 });
           }
 
           let innerY = oy + H_BAR + 1;
 
           // Lugar
           if (lugarTexto) {
-            doc.setFontSize(12);
+            doc.setFontSize(15);
             doc.setFont("helvetica", "normal");
             doc.setTextColor(esZoom ? 30 : 35, esZoom ? 90 : 120, esZoom ? 220 : 35);
-            doc.text(lugarTexto, x + PAD + 2.5, innerY + 6, { maxWidth: cw - PAD * 2 - 4 });
+            doc.text(lugarTexto, x + PAD + 2.5, innerY + 7, { maxWidth: cw - PAD * 2 - 4 });
             innerY += H_LUG;
           }
 
@@ -705,20 +724,20 @@ export default function AdminCalendario() {
             if (foto) doc.addImage(foto, "JPEG", x + PAD + 1, innerY + 0.5, fotoSz, fotoSz);
             const textX = x + PAD + 1 + (foto ? fotoSz + 2 : 0);
             // Label (pequeño, en color)
-            doc.setFontSize(10);
+            doc.setFontSize(12);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(lColor[0], lColor[1], lColor[2]);
-            doc.text(label, textX, innerY + 8);
+            doc.text(label, textX, innerY + 9);
             const lw = doc.getTextWidth(label);
-            // Nombre — 16pt bold, negro intenso, con prefijo P./O. si corresponde
-            doc.setFontSize(16);
+            // Nombre — 20pt bold, negro intenso, con prefijo P./O. si corresponde
+            doc.setFontSize(20);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(15, 15, 50);
             const nombreCompleto = `${titulo ? titulo + ' ' : ''}${nombre} ${apellido || ''}`.trim();
             doc.text(
               nombreCompleto,
               textX + lw + 1.5,
-              innerY + 8,
+              innerY + 9,
               { maxWidth: cw - (textX - x) - lw - PAD - 3 }
             );
             innerY += H_PERS;
@@ -733,7 +752,7 @@ export default function AdminCalendario() {
             doc.setFillColor(255, 251, 225);
             doc.roundedRect(x + PAD, innerY, cw - PAD * 2, altoNotas, 1.5, 1.5, "F");
             doc.setTextColor(130, 90, 20);
-            doc.setFontSize(12);
+            doc.setFontSize(14);
             doc.setFont("helvetica", "italic");
             notaLines.slice(0, 2).forEach((linea, li) => {
               doc.text(linea, x + PAD + 3, innerY + H_NLIN + li * H_NLIN);
@@ -747,6 +766,37 @@ export default function AdminCalendario() {
         if (col === 7) { col = 0; fila++; }
       }
 
+      // ── GRILLA — celdas post-mes (días del mes siguiente visibles en la grilla) ──
+      if (col > 0) {
+        const mesSig = mesActual === 11 ? 0 : mesActual + 1;
+        let diaSig = 1;
+        doc.setDrawColor(200, 210, 225);
+        doc.setLineWidth(0.3);
+        while (col < 7) {
+          const xSig  = colX[col];
+          const ySig  = topGrilla + fila * altoCelda;
+          const cwSig = colWidths[col];
+          doc.setFillColor(246, 247, 250);
+          doc.rect(xSig, ySig, cwSig, altoCelda, "FD");
+          const cumplesSig = miembros.filter(m => {
+            if (!m.fecha_nacimiento) return false;
+            const f = new Date(m.fecha_nacimiento);
+            return f.getUTCMonth() === mesSig && f.getUTCDate() === diaSig;
+          });
+          let oySig = ySig + OY_INI;
+          cumplesSig.forEach(m => {
+            if (oySig + 16 > ySig + altoCelda - 2) return;
+            doc.setFontSize(17);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(219, 39, 119);
+            doc.text(`Cumpleanios: ${m.nombre} ${m.apellido}`, xSig + PAD, oySig + 8, { maxWidth: cwSig - PAD * 2 - 2 });
+            oySig += 16;
+          });
+          col++;
+          diaSig++;
+        }
+      }
+
       // ── PIE DE PÁGINA ─────────────────────────────────────────────────────────
       const yFooter = H - altoFooter;
       doc.setFillColor(241, 245, 249);
@@ -755,7 +805,7 @@ export default function AdminCalendario() {
       doc.setLineWidth(0.3);
       doc.line(0, yFooter, W, yFooter);
       doc.setTextColor(140, 155, 180);
-      doc.setFontSize(14);
+      doc.setFontSize(17);
       doc.setFont("helvetica", "normal");
       doc.text("Iglesia Vida Nueva · vidanuevaimp.com", W / 2, yFooter + 10, { align: "center" });
 

@@ -3,7 +3,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { subDays } from "date-fns";
 import pkg from "pg";
-import axios from "axios";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
@@ -58,6 +57,32 @@ import { sendDonationReceipt, saveDonation, sendCashDonationReceipt } from "./em
 
 // ✅ Cargar .env lo antes posible
 dotenv.config();
+
+function buildUrl(urlString, params = {}) {
+  const url = new URL(urlString);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url;
+}
+
+async function requestJson(urlString, params = {}) {
+  const response = await fetch(buildUrl(urlString, params));
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const error = new Error(data?.error?.message || `HTTP ${response.status} al consultar ${urlString}`);
+    error.response = {
+      status: response.status,
+      data,
+    };
+    throw error;
+  }
+
+  return data;
+}
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -925,19 +950,17 @@ async function buscarUltimoCultoYoutube() {
   try {
     // Traer los 10 videos en vivo más recientes del canal
     // (jueves + domingos = max ~9/mes, con 10 siempre hay al menos 1 domingo)
-    const searchResponse = await axios.get("https://www.googleapis.com/youtube/v3/search", {
-      params: {
-        part: "snippet",
-        channelId: CHANNEL_ID,
-        eventType: "completed",
-        type: "video",
-        order: "date",
-        maxResults: 10,
-        key: YOUTUBE_API_KEY,
-      },
+    const searchData = await requestJson("https://www.googleapis.com/youtube/v3/search", {
+      part: "snippet",
+      channelId: CHANNEL_ID,
+      eventType: "completed",
+      type: "video",
+      order: "date",
+      maxResults: 10,
+      key: YOUTUBE_API_KEY,
     });
 
-    const searchItems = searchResponse.data.items || [];
+    const searchItems = searchData.items || [];
     if (!searchItems.length) {
       ultimaBusquedaYoutube = { fecha: ahora, encontrado: false, titulo: "No se encontraron transmisiones en el canal", error: null };
       console.log("[YouTube Sermones] No se encontraron transmisiones.");
@@ -947,17 +970,15 @@ async function buscarUltimoCultoYoutube() {
     // Segunda llamada: obtener liveStreamingDetails para saber la hora REAL de inicio
     // publishedAt es cuando se publica el video (puede ser horas después), actualStartTime es la hora exacta del culto
     const videoIds = searchItems.map(i => i.id.videoId).join(",");
-    const videosResponse = await axios.get("https://www.googleapis.com/youtube/v3/videos", {
-      params: {
-        part: "snippet,liveStreamingDetails",
-        id: videoIds,
-        key: YOUTUBE_API_KEY,
-      },
+    const videosData = await requestJson("https://www.googleapis.com/youtube/v3/videos", {
+      part: "snippet,liveStreamingDetails",
+      id: videoIds,
+      key: YOUTUBE_API_KEY,
     });
 
     // Construir mapa videoId → actualStartTime (o fallback a scheduledStartTime o publishedAt)
     const liveDetails = {};
-    for (const v of (videosResponse.data.items || [])) {
+    for (const v of (videosData.items || [])) {
       const actual = v.liveStreamingDetails?.actualStartTime;
       const scheduled = v.liveStreamingDetails?.scheduledStartTime;
       const published = v.snippet.publishedAt;
@@ -1472,21 +1493,16 @@ app.get("/api/youtube/live-status", async (req, res) => {
       return res.json({ isLive: false, message: "YouTube API no configurada" });
     }
 
-    const response = await axios.get(
-      "https://www.googleapis.com/youtube/v3/search",
-      {
-        params: {
-          part: "snippet",
-          channelId: CHANNEL_ID,
-          eventType: "live",
-          type: "video",
-          key: YOUTUBE_API_KEY,
-        },
-      }
-    );
+    const response = await requestJson("https://www.googleapis.com/youtube/v3/search", {
+      part: "snippet",
+      channelId: CHANNEL_ID,
+      eventType: "live",
+      type: "video",
+      key: YOUTUBE_API_KEY,
+    });
 
-    if (response.data.items && response.data.items.length > 0) {
-      const liveVideo = response.data.items[0];
+    if (response.items && response.items.length > 0) {
+      const liveVideo = response.items[0];
       liveStreamCache = {
         isLive: true,
         videoId: liveVideo.id.videoId,
@@ -1551,19 +1567,17 @@ app.get("/api/flickr/fotos", async (req, res) => {
   }
 
   try {
-    const response = await axios.get("https://www.flickr.com/services/rest/", {
-      params: {
-        method: "flickr.people.getPublicPhotos",
-        api_key: process.env.FLICKR_API_KEY,
-        user_id: "202745080@N05",
-        format: "json",
-        nojsoncallback: 1,
-        per_page: 20,
-        extras: "url_b",
-      },
+    const response = await requestJson("https://www.flickr.com/services/rest/", {
+      method: "flickr.people.getPublicPhotos",
+      api_key: process.env.FLICKR_API_KEY,
+      user_id: "202745080@N05",
+      format: "json",
+      nojsoncallback: 1,
+      per_page: 20,
+      extras: "url_b",
     });
 
-    const fotos = response.data.photos.photo.map((photo) => ({
+    const fotos = response.photos.photo.map((photo) => ({
       id: photo.id,
       title: photo.title,
       url: photo.url_b || `https://live.staticflickr.com/${photo.server}/${photo.id}_${photo.secret}_b.jpg`,
