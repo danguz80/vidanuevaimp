@@ -485,6 +485,7 @@ export default function AdminCalendario() {
 
       // ── Pre-cargar todas las fotos ────────────────────────────────────────────
       const fotosCache = {};
+      const fotosCirculoCache = {};
       const fotoUrls   = new Set();
       if (portero?.foto_url) fotoUrls.add(portero.foto_url);
       for (const evs of Object.values(eventosPorDiaPDF)) {
@@ -496,7 +497,10 @@ export default function AdminCalendario() {
       }
       await Promise.all([...fotoUrls].map(async (url) => {
         const data = await cargarImagenBase64(url);
-        if (data) fotosCache[url] = data;
+        if (!data) return;
+        fotosCache[url] = data;
+        const circle = await recortarCirculo(data);
+        if (circle) fotosCirculoCache[url] = circle;
       }));
 
       // ── Dimensiones ───────────────────────────────────────────────────────────
@@ -517,8 +521,7 @@ export default function AdminCalendario() {
       doc.text(`CALENDARIO ${MESES[mesActual].toUpperCase()} ${anioActual}`, W / 2, 30, { align: "center" });
 
       if (portero?.nombre) {
-        const fotoPorteroRaw = portero.foto_url ? fotosCache[portero.foto_url] : null;
-        const fotoPortero = fotoPorteroRaw ? await recortarCirculo(fotoPorteroRaw) : null;
+        const fotoPortero = portero.foto_url ? (fotosCirculoCache[portero.foto_url] || null) : null;
         const fotoW = 36;
         if (fotoPortero) doc.addImage(fotoPortero, "PNG", W - margen - fotoW, 4, fotoW, fotoW);
         const xTxt = W - margen - (fotoPortero ? fotoW + 4 : 0);
@@ -685,7 +688,35 @@ export default function AdminCalendario() {
             (ev.predicador_nombre  ? H_PERS : 0) +
             altoNotas + GAP;
 
-          if (oy + altoBloque > y + altoCelda - 1) break;
+          const espacioDisponible = (y + altoCelda - 1) - oy;
+          const altoCompacto = H_BAR + GAP;
+          if (oy + altoBloque > y + altoCelda - 1) {
+            // Si no cabe el bloque completo, mostrar al menos título + hora
+            // para no "perder" eventos cuando la celda está muy cargada.
+            if (espacioDisponible < altoCompacto) break;
+
+            const [r, g, b] = hexToRgb(ev.color || "#3B82F6");
+            doc.setFillColor(r, g, b);
+            doc.roundedRect(x + PAD, oy, cw - PAD * 2, H_BAR, 2, 2, "F");
+            doc.setTextColor(255, 255, 255);
+
+            if (hora) {
+              doc.setFontSize(16);
+              doc.setFont("helvetica", "bold");
+              const hw = doc.getTextWidth(hora);
+              doc.text(hora, x + cw - PAD - 2.5, oy + 10, { align: "right" });
+              doc.setFontSize(16);
+              doc.setFont("helvetica", "bold");
+              doc.text(ev.titulo, x + PAD + 3, oy + 10, { maxWidth: cw - PAD * 2 - hw - 7 });
+            } else {
+              doc.setFontSize(16);
+              doc.setFont("helvetica", "bold");
+              doc.text(ev.titulo, x + PAD + 3, oy + 10, { maxWidth: cw - PAD * 2 - 5 });
+            }
+
+            oy += altoCompacto;
+            continue;
+          }
 
           // Barra coloreada: título + hora
           const [r, g, b] = hexToRgb(ev.color || "#3B82F6");
@@ -693,8 +724,8 @@ export default function AdminCalendario() {
           doc.roundedRect(x + PAD, oy, cw - PAD * 2, H_BAR, 2, 2, "F");
           doc.setTextColor(255, 255, 255);
           if (hora) {
-            doc.setFontSize(13);
-            doc.setFont("helvetica", "normal");
+            doc.setFontSize(16);
+            doc.setFont("helvetica", "bold");
             const hw = doc.getTextWidth(hora);
             doc.text(hora, x + cw - PAD - 2.5, oy + 10, { align: "right" });
             doc.setFontSize(17);
@@ -720,8 +751,11 @@ export default function AdminCalendario() {
           // Personas — nombres en 16pt BOLD: prioridad de legibilidad para 3ra edad
           const dibujarPersona = (nombre, apellido, fotoUrl, label, lColor, titulo = '') => {
             if (!nombre) return;
-            const foto = fotoUrl ? fotosCache[fotoUrl] : null;
-            if (foto) doc.addImage(foto, "JPEG", x + PAD + 1, innerY + 0.5, fotoSz, fotoSz);
+            const foto = fotoUrl ? (fotosCirculoCache[fotoUrl] || fotosCache[fotoUrl]) : null;
+            if (foto) {
+              const fmt = foto.startsWith("data:image/png") ? "PNG" : "JPEG";
+              doc.addImage(foto, fmt, x + PAD + 1, innerY + 0.5, fotoSz, fotoSz);
+            }
             const textX = x + PAD + 1 + (foto ? fotoSz + 2 : 0);
             // Label (pequeño, en color)
             doc.setFontSize(12);
