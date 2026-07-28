@@ -510,7 +510,23 @@ export default function AdminCalendario() {
       const topGrilla      = altoCabecera + altoDiasLabel;
       const altoDisponible = H - topGrilla - altoFooter - margen;
       const numFilas       = Math.ceil((pDia + totalDias) / 7);
-      const altoCelda      = altoDisponible / numFilas;
+
+      // Si hay 6 filas, comprimir SOLO la última para mantener las 5 superiores
+      // visualmente equivalentes al layout "normal" (como julio).
+      const rowHeights = (() => {
+        if (numFilas !== 6) {
+          return Array.from({ length: numFilas }, () => altoDisponible / numFilas);
+        }
+        const lastRowH = 46; // fila final comprimida (sin actividades críticas)
+        const topRowsH = (altoDisponible - lastRowH) / 5;
+        return [topRowsH, topRowsH, topRowsH, topRowsH, topRowsH, lastRowH];
+      })();
+      const rowTops = [];
+      let accTop = topGrilla;
+      for (let r = 0; r < rowHeights.length; r++) {
+        rowTops.push(accTop);
+        accTop += rowHeights[r];
+      }
 
       // ── CABECERA (color del mes) ───────────────────────────────────────────────
       doc.setFillColor(cR, cG, cB);
@@ -583,7 +599,7 @@ export default function AdminCalendario() {
         const xPrev   = colX[c];
         const cwPrev  = colWidths[c];
         doc.setFillColor(246, 247, 250);
-        doc.rect(xPrev, topGrilla, cwPrev, altoCelda, "FD");
+        doc.rect(xPrev, topGrilla, cwPrev, rowHeights[0], "FD");
         const cumplesPrev = miembros.filter(m => {
           if (!m.fecha_nacimiento) return false;
           const f = new Date(m.fecha_nacimiento);
@@ -591,7 +607,7 @@ export default function AdminCalendario() {
         });
         let oyPrev = topGrilla + OY_INI;
         cumplesPrev.forEach(m => {
-          if (oyPrev + 16 > topGrilla + altoCelda - 2) return;
+          if (oyPrev + 16 > topGrilla + rowHeights[0] - 2) return;
           doc.setFontSize(17);
           doc.setFont("helvetica", "bold");
           doc.setTextColor(219, 39, 119);
@@ -605,7 +621,8 @@ export default function AdminCalendario() {
       for (let dia = 1; dia <= totalDias; dia++) {
         const x      = colX[col];
         const cw     = colWidths[col];
-        const y      = topGrilla + fila * altoCelda;
+        const y      = rowTops[fila];
+        const altoCelda = rowHeights[fila];
         const esHoy    = dia === hoy.getDate() && mesActual === hoy.getMonth() && anioActual === hoy.getFullYear();
         const esDomCol = col === 6;
 
@@ -688,52 +705,9 @@ export default function AdminCalendario() {
             (ev.predicador_nombre  ? H_PERS : 0) +
             altoNotas + GAP;
 
-          const espacioDisponible = (y + altoCelda - 1) - oy;
-          const personasCompactas = [
-            ev.encargado_nombre ? `Enc: ${(ev.encargado_nombre || "")} ${(ev.encargado_apellido || "")}`.trim() : null,
-            ev.coordinador_nombre ? `Coord: ${(ev.coordinador_nombre || "")} ${(ev.coordinador_apellido || "")}`.trim() : null,
-            ev.predicador_nombre ? `Pred: ${(ev.predicador_nombre || "")} ${(ev.predicador_apellido || "")}`.trim() : null,
-          ].filter(Boolean);
-          const lineasCompactas = personasCompactas.slice(0, 2); // prioriza mostrar al menos 2 asignaciones
-          const altoCompacto = H_BAR + (lineasCompactas.length * 7.5) + GAP;
           if (oy + altoBloque > y + altoCelda - 1) {
-            // Si no cabe el bloque completo, mostrar al menos título + hora
-            // para no "perder" eventos cuando la celda está muy cargada.
-            if (espacioDisponible < H_BAR + GAP) break;
-
-            const [r, g, b] = hexToRgb(ev.color || "#3B82F6");
-            doc.setFillColor(r, g, b);
-            doc.roundedRect(x + PAD, oy, cw - PAD * 2, H_BAR, 2, 2, "F");
-            doc.setTextColor(255, 255, 255);
-
-            if (hora) {
-              doc.setFontSize(16);
-              doc.setFont("helvetica", "bold");
-              const hw = doc.getTextWidth(hora);
-              doc.text(hora, x + cw - PAD - 2.5, oy + 10, { align: "right" });
-              doc.setFontSize(16);
-              doc.setFont("helvetica", "bold");
-              doc.text(ev.titulo, x + PAD + 3, oy + 10, { maxWidth: cw - PAD * 2 - hw - 7 });
-            } else {
-              doc.setFontSize(16);
-              doc.setFont("helvetica", "bold");
-              doc.text(ev.titulo, x + PAD + 3, oy + 10, { maxWidth: cw - PAD * 2 - 5 });
-            }
-
-            let yCompact = oy + H_BAR + 1;
-            if (lineasCompactas.length > 0 && espacioDisponible >= altoCompacto) {
-              doc.setFontSize(11);
-              doc.setFont("helvetica", "bold");
-              doc.setTextColor(35, 40, 85);
-              lineasCompactas.forEach((linea) => {
-                doc.text(linea, x + PAD + 3, yCompact + 5.5, { maxWidth: cw - PAD * 2 - 5 });
-                yCompact += 7.5;
-              });
-              oy = yCompact + GAP;
-            } else {
-              oy += H_BAR + GAP;
-            }
-            continue;
+            // No achicar texto ni degradar datos: si no cabe completo, cortar aquí.
+            break;
           }
 
           // Barra coloreada: título + hora
@@ -829,7 +803,7 @@ export default function AdminCalendario() {
           const ySig  = topGrilla + fila * altoCelda;
           const cwSig = colWidths[col];
           doc.setFillColor(246, 247, 250);
-          doc.rect(xSig, ySig, cwSig, altoCelda, "FD");
+          doc.rect(xSig, ySig, cwSig, rowHeights[fila], "FD");
           const cumplesSig = miembros.filter(m => {
             if (!m.fecha_nacimiento) return false;
             const f = new Date(m.fecha_nacimiento);
@@ -837,7 +811,7 @@ export default function AdminCalendario() {
           });
           let oySig = ySig + OY_INI;
           cumplesSig.forEach(m => {
-            if (oySig + 16 > ySig + altoCelda - 2) return;
+            if (oySig + 16 > ySig + rowHeights[fila] - 2) return;
             doc.setFontSize(17);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(219, 39, 119);
