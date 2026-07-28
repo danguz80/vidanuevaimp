@@ -510,17 +510,11 @@ export default function AdminCalendario() {
       const topGrilla      = altoCabecera + altoDiasLabel;
       const altoDisponible = H - topGrilla - altoFooter - margen;
       const numFilas       = Math.ceil((pDia + totalDias) / 7);
+      const filasRender    = numFilas === 6 ? 5 : numFilas;
 
-      // Si hay 6 filas, comprimir SOLO la última para mantener las 5 superiores
-      // visualmente equivalentes al layout "normal" (como julio).
-      const rowHeights = (() => {
-        if (numFilas !== 6) {
-          return Array.from({ length: numFilas }, () => altoDisponible / numFilas);
-        }
-        const lastRowH = 46; // fila final comprimida (sin actividades críticas)
-        const topRowsH = (altoDisponible - lastRowH) / 5;
-        return [topRowsH, topRowsH, topRowsH, topRowsH, topRowsH, lastRowH];
-      })();
+      // Regla explícita: si el mes cae en 6 filas, eliminar la 6ta del PDF.
+      // Así las 5 filas visibles conservan la proporción del layout normal.
+      const rowHeights = Array.from({ length: filasRender }, () => altoDisponible / filasRender);
       const rowTops = [];
       let accTop = topGrilla;
       for (let r = 0; r < rowHeights.length; r++) {
@@ -619,6 +613,8 @@ export default function AdminCalendario() {
       let col = pDia, fila = 0;
 
       for (let dia = 1; dia <= totalDias; dia++) {
+        if (fila >= filasRender) break;
+
         const x      = colX[col];
         const cw     = colWidths[col];
         const y      = rowTops[fila];
@@ -654,6 +650,19 @@ export default function AdminCalendario() {
         }
 
         const evs = eventosPorDiaPDF[dia] || [];
+        const celdaConEscuelaDominical =
+          evs.length > 1 &&
+          evs.some(e => (e.titulo || "").toLowerCase().includes("escuela dominical"));
+        const lugarFrecuenciaDia = evs.reduce((acc, e) => {
+          const zoomEv =
+            (e.zoom_link && e.zoom_link.trim()) ||
+            (e.descripcion && (e.descripcion.includes("zoom.us") || e.descripcion.includes("zoom.com"))) ||
+            (e.lugar && e.lugar.toLowerCase().includes("zoom"));
+          const key = zoomEv ? "zoom" : (e.lugar || "").trim().toLowerCase();
+          if (!key) return acc;
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {});
         let oy = y + OY_INI;
 
         // Cumpleaños del día (jsPDF no soporta emoji, usamos texto plano)
@@ -687,23 +696,49 @@ export default function AdminCalendario() {
             (ev.descripcion && (ev.descripcion.includes("zoom.us") || ev.descripcion.includes("zoom.com"))) ||
             (ev.lugar && ev.lugar.toLowerCase().includes("zoom"));
           const lugarTexto = esZoom ? "Zoom" : (ev.lugar || null);
+          const esCultoDominical = (ev.titulo || "").toLowerCase().includes("culto dominical");
+          const lugarKey = esZoom ? "zoom" : (ev.lugar || "").trim().toLowerCase();
+          const lugarRepetidoEnDia = !!(lugarKey && lugarFrecuenciaDia[lugarKey] > 1);
+          let mostrarLugar = !!lugarTexto;
+
+          // Regla solicitada: si la celda tiene Escuela Dominical, ocultar
+          // ubicación de Culto Dominical para asegurar que entren ambos bloques.
+          if (celdaConEscuelaDominical && esCultoDominical) {
+            mostrarLugar = false;
+          }
 
           // Notas
           let notaLines = [], altoNotas = 0;
+          let maxNotaLines = 2;
           if (ev.notas) {
             doc.setFontSize(14);
             notaLines = doc.splitTextToSize(ev.notas, cw - PAD * 2 - 4);
-            altoNotas = 4 + Math.min(notaLines.length, 2) * H_NLIN;
+            altoNotas = 4 + Math.min(notaLines.length, maxNotaLines) * H_NLIN;
           }
 
-          // Altura total del bloque
-          const altoBloque =
+          const calcularAltoBloque = () => (
             H_BAR + 1 +
-            (lugarTexto            ? H_LUG  : 0) +
+            (mostrarLugar          ? H_LUG  : 0) +
             (ev.encargado_nombre   ? H_PERS : 0) +
             (ev.coordinador_nombre ? H_PERS : 0) +
             (ev.predicador_nombre  ? H_PERS : 0) +
-            altoNotas + GAP;
+            altoNotas + GAP
+          );
+
+          let altoBloque = calcularAltoBloque();
+
+          // Si falta espacio, ocultar primero ubicación repetida (no Zoom) para preservar notas.
+          if (oy + altoBloque > y + altoCelda - 1 && mostrarLugar && lugarRepetidoEnDia && !esZoom) {
+            mostrarLugar = false;
+            altoBloque = calcularAltoBloque();
+          }
+
+          // Si aún no cabe, mantener comentario reducido a 1 línea.
+          if (oy + altoBloque > y + altoCelda - 1 && notaLines.length > 1) {
+            maxNotaLines = 1;
+            altoNotas = 4 + Math.min(notaLines.length, maxNotaLines) * H_NLIN;
+            altoBloque = calcularAltoBloque();
+          }
 
           if (oy + altoBloque > y + altoCelda - 1) {
             // No achicar texto ni degradar datos: si no cabe completo, cortar aquí.
@@ -732,7 +767,7 @@ export default function AdminCalendario() {
           let innerY = oy + H_BAR + 1;
 
           // Lugar
-          if (lugarTexto) {
+          if (mostrarLugar) {
             doc.setFontSize(15);
             doc.setFont("helvetica", "normal");
             doc.setTextColor(esZoom ? 30 : 35, esZoom ? 90 : 120, esZoom ? 220 : 35);
@@ -780,7 +815,7 @@ export default function AdminCalendario() {
             doc.setTextColor(130, 90, 20);
             doc.setFontSize(14);
             doc.setFont("helvetica", "italic");
-            notaLines.slice(0, 2).forEach((linea, li) => {
+            notaLines.slice(0, maxNotaLines).forEach((linea, li) => {
               doc.text(linea, x + PAD + 3, innerY + H_NLIN + li * H_NLIN);
             });
           }
@@ -793,14 +828,14 @@ export default function AdminCalendario() {
       }
 
       // ── GRILLA — celdas post-mes (días del mes siguiente visibles en la grilla) ──
-      if (col > 0) {
+      if (col > 0 && fila < filasRender) {
         const mesSig = mesActual === 11 ? 0 : mesActual + 1;
         let diaSig = 1;
         doc.setDrawColor(200, 210, 225);
         doc.setLineWidth(0.3);
         while (col < 7) {
           const xSig  = colX[col];
-          const ySig  = topGrilla + fila * altoCelda;
+          const ySig  = rowTops[fila];
           const cwSig = colWidths[col];
           doc.setFillColor(246, 247, 250);
           doc.rect(xSig, ySig, cwSig, rowHeights[fila], "FD");
