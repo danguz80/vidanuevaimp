@@ -689,11 +689,17 @@ export default function AdminCalendario() {
             altoNotas + GAP;
 
           const espacioDisponible = (y + altoCelda - 1) - oy;
-          const altoCompacto = H_BAR + GAP;
+          const personasCompactas = [
+            ev.encargado_nombre ? `Enc: ${(ev.encargado_nombre || "")} ${(ev.encargado_apellido || "")}`.trim() : null,
+            ev.coordinador_nombre ? `Coord: ${(ev.coordinador_nombre || "")} ${(ev.coordinador_apellido || "")}`.trim() : null,
+            ev.predicador_nombre ? `Pred: ${(ev.predicador_nombre || "")} ${(ev.predicador_apellido || "")}`.trim() : null,
+          ].filter(Boolean);
+          const lineasCompactas = personasCompactas.slice(0, 2); // prioriza mostrar al menos 2 asignaciones
+          const altoCompacto = H_BAR + (lineasCompactas.length * 7.5) + GAP;
           if (oy + altoBloque > y + altoCelda - 1) {
             // Si no cabe el bloque completo, mostrar al menos título + hora
             // para no "perder" eventos cuando la celda está muy cargada.
-            if (espacioDisponible < altoCompacto) break;
+            if (espacioDisponible < H_BAR + GAP) break;
 
             const [r, g, b] = hexToRgb(ev.color || "#3B82F6");
             doc.setFillColor(r, g, b);
@@ -714,7 +720,19 @@ export default function AdminCalendario() {
               doc.text(ev.titulo, x + PAD + 3, oy + 10, { maxWidth: cw - PAD * 2 - 5 });
             }
 
-            oy += altoCompacto;
+            let yCompact = oy + H_BAR + 1;
+            if (lineasCompactas.length > 0 && espacioDisponible >= altoCompacto) {
+              doc.setFontSize(11);
+              doc.setFont("helvetica", "bold");
+              doc.setTextColor(35, 40, 85);
+              lineasCompactas.forEach((linea) => {
+                doc.text(linea, x + PAD + 3, yCompact + 5.5, { maxWidth: cw - PAD * 2 - 5 });
+                yCompact += 7.5;
+              });
+              oy = yCompact + GAP;
+            } else {
+              oy += H_BAR + GAP;
+            }
             continue;
           }
 
