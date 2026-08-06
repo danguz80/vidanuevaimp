@@ -418,7 +418,10 @@ export default function AdminPlanificacion() {
   };
 
   const borrar = async (id) => {
-    await fetch(`${API}/api/planificacion/${id}`, { method: "DELETE", headers: hdrs() });
+    await fetch(`${API}/api/planificacion/${id}`, {
+      method: "DELETE",
+      headers: { ...hdrs(), "X-Delete-Confirm": "true" },
+    });
     setBorrandoId(null);
     await cargar();
   };

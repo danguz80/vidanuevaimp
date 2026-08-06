@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import AdminNav from "../components/AdminNav";
-import { Music, CheckCircle, AlertCircle, Loader2, RefreshCw, Save, Link, ChevronDown, ChevronRight, Music2, ArrowRight } from "lucide-react";
+import { Music, CheckCircle, AlertCircle, Loader2, RefreshCw, Save, Link, ChevronDown, ChevronRight, Music2, ArrowRight, Clock3 } from "lucide-react";
 
 const API = import.meta.env.VITE_BACKEND_URL || "https://iglesia-backend.onrender.com";
 
@@ -17,6 +17,9 @@ export default function AdminMusica() {
   const [error, setError] = useState(null);
   const [showRequisitos, setShowRequisitos] = useState(false);
   const [showEstructura, setShowEstructura] = useState(false);
+  const [showAuditoria, setShowAuditoria] = useState(false);
+  const [auditoria, setAuditoria] = useState([]);
+  const [loadingAuditoria, setLoadingAuditoria] = useState(false);
 
   const hdrs = () => ({ Authorization: `Bearer ${getToken()}` });
 
@@ -32,6 +35,45 @@ export default function AdminMusica() {
   };
 
   useEffect(() => { verificar(); }, []);
+
+  const cargarAuditoria = async () => {
+    setLoadingAuditoria(true);
+    try {
+      const r = await fetch(`${API}/api/musica/auditoria?limit=120`, { headers: hdrs() });
+      const data = await r.json();
+      setAuditoria(Array.isArray(data) ? data : []);
+    } catch {
+      setAuditoria([]);
+    } finally {
+      setLoadingAuditoria(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showAuditoria) cargarAuditoria();
+  }, [showAuditoria]);
+
+  const labelAccion = (a) => {
+    if (a === "delete") return "Borrado";
+    if (a === "event_save") return "Guardado de evento";
+    if (a === "config_change") return "Cambio de configuración";
+    return a;
+  };
+
+  const labelTarget = (t) => {
+    switch (t) {
+      case "planificacion_evento": return "Evento cancionero";
+      case "calendario_evento": return "Evento calendario";
+      case "secretaria_evento": return "Evento secretaría";
+      case "cancion_chordpro": return "Canción";
+      case "musica_config": return "Config música";
+      case "musica_mixer": return "Config banda/mixer";
+      case "musica_guias": return "Guías";
+      case "musica_setlist": return "Setlist";
+      case "musica_playlist": return "Playlist";
+      default: return t || "Recurso";
+    }
+  };
 
   const guardar = async () => {
     if (!shareUrl.trim()) return;
@@ -179,6 +221,62 @@ export default function AdminMusica() {
               <p className="text-xs text-indigo-500 mt-2">
                 Cada subcarpeta aparece como categoría en la biblioteca de los miembros.
               </p>
+            </div>
+          )}
+        </div>
+
+        {/* Auditoría */}
+        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+          <button
+            onClick={() => setShowAuditoria(v => !v)}
+            className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition"
+          >
+            <h2 className="font-semibold text-gray-700 flex items-center gap-2">
+              <Clock3 size={16} className="text-indigo-400" /> Bitácora de cambios y borrados
+            </h2>
+            {showAuditoria ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+          </button>
+          {showAuditoria && (
+            <div className="px-6 pb-6 border-t border-gray-100">
+              <div className="pt-3 pb-2 flex items-center justify-between">
+                <p className="text-xs text-gray-500">Incluye borrados, guardados de eventos y cambios de configuración.</p>
+                <button
+                  onClick={cargarAuditoria}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                >
+                  Actualizar
+                </button>
+              </div>
+
+              {loadingAuditoria ? (
+                <div className="flex items-center gap-2 text-gray-400 text-sm py-4">
+                  <Loader2 size={15} className="animate-spin" /> Cargando bitácora...
+                </div>
+              ) : auditoria.length === 0 ? (
+                <p className="text-sm text-gray-400 py-4">Aún no hay registros.</p>
+              ) : (
+                <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                  {auditoria.map((row) => {
+                    const when = row.created_at ? new Date(row.created_at) : null;
+                    const actor = row.actor_name || (row.actor_type === "miembro" ? "Miembro" : "Sistema/Admin");
+                    return (
+                      <div key={row.id} className="border border-gray-200 rounded-xl p-3">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-semibold">{labelAccion(row.action)}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{labelTarget(row.target_type)}</span>
+                          {row.target_id && <span className="text-gray-500">ID: {row.target_id}</span>}
+                        </div>
+                        <p className="text-sm text-gray-700 mt-1.5">
+                          <span className="font-medium">Usuario:</span> {actor}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {when ? `${when.toLocaleDateString("es-CL")} ${when.toLocaleTimeString("es-CL")}` : "Sin fecha"}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>
